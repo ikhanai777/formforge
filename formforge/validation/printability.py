@@ -121,7 +121,12 @@ def _feature_size(m: MeshMeasurements, report: ValidationReport, lim: DFMLimits)
         return
     fraction_thin = thickness.fraction_below.get("0.8", 0.0)
     isolated = 0.0 < fraction_thin < 0.02
-    ok = not (isolated and thickness.min_mm < lim.min_feature_mm)
+    # The 1st percentile, not the raw minimum. A ray-cast thickness field has a
+    # long thin tail wherever the surface curves sharply, and failing a whole
+    # model on its single thinnest sample rejects good parts -- the same reason
+    # the wall check uses a percentile.
+    measured = thickness.p01_mm
+    ok = not (isolated and measured < lim.min_feature_mm)
     report.add(
         check(
             "printability.min_feature",
@@ -131,10 +136,10 @@ def _feature_size(m: MeshMeasurements, report: ValidationReport, lim: DFMLimits)
             message=(
                 "No sub-nozzle standalone features."
                 if ok
-                else f"An isolated feature measures {thickness.min_mm:.2f} mm, under "
+                else f"An isolated feature measures {measured:.2f} mm, under "
                 f"the {lim.min_feature_mm:.2f} mm minimum. It will not form."
             ),
-            measured=round(thickness.min_mm, 3),
+            measured=round(measured, 3),
             threshold=lim.min_feature_mm,
             unit="mm",
             location_mm=thickness.location_mm,

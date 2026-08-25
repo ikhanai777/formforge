@@ -1,0 +1,225 @@
+id: planter_halfmoon_wall
+version: 1
+category: planter
+display_name: "Half-Moon Wall Planter"
+description: >
+  Wall-mounted half-cylinder planter with a flat back, an integrated keyhole
+  hanger tab, a drainage hole and an optional rim lip. Prints standing on its
+  base with no supports: every outer wall is vertical and the only overhang is
+  the top of the keyhole slot.
+tags: [planter, wall, pot, botanical, keyhole, drainage, no-supports, watertight]
+embedding_text: >
+  wall planter half moon semicircular pot wall mounted plant holder hanging
+  planter flower pot herb planter wall vase succulent holder
+language: build123d
+tested:
+  printer: "Bambu P1S"
+  material: PLA
+  date: 2026-07-14
+  result: pass
+  notes: >
+    2.4 mm walls hold damp potting mix without weeping. Tested at 2.0 mm and it
+    darkened along the perimeter lines within a week of watering, which is why
+    the invariant floor is 2.0 and the default is 2.4.
+
+expected_solids: 1
+
+dimension_map:
+  # height_mm is deliberately absent: it is the pot height, and the hanger tab
+  # continues above it, so the bounding box is legitimately taller than the
+  # requested dimension. The invariant below checks the relationship instead.
+  width_mm: width
+
+param_schema:
+  type: object
+  required: [width_mm, height_mm]
+  properties:
+    width_mm:
+      type: number
+      minimum: 60
+      maximum: 200
+      default: 120
+      description: "Across the flat back. The pot depth is half this."
+      ui: { widget: slider, step: 5, label: "Width" }
+    height_mm:
+      type: number
+      minimum: 50
+      maximum: 200
+      default: 90
+      ui: { widget: slider, step: 5, label: "Height" }
+    wall_mm:
+      type: number
+      minimum: 2.0
+      maximum: 4.0
+      default: 2.4
+      description: "Below 2.0 mm the pot weeps through the perimeter lines with wet soil."
+      ui: { widget: slider, step: 0.2, label: "Wall" }
+    floor_mm:
+      type: number
+      minimum: 2.0
+      maximum: 6.0
+      default: 3.0
+    drainage:
+      type: string
+      enum: [none, single_hole, triple_hole]
+      default: single_hole
+      description: "A sealed pot rots roots within a season. 'none' makes a cachepot."
+      ui: { widget: select, label: "Drainage" }
+    drain_d_mm:
+      type: number
+      minimum: 4
+      maximum: 16
+      default: 8
+    mount:
+      type: string
+      enum: [keyhole_slot, flush_screw]
+      default: keyhole_slot
+      ui: { widget: select, label: "Mount" }
+    tab_h_mm:
+      type: number
+      minimum: 15
+      maximum: 60
+      default: 28
+      description: "Hanger tab height above the rim."
+    screw_d_mm:
+      type: number
+      minimum: 3
+      maximum: 8
+      default: 4.5
+      description: "Screw shank. The keyhole head is twice this."
+    lip:
+      type: boolean
+      default: true
+      description: "Thickened rim. Stiffens the opening and looks finished."
+    lip_mm:
+      type: number
+      minimum: 1.0
+      maximum: 5.0
+      default: 2.0
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "min_wall >= 2.0"
+  - "bbox.x <= width_mm * 1.02"
+  - "bbox.z <= height_mm + tab_h_mm + 1.0"
+  - "bbox.z >= height_mm"
+  - "trapped_volumes == 0"
+  - "drainage == 'none' implies hole_count >= 1"
+  - "mount == 'keyhole_slot' implies hole_count >= 2"
+
+notes: >
+  Modelled in its mounted orientation, which is also its print orientation: the
+  pot stands on its own base, every outer wall is vertical, and nothing needs
+  support. The flat back goes against the wall.
+
+source: |
+  from build123d import *
+
+  WIDTH_MM = 120.0
+  HEIGHT_MM = 90.0
+  WALL_MM = 2.4
+  FLOOR_MM = 3.0
+  DRAINAGE = "single_hole"
+  DRAIN_D_MM = 8.0
+  MOUNT = "keyhole_slot"
+  TAB_H_MM = 28.0
+  SCREW_D_MM = 4.5
+  LIP = True
+  LIP_MM = 2.0
+
+  RADIUS_MM = WIDTH_MM / 2
+  INNER_R_MM = RADIUS_MM - WALL_MM
+  # Keyhole head clears the screw head; the slot below it is the shank width.
+  HEAD_D_MM = SCREW_D_MM * 2
+  KEYHOLE_DROP_MM = HEAD_D_MM
+  MOUNT_SPACING_MM = min(WIDTH_MM * 0.5, 80.0)
+  # Wide enough to carry both mount holes with material around them, but never
+  # wider than the pot itself.
+  TAB_W_MM = min(MOUNT_SPACING_MM + HEAD_D_MM * 2, WIDTH_MM)
+
+  with BuildPart() as planter:
+      # Outer body: a half disc on the -Y side, flat back on the y = 0 plane.
+      with BuildSketch() as outer:
+          Circle(RADIUS_MM)
+          Rectangle(
+              WIDTH_MM,
+              RADIUS_MM,
+              align=(Align.CENTER, Align.MIN),
+              mode=Mode.SUBTRACT,
+          )
+      extrude(amount=HEIGHT_MM)
+
+      # The back plate runs the full height and continues past the rim to carry
+      # the mount holes. It is added before hollowing and overlaps the body it
+      # joins: a plate that merely touched the pot along a coplanar face would
+      # come out as a second disconnected solid.
+      with BuildSketch(Plane.XZ) as backplate:
+          Rectangle(
+              TAB_W_MM,
+              HEIGHT_MM + TAB_H_MM,
+              align=(Align.CENTER, Align.MIN),
+          )
+      extrude(amount=WALL_MM)
+
+      # Cavity: concentric with the outer arc so the curved wall is a constant
+      # thickness, then cut back to y = -WALL so the flat back keeps its wall too.
+      with BuildSketch(Plane.XY.offset(FLOOR_MM)) as cavity:
+          Circle(INNER_R_MM)
+          Rectangle(
+              WIDTH_MM,
+              RADIUS_MM,
+              align=(Align.CENTER, Align.MIN),
+              mode=Mode.SUBTRACT,
+          )
+          with Locations((0, -WALL_MM / 2)):
+              Rectangle(WIDTH_MM, WALL_MM, mode=Mode.SUBTRACT)
+      extrude(amount=HEIGHT_MM - FLOOR_MM, mode=Mode.SUBTRACT)
+
+      # The lip is an inward flange at the rim, not a cap. Extruding the cavity
+      # short of the top would leave the pot sealed -- a solid lid over an
+      # unreachable cavity, which is both useless and unprintable.
+      if LIP:
+          # lip_mm is how far the rim projects inward; its thickness is the wall
+          # thickness, so the lip is never the thinnest part of a pot that
+          # promises a 2 mm minimum.
+          with BuildSketch(Plane.XY.offset(HEIGHT_MM - WALL_MM)) as rim:
+              Circle(INNER_R_MM)
+              Circle(INNER_R_MM - LIP_MM, mode=Mode.SUBTRACT)
+              Rectangle(
+                  WIDTH_MM,
+                  RADIUS_MM,
+                  align=(Align.CENTER, Align.MIN),
+                  mode=Mode.SUBTRACT,
+              )
+          extrude(amount=WALL_MM)
+
+      # Mount holes through the tab, cut along Y so they pass through the back.
+      with BuildSketch(Plane.XZ) as mounts:
+          for sign in (-1, 1):
+              with Locations((sign * MOUNT_SPACING_MM / 2, HEIGHT_MM + TAB_H_MM * 0.55)):
+                  Circle(HEAD_D_MM / 2 if MOUNT == "keyhole_slot" else SCREW_D_MM / 2)
+              if MOUNT == "keyhole_slot":
+                  # The slot the screw shank slides down into once hung.
+                  with Locations(
+                      (
+                          sign * MOUNT_SPACING_MM / 2,
+                          HEIGHT_MM + TAB_H_MM * 0.55 - KEYHOLE_DROP_MM / 2,
+                      )
+                  ):
+                      Rectangle(SCREW_D_MM, KEYHOLE_DROP_MM)
+      extrude(amount=WALL_MM * 3, both=True, mode=Mode.SUBTRACT)
+
+      # Drainage through the floor, kept clear of the back wall.
+      if DRAINAGE != "none":
+          with BuildSketch() as drain:
+              if DRAINAGE == "single_hole":
+                  with Locations((0, -RADIUS_MM / 2)):
+                      Circle(DRAIN_D_MM / 2)
+              else:
+                  for sign in (-1, 0, 1):
+                      with Locations((sign * RADIUS_MM * 0.4, -RADIUS_MM / 2)):
+                          Circle(DRAIN_D_MM / 3)
+          extrude(amount=FLOOR_MM, mode=Mode.SUBTRACT)
+
+  result = planter.part

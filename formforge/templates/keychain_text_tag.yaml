@@ -1,0 +1,163 @@
+id: keychain_text_tag
+version: 1
+category: keychain
+display_name: "Text Name Tag"
+description: >
+  Rounded rectangular tag with embossed or engraved text and a split-ring hole.
+  Prints flat on the bed with no supports. The workhorse keychain: luggage tags,
+  bag charms, name tags, gift tags.
+tags: [keychain, tag, text, name, luggage, no-supports, flat]
+embedding_text: >
+  keychain key chain key ring name tag luggage tag bag tag text label
+  personalised custom name engraved embossed lettering fob
+language: build123d
+tested:
+  printer: "Bambu P1S"
+  material: PLA
+  date: 2026-07-02
+  result: pass
+  notes: >
+    9 mm cap height reads cleanly at 0.6 mm emboss. 7 mm is the practical floor
+    on a 0.4 mm nozzle; below that the counters in letters like R and B close up.
+
+expected_solids: 1
+
+dimension_map:
+  body_l_mm: width
+  body_w_mm: depth
+
+text_features:
+  - label_param: text
+    cap_height_param: cap_h_mm
+    depth_param: emboss_mm
+    stroke_ratio: 0.18
+
+param_schema:
+  type: object
+  required: [text]
+  properties:
+    text:
+      type: string
+      minLength: 1
+      maxLength: 24
+      default: "HELLO"
+      description: "The text on the tag. Long strings need a longer body."
+      ui: { widget: text, label: "Text" }
+    body_l_mm:
+      type: number
+      minimum: 25
+      maximum: 140
+      default: 62
+      description: "Overall length. Allow about 6 mm per character at 9 mm cap height."
+      ui: { widget: slider, step: 2, label: "Length" }
+    body_w_mm:
+      type: number
+      minimum: 14
+      maximum: 60
+      default: 24
+      ui: { widget: slider, step: 1, label: "Width" }
+    body_t_mm:
+      type: number
+      minimum: 2.5
+      maximum: 8
+      default: 3.2
+      description: "Under 2.5 mm a keychain snaps in a pocket."
+      ui: { widget: slider, step: 0.2, label: "Thickness" }
+    corner_r_mm:
+      type: number
+      minimum: 1
+      maximum: 15
+      default: 5
+      ui: { widget: slider, step: 0.5, label: "Corner radius" }
+    ring_d_mm:
+      type: number
+      minimum: 4
+      maximum: 10
+      default: 5
+      description: "Split-ring hole. 5 mm clears a standard 25 mm ring."
+      ui: { widget: slider, step: 0.5, label: "Ring hole" }
+    ring_inset_mm:
+      type: number
+      minimum: 5
+      maximum: 20
+      default: 7
+      description: "Hole centre from the end. Leaves ring_inset - ring_d/2 of material."
+    cap_h_mm:
+      type: number
+      minimum: 3
+      maximum: 30
+      default: 9
+      description: "Text cap height. Below 3 mm nothing reads; use engraving under 5 mm."
+      ui: { widget: slider, step: 0.5, label: "Text size" }
+    emboss_mm:
+      type: number
+      minimum: 0.4
+      maximum: 2.0
+      default: 0.6
+      description: "Relief depth. 0.6 mm is three layers at 0.2 mm."
+    engrave:
+      type: boolean
+      default: false
+      description: "Cut the text into the face instead of raising it. Better for small text."
+      ui: { widget: toggle, label: "Engrave" }
+    edge_chamfer_mm:
+      type: number
+      minimum: 0
+      maximum: 1.0
+      default: 0.5
+      description: "Bottom-edge chamfer, counters elephant's foot."
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "bbox.x <= body_l_mm * 1.02"
+  - "bbox.y <= body_w_mm * 1.02"
+  - "min_hole_diameter >= 4.0"
+  - "ring_inset_mm - ring_d_mm / 2 >= 2.5"
+  - "cap_h_mm <= body_w_mm - 6.0"
+
+source: |
+  from build123d import *
+
+  TEXT = "HELLO"
+  BODY_L_MM = 62.0
+  BODY_W_MM = 24.0
+  BODY_T_MM = 3.2
+  CORNER_R_MM = 5.0
+  RING_D_MM = 5.0
+  RING_INSET_MM = 7.0
+  CAP_H_MM = 9.0
+  EMBOSS_MM = 0.6
+  ENGRAVE = False
+  EDGE_CHAMFER_MM = 0.5
+
+  # Shift the text away from the ring hole so it stays centred in the
+  # remaining space rather than in the body as a whole.
+  TEXT_X_MM = RING_INSET_MM / 2
+
+  with BuildPart() as tag:
+      with BuildSketch() as plan:
+          RectangleRounded(BODY_L_MM, BODY_W_MM, CORNER_R_MM)
+      extrude(amount=BODY_T_MM)
+
+      # Chamfer before cutting the hole: chamfering afterwards would catch the
+      # hole's bottom rim too, which weakens the thinnest part of the tag.
+      if EDGE_CHAMFER_MM > 0:
+          chamfer(tag.edges().group_by(Axis.Z)[0], length=EDGE_CHAMFER_MM)
+
+      top = tag.faces().filter_by(Plane.XY).sort_by(Axis.Z)[-1]
+      with BuildSketch(top) as ring:
+          with Locations((-BODY_L_MM / 2 + RING_INSET_MM, 0)):
+              Circle(RING_D_MM / 2)
+      extrude(amount=-BODY_T_MM, mode=Mode.SUBTRACT)
+
+      top = tag.faces().filter_by(Plane.XY).sort_by(Axis.Z)[-1]
+      with BuildSketch(top) as label:
+          with Locations((TEXT_X_MM, 0)):
+              Text(TEXT, font_size=CAP_H_MM)
+      if ENGRAVE:
+          extrude(amount=-EMBOSS_MM, mode=Mode.SUBTRACT)
+      else:
+          extrude(amount=EMBOSS_MM)
+
+  result = tag.part

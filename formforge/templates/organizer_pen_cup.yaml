@@ -1,0 +1,132 @@
+id: organizer_pen_cup
+version: 1
+category: organizer
+display_name: "Pen Cup / Desk Caddy"
+description: >
+  Square pen cup with rounded corners, a filleted interior floor and a chamfered
+  base. Prints upright with no supports. Scales from a pen cup to a utensil
+  crock without changing anything but the numbers.
+tags: [organizer, desk, pen, cup, holder, caddy, no-supports, upright]
+embedding_text: >
+  pen cup pencil holder desk organizer caddy pot brush holder utensil crock
+  container tub office stationery tidy
+language: build123d
+tested:
+  printer: "Prusa MK4"
+  material: PLA
+  date: 2026-06-28
+  result: pass
+  notes: >
+    2.4 mm walls at 95 mm tall are rigid enough to pick up full of pens. The
+    1.5 mm interior fillet is what stops it splitting at the floor joint when
+    dropped.
+
+expected_solids: 1
+
+dimension_map:
+  outer_l_mm: width
+  outer_w_mm: depth
+  height_mm: height
+
+param_schema:
+  type: object
+  required: [outer_l_mm, height_mm]
+  properties:
+    outer_l_mm:
+      type: number
+      minimum: 40
+      maximum: 180
+      default: 80
+      ui: { widget: slider, step: 5, label: "Length" }
+    outer_w_mm:
+      type: number
+      minimum: 40
+      maximum: 180
+      default: 80
+      ui: { widget: slider, step: 5, label: "Width" }
+    height_mm:
+      type: number
+      minimum: 40
+      maximum: 200
+      default: 95
+      ui: { widget: slider, step: 5, label: "Height" }
+    wall_mm:
+      type: number
+      minimum: 1.6
+      maximum: 5
+      default: 2.4
+      description: "2.4 mm is rigid at desk-caddy sizes; 1.6 mm flexes visibly above 100 mm."
+      ui: { widget: slider, step: 0.2, label: "Wall" }
+    floor_mm:
+      type: number
+      minimum: 1.2
+      maximum: 6
+      default: 2.0
+    corner_r_mm:
+      type: number
+      minimum: 2
+      maximum: 40
+      default: 12
+      description: "Must stay under half the shorter side."
+      ui: { widget: slider, step: 1, label: "Corner radius" }
+    inner_fillet_mm:
+      type: number
+      minimum: 0
+      maximum: 4
+      default: 1.5
+      description: "Fillet where the wall meets the floor. Set 0 to skip."
+    base_chamfer_mm:
+      type: number
+      minimum: 0
+      maximum: 1.5
+      default: 0.6
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "min_wall >= 1.5"
+  - "plate_contact_fraction >= 0.5"
+  - "corner_r_mm < min(outer_l_mm, outer_w_mm) / 2"
+  - "wall_mm + floor_mm < height_mm"
+
+source: |
+  from build123d import *
+
+  OUTER_L_MM = 80.0
+  OUTER_W_MM = 80.0
+  HEIGHT_MM = 95.0
+  WALL_MM = 2.4
+  FLOOR_MM = 2.0
+  CORNER_R_MM = 12.0
+  INNER_FILLET_MM = 1.5
+  BASE_CHAMFER_MM = 0.6
+
+  # The cavity's corner radius follows the outer one inward, so the wall is a
+  # constant thickness all the way round rather than thickening at the corners.
+  INNER_R_MM = max(CORNER_R_MM - WALL_MM, 0.8)
+
+  with BuildPart() as cup:
+      with BuildSketch() as plan:
+          RectangleRounded(OUTER_L_MM, OUTER_W_MM, CORNER_R_MM)
+      extrude(amount=HEIGHT_MM)
+
+      # Chamfer the base before hollowing: afterwards the bottom edge group
+      # would include the cavity rim, which must stay square.
+      if BASE_CHAMFER_MM > 0:
+          chamfer(cup.edges().group_by(Axis.Z)[0], length=BASE_CHAMFER_MM)
+
+      with BuildSketch(Plane.XY.offset(FLOOR_MM)) as cavity:
+          RectangleRounded(
+              OUTER_L_MM - 2 * WALL_MM,
+              OUTER_W_MM - 2 * WALL_MM,
+              INNER_R_MM,
+          )
+      extrude(amount=HEIGHT_MM, mode=Mode.SUBTRACT)
+
+      # Select the interior floor by plane and height, not by index into all
+      # faces: the chamfer above adds faces and would shift a positional index.
+      if INNER_FILLET_MM > 0:
+          inner_floor = cup.faces().filter_by(Plane.XY).sort_by(Axis.Z)[1]
+          fillet(inner_floor.edges(), radius=INNER_FILLET_MM)
+
+  result = cup.part

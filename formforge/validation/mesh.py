@@ -49,6 +49,10 @@ BRUTE_FORCE_RAY_BUDGET = 20_000_000
 # tens of megabytes regardless of mesh size.
 BRUTE_FORCE_CHUNK = 64
 
+# cos(60 degrees). A ray that exits through a face more than 60 degrees off
+# facing it grazed an edge rather than crossing a wall; see _exit_is_opposing.
+GRAZING_EXIT_COS = 0.5
+
 
 @dataclass
 class ThicknessResult:
@@ -308,17 +312,22 @@ class MeshMeasurements:
         directions = -normals
         origins = points + directions * RAY_EPS_MM
 
-        distances, index_ray = self._cast_inward(origins, directions)
-        if distances is None or index_ray is None:
+        distances, index_ray, index_tri = self._cast_inward(origins, directions)
+        if distances is None or index_ray is None or index_tri is None:
             return None
         if len(distances) == 0:
             self.skipped.append("thickness (no inward ray hits)")
             return None
 
         hit_points = points[index_ray]
-        valid = distances > 1e-6
+        valid = (distances > 1e-6) & _exit_is_opposing(
+            mesh, directions[index_ray], index_tri
+        )
         distances = distances[valid]
         hit_points = hit_points[valid]
+        if len(distances) == 0:
+            self.skipped.append("thickness (no non-grazing inward ray hits)")
+            return None
         if len(distances) == 0:
             return None
 
@@ -357,27 +366,27 @@ class MeshMeasurements:
 
     def _cast_inward(
         self, origins: np.ndarray, directions: np.ndarray
-    ) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """First inward hit distance per ray, via trimesh or the numpy fallback."""
+    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+        """First inward hit per ray: (distance, ray index, hit face index)."""
         if _has_ray_acceleration():
             try:
-                locations, index_ray, _ = self.mesh.ray.intersects_location(
+                locations, index_ray, index_tri = self.mesh.ray.intersects_location(
                     origins, directions, multiple_hits=False
                 )
                 if len(index_ray) == 0:
-                    return np.empty(0), np.empty(0, dtype=int)
+                    return np.empty(0), np.empty(0, dtype=int), np.empty(0, dtype=int)
                 index_ray = np.asarray(index_ray, dtype=int)
                 distances = np.linalg.norm(
                     np.asarray(locations) - origins[index_ray], axis=1
                 )
-                return distances, index_ray
+                return distances, index_ray, np.asarray(index_tri, dtype=int)
             except Exception as exc:  # pragma: no cover - backend dependent
                 self.skipped.append(f"thickness (accelerated ray cast failed: {exc})")
         try:
             return _brute_force_first_hit(self.mesh, origins, directions)
         except Exception as exc:
             self.skipped.append(f"thickness (ray cast unavailable: {exc})")
-            return None, None
+            return None, None, None
 
     # -- overhangs ---------------------------------------------------------
     @cached_property
@@ -447,11 +456,10 @@ class MeshMeasurements:
         max_span = 0.0
         location: list[float] | None = None
         for region in regions:
-            verts = mesh.vertices[np.unique(mesh.faces[region].ravel())][:, :2]
-            span = _min_projected_width(verts)
+            span, worst = _unsupported_span(mesh, region)
             if span > max_span:
                 max_span = span
-                location = [float(v) for v in centroids[region].mean(axis=0)]
+                location = worst
         return BridgeResult(float(max_span), location, len(regions))
 
     # -- footprint / tipping ----------------------------------------------
@@ -601,9 +609,30 @@ def _has_ray_acceleration() -> bool:
         return False
 
 
+def _exit_is_opposing(
+    mesh: trimesh.Trimesh, directions: np.ndarray, index_tri: np.ndarray
+) -> np.ndarray:
+    """Keep only rays that exit through a face roughly facing the ray.
+
+    Without this the thickness measurement is dominated by an artifact. A sample
+    point sitting on a sharp convex edge -- the side of an embossed letter, the
+    seam where a flat back meets a curved wall -- casts its inward ray straight
+    back out through the neighbouring face after travelling almost no distance,
+    and reports a wall three microns thick.
+
+    A ray crossing a genuine wall exits through a face whose outward normal
+    points along the ray. A ray grazing an edge exits through one nearly
+    perpendicular to it. Requiring the exit face to be within 60 degrees of
+    facing the ray keeps the first and discards the second.
+    """
+    normals = np.asarray(mesh.face_normals, dtype=float)[index_tri]
+    alignment = np.einsum("ij,ij->i", directions, normals)
+    return alignment >= GRAZING_EXIT_COS
+
+
 def _brute_force_first_hit(
     mesh: trimesh.Trimesh, origins: np.ndarray, directions: np.ndarray
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Vectorised Moller-Trumbore first-hit, with no spatial index.
 
     Tests every ray against every triangle, chunked to bound peak memory. This
@@ -619,6 +648,7 @@ def _brute_force_first_hit(
 
     hit_distances: list[float] = []
     hit_rays: list[int] = []
+    hit_faces: list[int] = []
 
     for start in range(0, len(origins), BRUTE_FORCE_CHUNK):
         stop = min(start + BRUTE_FORCE_CHUNK, len(origins))
@@ -645,13 +675,19 @@ def _brute_force_first_hit(
             & (t > 1e-6)
         )
         distances = np.where(valid, t, np.inf)
+        nearest_face = distances.argmin(axis=1)
         nearest = distances.min(axis=1)
         for offset, distance in enumerate(nearest):
             if np.isfinite(distance):
                 hit_distances.append(float(distance))
                 hit_rays.append(start + offset)
+                hit_faces.append(int(nearest_face[offset]))
 
-    return np.asarray(hit_distances), np.asarray(hit_rays, dtype=int)
+    return (
+        np.asarray(hit_distances),
+        np.asarray(hit_rays, dtype=int),
+        np.asarray(hit_faces, dtype=int),
+    )
 
 
 @contextlib.contextmanager
@@ -699,21 +735,78 @@ def _connected_face_groups(mesh: trimesh.Trimesh, face_ids: np.ndarray) -> list[
     return [np.asarray(v, dtype=int) for v in groups.values()]
 
 
-def _min_projected_width(points_2d: np.ndarray, directions: int = 36) -> float:
-    """Narrowest width of a 2D point set, sampled over directions.
+def _unsupported_span(
+    mesh: trimesh.Trimesh, region: np.ndarray
+) -> tuple[float, list[float] | None]:
+    """How far a ceiling reaches from its nearest support, doubled.
 
-    A slicer bridges across the shortest crossing of an unsupported region, so
-    the narrowest width -- not the diameter -- is the span that matters. 36
-    directions gives 5-degree resolution, well inside the precision the
-    threshold is stated to.
+    A downward-facing region is held up at its perimeter, where it meets the
+    walls that continue below it. The hardest point to bridge is therefore the
+    one furthest from that perimeter, and the span the slicer must cross is
+    twice that distance.
+
+    Measuring the region's overall width instead gets ring-shaped ceilings badly
+    wrong: a 2 mm lip running round the rim of a 120 mm pot is 120 mm across and
+    bridges trivially, because no point on it is more than a millimetre from
+    solid wall. That false positive is what this replaces.
     """
-    if len(points_2d) < 2:
-        return 0.0
-    angles = np.linspace(0.0, math.pi, directions, endpoint=False)
-    axes = np.stack([np.cos(angles), np.sin(angles)], axis=1)
-    projections = points_2d @ axes.T
-    widths = projections.max(axis=0) - projections.min(axis=0)
-    return float(widths.min())
+    faces = mesh.faces[region]
+    edges = np.sort(faces[:, [0, 1, 1, 2, 2, 0]].reshape(-1, 2), axis=1)
+    unique, counts = np.unique(edges, axis=0, return_counts=True)
+    boundary = unique[counts == 1]
+    if len(boundary) == 0:
+        # A closed region with no perimeter is not a ceiling over anything we
+        # can reason about; treat it as unmeasured rather than infinite.
+        return 0.0, None
+
+    starts = mesh.vertices[boundary[:, 0]][:, :2]
+    ends = mesh.vertices[boundary[:, 1]][:, :2]
+
+    # Sample each triangle at its centroid *and* its edge midpoints. Centroids
+    # alone under-report badly on a flat annulus: it triangulates into long
+    # triangles reaching from the inner ring to the outer one, whose vertices
+    # all sit on the boundary and whose centroids land two-thirds of the way
+    # across. The deepest point of such a region is near a spanning edge's
+    # midpoint, so that is where it has to be sampled. Under-reporting a bridge
+    # is the dangerous direction of error -- it passes a span that will sag.
+    samples = _triangle_samples(mesh, region)
+    distances = _point_segment_distances(samples[:, :2], starts, ends)
+    worst_idx = int(np.argmax(distances))
+    span = float(distances[worst_idx] * 2.0)
+    return span, [float(v) for v in samples[worst_idx]]
+
+
+def _triangle_samples(mesh: trimesh.Trimesh, region: np.ndarray) -> np.ndarray:
+    """Centroid plus the three edge midpoints of each triangle in a region."""
+    tris = np.asarray(mesh.triangles, dtype=float)[region]
+    centroids = tris.mean(axis=1)
+    midpoints = np.concatenate(
+        [
+            (tris[:, 0] + tris[:, 1]) / 2.0,
+            (tris[:, 1] + tris[:, 2]) / 2.0,
+            (tris[:, 2] + tris[:, 0]) / 2.0,
+        ]
+    )
+    return np.concatenate([centroids, midpoints])
+
+
+def _point_segment_distances(
+    points: np.ndarray, starts: np.ndarray, ends: np.ndarray, chunk: int = 512
+) -> np.ndarray:
+    """Distance from each point to the nearest of a set of 2D segments."""
+    seg = ends - starts
+    seg_len_sq = np.einsum("ij,ij->i", seg, seg)
+    seg_len_sq = np.where(seg_len_sq < 1e-12, 1.0, seg_len_sq)
+
+    out = np.empty(len(points), dtype=float)
+    for start in range(0, len(points), chunk):
+        stop = min(start + chunk, len(points))
+        block = points[start:stop][:, None, :]
+        rel = block - starts[None, :, :]
+        t = np.clip(np.einsum("ijk,jk->ij", rel, seg) / seg_len_sq, 0.0, 1.0)
+        closest = starts[None, :, :] + t[:, :, None] * seg[None, :, :]
+        out[start:stop] = np.linalg.norm(block - closest, axis=2).min(axis=1)
+    return out
 
 
 def _com_inside_footprint(
