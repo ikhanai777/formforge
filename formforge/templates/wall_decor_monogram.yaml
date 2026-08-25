@@ -50,7 +50,10 @@ param_schema:
       minimum: 60
       maximum: 220
       default: 120
-      description: "Plate diameter, or side length when square."
+      description: >
+        The plate's overall size: diameter for a circle, side length for a
+        square, corner to corner for a hexagon. The model is this wide however
+        it is shaped.
       ui: { widget: slider, step: 5, label: "Plate size" }
     plate_shape:
       type: string
@@ -126,7 +129,12 @@ source: |
           if PLATE_SHAPE == "square":
               RectangleRounded(PLATE_D_MM, PLATE_D_MM, PLATE_D_MM * 0.06)
           elif PLATE_SHAPE == "hexagon":
-              RegularPolygon(PLATE_D_MM / 2, 6, major_radius=False)
+              # major_radius, so plate_d_mm is the corner-to-corner span and
+              # therefore the overall size -- the same thing it means for a
+              # circle and a square. Using the apothem instead would make a
+              # "120 mm sign" come out 139 mm across, which is not what anyone
+              # asking for a 120 mm sign wants.
+              RegularPolygon(PLATE_D_MM / 2, 6, major_radius=True)
           else:
               Circle(PLATE_D_MM / 2)
       extrude(amount=PLATE_T_MM)
@@ -138,8 +146,16 @@ source: |
       if EDGE_CHAMFER_MM > 0 and PLATE_SHAPE == "circle":
           chamfer(sign.edges().group_by(Axis.Z)[0], length=EDGE_CHAMFER_MM)
 
+      # Distance from the centre to the top edge, which is the radius for a
+      # circle and a square but the apothem for a hexagon built on its
+      # major radius.
+      TOP_EDGE_MM = (
+          PLATE_D_MM / 2 * 0.8660254037844387
+          if PLATE_SHAPE == "hexagon"
+          else PLATE_D_MM / 2
+      )
       with BuildSketch(Plane.XY) as hanger:
-          with Locations((0, PLATE_D_MM / 2 - HANG_INSET_MM)):
+          with Locations((0, TOP_EDGE_MM - HANG_INSET_MM)):
               Circle(HANG_D_MM / 2)
       extrude(amount=PLATE_T_MM, mode=Mode.SUBTRACT)
 
