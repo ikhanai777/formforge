@@ -18,7 +18,7 @@ The two rules this module follows:
 from __future__ import annotations
 
 import contextlib
-import io
+import logging
 import math
 from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
@@ -713,10 +713,22 @@ def _brute_force_first_hit(
 
 @contextlib.contextmanager
 def _quiet():
-    """Swallow the progress chatter trimesh prints during surface sampling."""
-    buffer = io.StringIO()
-    with contextlib.redirect_stdout(buffer):
+    """Silence trimesh's sampler chatter for the duration of a call.
+
+    `sample_surface_even` logs a warning whenever it places fewer points than
+    asked for, which happens routinely on a part with small faces and is not a
+    problem: the shortfall is recorded in `ThicknessResult.samples`, so the
+    reduced resolution is visible in the report rather than only in a log line.
+    Raising the level rather than redirecting stdout is what actually works --
+    it is a logger, not a print.
+    """
+    logger = logging.getLogger("trimesh")
+    previous = logger.level
+    logger.setLevel(logging.ERROR)
+    try:
         yield
+    finally:
+        logger.setLevel(previous)
 
 
 # ---------------------------------------------------------------------------
