@@ -11,15 +11,18 @@ embedding_text: >
   gridfinity bin storage box modular drawer organizer 42mm grid baseplate
   stackable bin parts bin tool organizer workshop storage
 language: build123d
-tested:
-  printer: "Bambu P1S"
-  material: PLA
-  date: 2026-07-21
-  result: pass
-  notes: >
-    Seats correctly in a printed Gridfinity baseplate with no sanding. The base
-    profile is the part that matters: 0.8 mm chamfer, 1.8 mm straight, 2.15 mm
-    chamfer. Get any of those wrong and it either rattles or will not drop in.
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    The base profile is what makes this Gridfinity rather than a box: 0.8 mm
+    chamfer, 1.8 mm straight, 2.15 mm chamfer, on a 42 mm pitch with a 41.5 mm
+    footprint. Those figures come from the published standard, not from tuning.
+    Get any of them wrong and the bin either rattles in a baseplate or will not
+    drop into one, which is exactly the failure a maker notices first.
 
 expected_solids: 1
 

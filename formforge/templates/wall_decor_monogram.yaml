@@ -11,15 +11,18 @@ embedding_text: >
   monogram wall sign letter plaque name sign initial wall art nursery sign
   door sign hanging plaque decorative letter word art
 language: build123d
-tested:
-  printer: "Bambu P1S"
-  material: PLA
-  date: 2026-07-11
-  result: pass
-  notes: >
-    2 mm relief is enough to read across a room. Printed letter-side up; the
-    letter's top surface is the only face that shows, and it comes out clean at
-    0.2 mm layers with no ironing.
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    Printed letter-side up, so the only face that shows is a top surface rather
+    than a support-scarred underside. 2 mm of relief reads from across a room
+    and stays well inside what a 45-degree self-supporting edge allows. Cap
+    height is capped at 60% of the plate so the letter cannot overrun the
+    backing it sits on.
 
 expected_solids: 1
 

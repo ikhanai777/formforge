@@ -11,15 +11,17 @@ embedding_text: >
   pen cup pencil holder desk organizer caddy pot brush holder utensil crock
   container tub office stationery tidy
 language: build123d
-tested:
-  printer: "Prusa MK4"
-  material: PLA
-  date: 2026-06-28
-  result: pass
-  notes: >
-    2.4 mm walls at 95 mm tall are rigid enough to pick up full of pens. The
-    1.5 mm interior fillet is what stops it splitting at the floor joint when
-    dropped.
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Prusa MK4"
+  target_material: PLA
+  rationale: >
+    2.4 mm is three perimeters at 0.4 mm plus a little, which is what makes a
+    tall thin-walled part rigid enough to pick up when full. 1.6 mm walls will
+    build fine and flex visibly above about 100 mm. The interior fillet spreads
+    the load at the floor joint, which is where a dropped cup splits.
 
 expected_solids: 1
 

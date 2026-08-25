@@ -146,7 +146,7 @@ def check_template(
         report = validate(
             execution.artifacts["stl"],
             profile_id=profile_id,
-            material=(template.tested.material if template.tested else "PLA"),
+            material=(template.tested.target_material if template.tested else "PLA"),
             category=template.category,
             params=params,
             template_invariants=template.invariants,

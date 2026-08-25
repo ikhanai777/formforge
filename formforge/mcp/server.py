@@ -17,9 +17,11 @@ Two design rules run through the tool layer, and both come from spec section
   that gets rewritten anyway.
 
 The tool descriptions matter as much as the schemas: `list_templates` says
-outright that templates are faster, cheaper and print-tested, because steering
+outright that templates are faster, cheaper and verified, because steering
 traffic toward the template path is both the reliability story and the primary
-cost lever (spec section 16).
+cost lever (spec section 16). Each template's `print_test_status` travels with
+it, so a model presenting one to a user can say whether it has actually been
+printed rather than implying it has.
 """
 
 from __future__ import annotations
@@ -44,9 +46,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "description": (
             "List available parametric product templates, optionally filtered by "
             "category or searched by free text. Call this first: a template that "
-            "fits is faster, cheaper and print-tested, and it cannot produce "
-            "broken geometry because the geometry is already written. Only fall "
-            "back to generate_from_code when nothing here fits."
+            "fits is faster, cheaper and verified, and it cannot produce broken "
+            "geometry because the geometry is already written. Each result "
+            "carries a print_test_status -- 'untested' means it validates but "
+            "has never been physically printed, which is worth telling the user. "
+            "Only fall back to generate_from_code when nothing here fits."
         ),
         "input_schema": {
             "type": "object",
@@ -66,9 +70,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "get_template_schema",
         "description": (
             "Get the full parameter JSON Schema for one template: valid ranges, "
-            "defaults, and the DFM note attached to each parameter. The notes "
-            "record what actually failed in print testing, so read them before "
-            "choosing values."
+            "defaults, the DFM note attached to each parameter, and the "
+            "cross-parameter requirements under 'requirements'. The notes explain "
+            "why each default is what it is, so read them before choosing values."
         ),
         "input_schema": {
             "type": "object",

@@ -11,15 +11,18 @@ embedding_text: >
   bottle opener keychain beer opener key ring bottle cap lifter pocket opener
   keyring tool flat opener
 language: build123d
-tested:
-  printer: "Prusa MK4"
-  material: PETG
-  date: 2026-07-09
-  result: pass
-  notes: >
-    Plastic-only opens a twist-off but rounds off on a pry cap after a dozen
-    bottles. With an M8 washer dropped in at the pause it survives indefinitely.
-    PETG rather than PLA: PLA is too brittle at the lever throat.
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Prusa MK4"
+  target_material: PETG
+  rationale: >
+    PETG rather than PLA, because the lever throat between the two openings
+    flexes every time it is used and PLA is brittle enough to crack there. The
+    optional washer recess exists because a plastic lever face rounds off
+    against a steel crown cap eventually, however thick it is -- a dropped-in M8
+    washer moves the wear onto metal.
 
 expected_solids: 1
 

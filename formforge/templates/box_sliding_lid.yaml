@@ -11,15 +11,18 @@ embedding_text: >
   sliding lid box storage box container with lid slide top box parts box
   small box with cover stash box card box
 language: build123d
-tested:
-  printer: "Bambu P1S"
-  material: PLA
-  date: 2026-07-19
-  result: pass
-  notes: >
-    0.3 mm clearance per side slides smoothly on a well-tuned P1S. 0.2 mm needed
-    sanding; 0.4 mm rattled. This is the parameter most worth exposing, because
-    it is entirely printer-dependent.
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    Sliding clearance is the parameter most worth exposing, because it is
+    entirely printer-dependent -- the same 0.3 mm nominal is a smooth slide on a
+    well-calibrated machine and a press fit on one with over-extrusion. 0.3 mm
+    per side is the usual starting point; the schema allows 0.15 to 0.5 so it
+    can be tuned rather than sanded.
 
 expected_solids: 2
 

@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "formforge"
+version = "0.1.0"
+description = "Natural language to print-ready STL/3MF, via a parametric CAD kernel"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["3d-printing", "cad", "parametric", "build123d", "stl", "3mf", "mcp"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Manufacturing",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+
+# The base install is everything needed to generate, validate and render a
+# model. The optional model client, the HTTP gateway and the MCP transport are
+# extras, because a worker that only runs geometry should not pull in a web
+# framework -- and because the geometry sandbox image is deliberately minimal.
+dependencies = [
+    "build123d>=0.11",
+    "trimesh>=4.0",
+    "numpy>=1.26",
+    "pyyaml>=6.0",
+    "jsonschema>=4.20",
+    # Spatial index for trimesh's ray queries. Without it the wall-thickness
+    # measurement falls back to a slower O(rays x faces) path at reduced
+    # resolution rather than disappearing, but it is worth having.
+    "rtree>=1.0",
+    # Required for capped section cuts in the render service.
+    "shapely>=2.0",
+    "networkx>=3.0",
+    "manifold3d>=2.3",
+]
+
+[project.optional-dependencies]
+llm = ["anthropic>=0.40"]
+api = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "pydantic>=2.6"]
+mcp = ["mcp>=1.0"]
+dev = ["pytest>=8.0", "pytest-cov>=4.1", "ruff>=0.4"]
+all = [
+    "anthropic>=0.40",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.6",
+    "mcp>=1.0",
+]
+
+[project.scripts]
+formforge = "formforge.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ikhanai777/the-garden"
+
+[tool.setuptools.packages.find]
+include = ["formforge*"]
+
+[tool.setuptools.package-data]
+formforge = ["templates/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Quiet by default; the geometry tests are slow enough that -q output is what
+# you want to read.
+addopts = "-q --strict-markers"
+markers = [
+    "slow: exercises the CAD kernel and takes seconds",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:trimesh.*",
+]
+
+[tool.ruff]
+line-length = 96
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+ignore = [
+    # The sandbox runner deliberately calls exec; that is its entire purpose.
+    "S102",
+    # Long, explanatory error messages are the product here.
+    "EM101", "EM102", "TRY003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+"formforge/templates/*" = ["ALL"]

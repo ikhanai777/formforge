@@ -117,10 +117,24 @@ class TestMatching:
         for template in registry.all():
             assert template.validate_params(template.defaults()) == [], template.id
 
-    def test_every_shipped_template_declares_a_print_test(self, registry):
-        """'It validates' and 'it prints' are different claims."""
+    def test_every_shipped_template_declares_its_print_status(self, registry):
+        """'It validates' and 'it prints' are different claims.
+
+        Every template must state which one it has earned. Nothing in this
+        repository has been physically printed, so an unqualified "print tested"
+        badge anywhere would be a fabricated record.
+        """
         for template in registry.all():
             assert template.tested is not None, template.id
+            assert template.tested.status in {"untested", "passed", "failed"}, template.id
+            assert template.tested.rationale, template.id
+
+    def test_no_template_claims_a_print_test_it_has_not_had(self, registry):
+        for template in registry.all():
+            if template.tested.passed:
+                assert template.tested.date, (
+                    f"{template.id} claims a passed print test with no date"
+                )
 
     @pytest.mark.parametrize(
         "query,expected",

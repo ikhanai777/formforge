@@ -11,15 +11,18 @@ embedding_text: >
   hexagonal plant pot hex planter geometric pot faceted planter succulent pot
   cactus pot desk plant pot flower pot herb pot indoor planter
 language: build123d
-tested:
-  printer: "Bambu P1S"
-  material: PLA
-  date: 2026-07-16
-  result: pass
-  notes: >
-    A 90 mm across-flats pot swallows a 4 inch nursery pot with room for the
-    rim. Tapering the walls 3 degrees makes the facets catch the light and
-    costs nothing in print time.
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    Sized around nursery pots: 90 mm across flats takes a 3 inch pot with room
+    for the rim, and about 110 mm takes a 4 inch. The walls are lofted between
+    two hexagons rather than extruded with a taper, because loft keeps the
+    facets planar -- which is what makes them read as facets instead of a
+    slightly conical blur.
 
 expected_solids: 1
 

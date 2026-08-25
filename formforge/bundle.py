@@ -225,8 +225,18 @@ def _readme(result, bundle: Bundle, template) -> str:
         lines.append(f"- Template: `{template.id}` version {template.version}")
         if template.tested and template.tested.passed:
             lines.append(
-                f"- Print tested: {template.tested.printer}, {template.tested.material}, "
-                f"{template.tested.date}"
+                f"- Print tested: {template.tested.target_printer}, "
+                f"{template.tested.target_material}, {template.tested.date}"
+            )
+        elif template.tested:
+            # Never imply a print test that did not happen. A user deciding
+            # whether to trust a wall thickness deserves to know the number came
+            # from convention rather than from a printed part.
+            lines.append(
+                f"- **Not physically printed.** Designed for "
+                f"{template.tested.target_printer or 'a generic FDM printer'} in "
+                f"{template.tested.target_material}, and validated against the "
+                f"manufacturability rules, but no sample of this model has been made."
             )
     lines += ["", "## What to print", ""]
 

@@ -11,15 +11,18 @@ embedding_text: >
   drawer organizer divider tray compartments grid cutlery tray desk drawer
   insert jewellery tray parts tray sorting bins sections
 language: build123d
-tested:
-  printer: "Bambu A1"
-  material: PLA
-  date: 2026-07-05
-  result: pass
-  notes: >
-    A 150 x 100 tray with 2 mm internal walls is rigid enough to lift out full.
-    The internal fillets are load-bearing here: without them the wall-to-floor
-    joint cracks the first time the tray is dropped.
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu A1"
+  target_material: PLA
+  rationale: >
+    The internal fillets are structural rather than decorative. A square
+    wall-to-floor joint is a stress riser, and it is also a corner the printer
+    cannot actually produce -- the nozzle radius rounds it anyway, just less
+    predictably. Cell sizes are derived from the outer dimensions so the tray
+    fills the drawer exactly instead of leaving a gap at one end.
 
 expected_solids: 1
 

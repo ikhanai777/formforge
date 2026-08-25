@@ -1,8 +1,12 @@
 """The template registry (spec section 6.2).
 
-Every template is a hand-authored, human-reviewed, print-tested parametric
-definition. The registry is the single highest-leverage component in the system
-for two independent reasons:
+Every template is a hand-authored, human-reviewed parametric definition that
+builds and validates across its whole declared parameter range. Each carries an
+explicit `print_test` status; none of the templates in this repository has been
+physically printed yet, and nothing in the system may claim otherwise.
+
+The registry is the single highest-leverage component in the system for two
+independent reasons:
 
 * **Reliability.** A template hit is a schema fill, not a code-generation
   problem. There is no chance the model writes a broken boolean, because it does
@@ -51,22 +55,35 @@ class RegistryError(Exception):
 
 @dataclass(frozen=True)
 class PrintTest:
-    """Evidence that this template has been physically printed.
+    """The physical-print status of a template.
 
-    Untested templates are allowed but flagged, because the difference between
-    "this validates" and "this prints" is the entire product (spec section
-    13.3).
+    The difference between "this validates" and "this prints" is the entire
+    product (spec section 13.3), so the distinction is recorded explicitly
+    rather than implied. `status` is one of:
+
+        untested  designed and validated, never physically printed
+        passed    printed on the target machine, came out correct
+        failed    printed and did not work; `rationale` says how
+
+    A template defaults to `untested`, and nothing in the system may present an
+    untested template as print-tested. The target machine and material are the
+    configuration the defaults were chosen for, not a record of a test that
+    happened; `rationale` explains why the values are what they are.
     """
 
-    printer: str
-    material: str
-    date: str
-    result: str = "pass"
-    notes: str = ""
+    status: str = "untested"
+    target_printer: str = ""
+    target_material: str = "PLA"
+    rationale: str = ""
+    date: str = ""
 
     @property
     def passed(self) -> bool:
-        return self.result.lower() == "pass"
+        return self.status.lower() == "passed"
+
+    @property
+    def verified(self) -> bool:
+        return self.status.lower() in {"passed", "failed"}
 
 
 @dataclass
@@ -268,6 +285,7 @@ class Template:
             "description": self.description.strip(),
             "tags": self.tags,
             "print_tested": bool(self.tested and self.tested.passed),
+            "print_test_status": self.tested.status if self.tested else "unknown",
         }
 
     def detail(self) -> dict[str, Any]:
@@ -282,11 +300,11 @@ class Template:
             }
         )
         if self.tested:
-            payload["tested"] = {
-                "printer": self.tested.printer,
-                "material": self.tested.material,
-                "date": self.tested.date,
-                "result": self.tested.result,
+            payload["print_test"] = {
+                "status": self.tested.status,
+                "target_printer": self.tested.target_printer,
+                "target_material": self.tested.target_material,
+                "rationale": self.tested.rationale.strip(),
             }
         if self.notes:
             payload["notes"] = self.notes
@@ -657,15 +675,20 @@ def parse_template(raw: dict[str, Any]) -> Template:
     if language in {"build123d", "cadquery"}:
         _check_template_source(source, param_schema)
 
-    tested_raw = raw.get("tested")
+    test_raw = raw.get("print_test")
     tested = None
-    if isinstance(tested_raw, dict):
+    if isinstance(test_raw, dict):
+        status = str(test_raw.get("status", "untested")).lower()
+        if status not in {"untested", "passed", "failed"}:
+            raise RegistryError(
+                f"print_test.status must be untested, passed or failed; got {status!r}"
+            )
         tested = PrintTest(
-            printer=str(tested_raw.get("printer", "unknown")),
-            material=str(tested_raw.get("material", "PLA")),
-            date=str(tested_raw.get("date", "")),
-            result=str(tested_raw.get("result", "pass")),
-            notes=str(tested_raw.get("notes", "")),
+            status=status,
+            target_printer=str(test_raw.get("target_printer", "")),
+            target_material=str(test_raw.get("target_material", "PLA")),
+            rationale=str(test_raw.get("rationale", "")),
+            date=str(test_raw.get("date", "")),
         )
 
     text_features = [

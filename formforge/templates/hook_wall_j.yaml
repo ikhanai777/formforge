@@ -11,15 +11,18 @@ embedding_text: >
   wall hook key hook coat hook towel hook bag hanger headphone hook screw
   mounted hook peg entryway organiser hanging
 language: build123d
-tested:
-  printer: "Prusa MK4"
-  material: PETG
-  date: 2026-07-08
-  result: pass
-  notes: >
-    Held 4 kg on the 26 mm arm without visible deflection. Printed in the
-    modelled orientation the layers run across the arm, which is the only way
-    this survives -- printed lying down it snapped at the root under 1 kg.
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Prusa MK4"
+  target_material: PETG
+  rationale: >
+    Print orientation is the whole design here. Modelled standing as it hangs,
+    the layers run across the arm and the bending load is carried in-plane. Laid
+    flat on the plate the same geometry loads the layer bonds in tension, which
+    is the weak axis in FDM by a wide margin. The root fillet is not cosmetic:
+    it is where the bending moment concentrates.
 
 expected_solids: 1
 

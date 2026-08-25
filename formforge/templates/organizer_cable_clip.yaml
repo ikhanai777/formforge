@@ -11,15 +11,18 @@ embedding_text: >
   cable clip cable management desk cable holder wire clip cord organizer cable
   tidy under desk cable routing charger cable holder
 language: build123d
-tested:
-  printer: "Prusa MK4"
-  material: PETG
-  date: 2026-07-04
-  result: pass
-  notes: >
-    PETG, not PLA: the clip has to flex to accept the cable and PLA cracks at
-    the opening within a few cycles. A 55% opening grips a 6 mm cable firmly and
-    still lets it be pushed in by thumb.
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Prusa MK4"
+  target_material: PETG
+  rationale: >
+    PETG rather than PLA, because the clip has to flex open to accept the cable
+    and then spring back; PLA has very little of that in it and cracks at the
+    mouth. The opening fraction is the grip: lower holds harder and is harder to
+    push in, and below about 0.35 the arms are being asked to bend further than
+    the material will go.
 
 expected_solids: 1
 

@@ -12,15 +12,18 @@ embedding_text: >
   wall planter half moon semicircular pot wall mounted plant holder hanging
   planter flower pot herb planter wall vase succulent holder
 language: build123d
-tested:
-  printer: "Bambu P1S"
-  material: PLA
-  date: 2026-07-14
-  result: pass
-  notes: >
-    2.4 mm walls hold damp potting mix without weeping. Tested at 2.0 mm and it
-    darkened along the perimeter lines within a week of watering, which is why
-    the invariant floor is 2.0 and the default is 2.4.
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    2.4 mm walls for soil contact. Below about 2.0 mm an FDM wall is only two
+    perimeters with no infill between them, and water tracks along the seam
+    between them rather than being stopped by it -- the pot weeps and the wall
+    behind it stains. That is why the invariant floor is 2.0 and the default is
+    2.4 rather than the 1.6 mm that would be structurally sufficient.
 
 expected_solids: 1
 

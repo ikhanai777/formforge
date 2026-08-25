@@ -190,7 +190,7 @@ def registry_summary(templates: list) -> str:
     """
     if not templates:
         return ""
-    lines = ["EXISTING TEMPLATES (prefer these; they are print-tested)"]
+    lines = ["EXISTING TEMPLATES (prefer these; they are verified and parameterised)"]
     for template in sorted(templates, key=lambda t: t.id):
         tags = ", ".join(template.tags[:4])
         lines.append(f"  {template.id} [{template.category}] -- {template.display_name}")

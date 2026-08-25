@@ -11,15 +11,17 @@ embedding_text: >
   hex tile honeycomb wall panel hexagon wall art modular wall tiles geometric
   wall decor hexagonal panel accent wall tiles
 language: build123d
-tested:
-  printer: "Bambu A1"
-  material: PLA
-  date: 2026-07-12
-  result: pass
-  notes: >
-    Tiles butt cleanly with no gap at the default size. The lattice centre needs
-    at least 2 mm ribs; at 1.5 mm the unsupported spans between holes started
-    drooping on the first layer above the border.
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu A1"
+  target_material: PLA
+  rationale: >
+    Tiles tessellate at exactly the across-flats dimension, so a set butts edge
+    to edge with no gap. The 2 mm minimum on lattice ribs is about the
+    unsupported spans between holes: thinner ribs are both weak and, on the
+    first layer above the border, bridging further than they can hold.
 
 expected_solids: 1
 

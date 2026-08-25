@@ -304,7 +304,11 @@ def _cmd_templates(args) -> int:
             return 0
         print(f"{len(matches)} match(es) for {args.search!r}:\n")
         for match in matches:
-            tested = _ok(" [tested]") if match.template.tested else ""
+            tested = (
+                _ok(" [print tested]")
+                if match.template.tested and match.template.tested.passed
+                else ""
+            )
             print(
                 f"  {match.score:>5.2f}  {match.template.id:<28} "
                 f"{match.template.display_name}{tested}"
@@ -323,8 +327,8 @@ def _cmd_templates(args) -> int:
         if template.category != category:
             category = template.category
             print(_c(category.replace("_", " ").upper(), "1"))
-        tested = _ok(" [print tested]") if template.tested and template.tested.passed else ""
-        print(f"  {template.id:<28} {template.display_name}{tested}")
+        badge = _ok(" [print tested]") if template.tested and template.tested.passed else ""
+        print(f"  {template.id:<28} {template.display_name}{badge}")
     return 0
 
 
@@ -335,12 +339,19 @@ def _print_template(template) -> None:
     print(template.description)
     if template.tested:
         print()
-        print(
-            f"Print tested: {template.tested.printer}, {template.tested.material}, "
-            f"{template.tested.date} ({template.tested.result})"
-        )
-        if template.tested.notes:
-            print(_dim("  " + template.tested.notes.strip().replace("\n", "\n  ")))
+        if template.tested.passed:
+            print(
+                _ok(f"Print tested: {template.tested.target_printer}, "
+                    f"{template.tested.target_material}, {template.tested.date}")
+            )
+        else:
+            print(
+                _warn(f"Not physically printed ({template.tested.status}). Designed for "
+                      f"{template.tested.target_printer or 'a generic FDM printer'}, "
+                      f"{template.tested.target_material}.")
+            )
+        if template.tested.rationale:
+            print(_dim("  " + template.tested.rationale.strip().replace("\n", "\n  ")))
     print()
     print(_c("Parameters", "1"))
     for name, spec in template.properties.items():

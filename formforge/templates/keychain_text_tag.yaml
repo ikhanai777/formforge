@@ -11,14 +11,19 @@ embedding_text: >
   keychain key chain key ring name tag luggage tag bag tag text label
   personalised custom name engraved embossed lettering fob
 language: build123d
-tested:
-  printer: "Bambu P1S"
-  material: PLA
-  date: 2026-07-02
-  result: pass
-  notes: >
-    9 mm cap height reads cleanly at 0.6 mm emboss. 7 mm is the practical floor
-    on a 0.4 mm nozzle; below that the counters in letters like R and B close up.
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    Cap height drives everything else. At 9 mm a medium sans-serif has roughly a
+    1.6 mm stroke, comfortably above the 1.0 mm a 0.4 mm nozzle needs to form a
+    clean letter. The schema floor of 6 mm is where that stroke reaches the
+    limit; below it the counters in letters like R, B and 8 start to close up.
+    0.6 mm of relief is three layers at 0.2 mm, which reads without becoming a
+    thin standalone feature.
 
 expected_solids: 1
 

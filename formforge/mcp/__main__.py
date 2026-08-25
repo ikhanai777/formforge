@@ -43,9 +43,12 @@ result is watertight by construction.
 Suggested flow:
 
 1. `list_templates` first. A matching template is faster, cheaper and \
-print-tested, and it cannot produce broken geometry.
-2. `get_template_schema` to see the valid ranges and the DFM note on each \
-parameter. Those notes record what actually failed in testing.
+verified, and it cannot produce broken geometry. Templates report a \
+`print_test_status`; treat `untested` as "validated but never physically \
+printed" and say so if the user is about to print it.
+2. `get_template_schema` to see the valid ranges, the DFM note on each \
+parameter, and the cross-parameter requirements. The notes explain why each \
+default is what it is.
 3. `generate_from_template` with your values.
 4. Look at the returned preview images before telling the user it is done. The \
 section view is the only way to see inside a hollow part.

@@ -154,7 +154,7 @@ class ParsedIntent:
 
 _DIMENSION_RE = re.compile(
     r"(?P<value>\d+(?:\.\d+)?)\s*(?P<unit>mm|millimet(?:er|re)s?|cm|centimet(?:er|re)s?|"
-    r"in|inch(?:es)?|\"|')",
+    r"m|met(?:er|re)s?|ft|feet|foot|in|inch(?:es)?|\"|')\b",
     re.IGNORECASE,
 )
 
@@ -181,14 +181,22 @@ _SAYS_RE = re.compile(
 
 
 def to_mm(value: float, unit: str) -> float:
-    """Normalise a dimension to millimetres."""
+    """Normalise a dimension to millimetres.
+
+    Metres and feet are handled not because anyone prints at that scale, but
+    because someone occasionally asks for something that size and the request
+    has to be measurable before it can be rejected. Silently reading "3 metres"
+    as 3 mm would build a valid, useless model instead.
+    """
     unit = unit.lower().strip()
     if unit.startswith("cm") or unit.startswith("centim"):
         return value * 10.0
     if unit in {'"', "in"} or unit.startswith("inch"):
         return value * _INCH
-    if unit == "'":
+    if unit in {"'", "ft", "feet", "foot"}:
         return value * _INCH * 12
+    if unit == "m" or unit.startswith("met"):
+        return value * 1000.0
     return value
 
 

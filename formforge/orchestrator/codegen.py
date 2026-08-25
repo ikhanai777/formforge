@@ -4,7 +4,7 @@ Two paths with very different economics:
 
 * **Template fill.** The model chooses values for a JSON Schema. Deterministic,
   one cheap call, near-100% success -- there is no geometry to get wrong because
-  the geometry is already written and print-tested.
+  the geometry is already written and verified.
 * **Freeform codegen.** The model writes build123d from scratch, given the DFM
   rules, the API cheat-sheet, retrieved exemplar templates, and any prior
   failure from this session. Five to ten times the cost and far more failure
@@ -56,8 +56,9 @@ class CodegenResult:
 # ---------------------------------------------------------------------------
 
 PARAM_FILL_SYSTEM = """\
-You fill in the parameters of a print-tested 3D model template. You do not write \
-code and you do not design anything -- the geometry already exists and works.
+You fill in the parameters of a verified 3D model template. You do not write \
+code and you do not design anything -- the geometry already exists and is known \
+to build correctly across the ranges the schema declares.
 
 You are given a JSON Schema and a user's request. Return a JSON object of \
 parameter values only.
@@ -71,8 +72,8 @@ because it is a nicer number.
 - Where the user said nothing, keep the default. The defaults are the tested \
 configuration; changing one you were not asked about is how a validated \
 template starts producing parts that fail.
-- Read each parameter's description. They record what actually broke in \
-testing, not general advice.
+- Read each parameter's description. They explain why each default is what \
+it is, and what goes wrong at the edges of the range.
 - Return only the parameters you are setting. Anything you omit keeps its \
 default."""
 
@@ -314,7 +315,7 @@ def build_freeform_request(
     for template in exemplars or []:
         sections.append(
             f"\nEXEMPLAR -- {template.display_name} ({template.id})\n"
-            f"A working, print-tested script for a related part. Follow its "
+            f"A working, verified script for a related part. Follow its "
             f"structure and its selection style.\n\n```python\n{template.source}\n```"
         )
 
