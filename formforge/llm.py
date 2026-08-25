@@ -1,0 +1,442 @@
+"""Claude API access for the orchestrator (spec sections 5.2 and 5.3).
+
+Three things this layer owns, all of which are cost or reliability decisions
+rather than plumbing:
+
+* **Tiering and escalation.** A template fill is a Haiku job; freeform codegen is
+  a Sonnet job; a script that has failed three times is an Opus job. Escalating
+  the whole conversation once, rather than retrying forever at the same tier, is
+  what keeps a pathological request from burning unbounded tokens.
+* **Prompt caching.** The DFM rules, the API cheat-sheet and the registry
+  summary are a stable ~10k-token prefix shared by every codegen call. Cached,
+  they cost a tenth as much; uncached they dominate the bill. The prefix must be
+  byte-identical between calls, so everything that varies goes after it.
+* **A working offline path.** `OfflineClient` runs the same interface with no
+  API key: template matching is lexical, parameters come from schema defaults
+  and the numbers in the prompt. This is not a stub -- it is what makes the loop
+  testable in CI and demonstrable without credentials, and it degrades to
+  "template path only" rather than to "broken".
+
+Model IDs are resolved against `GET /v1/models` at startup rather than trusted
+blindly, because a hardcoded ID that has been retired fails at request time, in
+production, on a user's generation.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import logging
+import os
+import re
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+from typing import Any, Protocol
+
+log = logging.getLogger(__name__)
+
+
+class Tier(str, Enum):
+    """Which model handles a step, by how hard the step is."""
+
+    FAST = "fast"
+    STANDARD = "standard"
+    ESCALATED = "escalated"
+
+
+# Defaults, overridable by environment so a deployment can pin exact snapshots
+# without a code change (spec section 5.3).
+DEFAULT_MODELS: dict[Tier, str] = {
+    Tier.FAST: os.environ.get("FORMFORGE_MODEL_FAST", "claude-haiku-4-5"),
+    Tier.STANDARD: os.environ.get("FORMFORGE_MODEL_STANDARD", "claude-sonnet-5"),
+    Tier.ESCALATED: os.environ.get("FORMFORGE_MODEL_ESCALATED", "claude-opus-5"),
+}
+
+# USD per million tokens, (input, output). Used for the per-generation cost
+# accounting the `models` table records; not authoritative for billing.
+PRICING: dict[str, tuple[float, float]] = {
+    "claude-opus-5": (5.00, 25.00),
+    "claude-sonnet-5": (2.00, 10.00),
+    "claude-haiku-4-5": (1.00, 5.00),
+    "claude-fable-5": (10.00, 50.00),
+}
+# Cache reads bill at roughly a tenth of the input rate; writes at 1.25x.
+CACHE_READ_MULTIPLIER = 0.1
+CACHE_WRITE_MULTIPLIER = 1.25
+
+
+@dataclass
+class Usage:
+    """Token and cost accounting for one call, or summed over a generation."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    calls: int = 0
+    cost_usd: float = 0.0
+    models_used: list[str] = field(default_factory=list)
+
+    def add(self, other: "Usage") -> "Usage":
+        self.input_tokens += other.input_tokens
+        self.output_tokens += other.output_tokens
+        self.cache_read_tokens += other.cache_read_tokens
+        self.cache_write_tokens += other.cache_write_tokens
+        self.calls += other.calls
+        self.cost_usd = round(self.cost_usd + other.cost_usd, 6)
+        for model in other.models_used:
+            if model not in self.models_used:
+                self.models_used.append(model)
+        return self
+
+    @property
+    def cache_hit_rate(self) -> float:
+        """Share of input tokens served from cache.
+
+        Worth surfacing: a rate near zero means something is silently
+        invalidating the prefix, and the codegen path is costing several times
+        what it should.
+        """
+        total = self.input_tokens + self.cache_read_tokens
+        return round(self.cache_read_tokens / total, 4) if total else 0.0
+
+    def as_dict(self) -> dict:
+        return {
+            "calls": self.calls,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+            "cache_hit_rate": self.cache_hit_rate,
+            "cost_usd": round(self.cost_usd, 5),
+            "models_used": self.models_used,
+        }
+
+
+def price(model: str, usage: "Usage") -> float:
+    """Estimate the USD cost of one call."""
+    rates = PRICING.get(model)
+    if rates is None:
+        # An unpriced model is a real possibility after a release; report zero
+        # rather than guessing a rate that would silently skew the cost metric.
+        return 0.0
+    input_rate, output_rate = rates
+    return round(
+        (
+            usage.input_tokens * input_rate
+            + usage.cache_read_tokens * input_rate * CACHE_READ_MULTIPLIER
+            + usage.cache_write_tokens * input_rate * CACHE_WRITE_MULTIPLIER
+            + usage.output_tokens * output_rate
+        )
+        / 1_000_000,
+        6,
+    )
+
+
+@dataclass
+class Completion:
+    """One model response, normalised across the real and offline clients."""
+
+    text: str
+    usage: Usage
+    model: str
+    stop_reason: str | None = None
+    parsed: Any = None
+    refused: bool = False
+    refusal_category: str | None = None
+
+    def json_block(self) -> dict | None:
+        """Parse a JSON object out of the response text.
+
+        Models reliably emit valid JSON when asked, but wrap it in prose or a
+        fenced block often enough that a bare `json.loads` is not safe.
+        """
+        if self.parsed is not None:
+            return self.parsed if isinstance(self.parsed, dict) else None
+        return extract_json(self.text)
+
+
+def extract_json(text: str) -> dict | None:
+    """Pull the first JSON object out of a response, fences and prose included."""
+    if not text:
+        return None
+    fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    candidates = [fenced.group(1)] if fenced else []
+    candidates.append(text.strip())
+
+    brace = text.find("{")
+    if brace >= 0:
+        depth = 0
+        for index in range(brace, len(text)):
+            if text[index] == "{":
+                depth += 1
+            elif text[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    candidates.append(text[brace : index + 1])
+                    break
+
+    for candidate in candidates:
+        try:
+            value = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def extract_code(text: str) -> str:
+    """Pull a Python code block out of a response.
+
+    Falls back to the whole response, because a model that was told to emit only
+    code sometimes does exactly that.
+    """
+    if not text:
+        return ""
+    fenced = re.findall(r"```(?:python)?\s*\n(.*?)```", text, re.DOTALL)
+    if fenced:
+        return max(fenced, key=len).strip()
+    return text.strip()
+
+
+# ---------------------------------------------------------------------------
+# Client interface
+# ---------------------------------------------------------------------------
+
+
+class LLMClient(Protocol):
+    """What the orchestrator needs from a model, real or offline."""
+
+    @property
+    def available(self) -> bool:
+        """Can this client actually reach a model?"""
+        ...
+
+    def complete(
+        self,
+        *,
+        system: list[dict] | str,
+        messages: list[dict],
+        tier: Tier = Tier.STANDARD,
+        max_tokens: int = 8000,
+        effort: str = "high",
+        purpose: str = "",
+    ) -> Completion: ...
+
+
+class AnthropicClient:
+    """The real client.
+
+    Adaptive thinking is left on and depth is steered with `effort`: the
+    parametric-codegen task is exactly the kind of constrained-reasoning problem
+    where thinking pays for itself, and a wrong fillet radius costs a whole
+    repair iteration.
+    """
+
+    def __init__(
+        self,
+        models: dict[Tier, str] | None = None,
+        *,
+        api_key: str | None = None,
+        verify_models: bool = True,
+    ):
+        import anthropic  # noqa: PLC0415 -- optional dependency
+
+        self._anthropic = anthropic
+        self.client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+        self.models = dict(models or DEFAULT_MODELS)
+        self.total = Usage()
+        if verify_models:
+            self._verify_models()
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    def _verify_models(self) -> None:
+        """Check configured IDs against the live model list.
+
+        A retired ID fails at request time, mid-generation, for a user. Checking
+        once at startup turns that into a log line at boot.
+        """
+        try:
+            listed = {model.id for model in self.client.models.list()}
+        except Exception as exc:
+            log.warning("could not list models to verify configured IDs: %s", exc)
+            return
+        for tier, model_id in self.models.items():
+            if model_id not in listed:
+                log.warning(
+                    "configured %s model %r is not in the account's model list; "
+                    "requests using it will fail",
+                    tier.value,
+                    model_id,
+                )
+
+    def complete(
+        self,
+        *,
+        system: list[dict] | str,
+        messages: list[dict],
+        tier: Tier = Tier.STANDARD,
+        max_tokens: int = 8000,
+        effort: str = "high",
+        purpose: str = "",
+    ) -> Completion:
+        model = self.models[tier]
+        request: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system,
+            "messages": messages,
+            "output_config": {"effort": effort},
+        }
+
+        try:
+            response = self.client.messages.create(**request)
+        except self._anthropic.APIStatusError as exc:
+            raise LLMError(
+                f"{purpose or 'request'} failed on {model}: {exc}",
+                retryable=exc.status_code >= 500 or exc.status_code == 429,
+            ) from exc
+        except self._anthropic.APIConnectionError as exc:
+            raise LLMError(f"could not reach the Claude API: {exc}", retryable=True) from exc
+
+        usage = self._usage_from(response, model)
+        self.total.add(usage)
+
+        refused = response.stop_reason == "refusal"
+        category = None
+        if refused and getattr(response, "stop_details", None):
+            category = getattr(response.stop_details, "category", None)
+
+        text = "".join(
+            block.text for block in response.content if getattr(block, "type", "") == "text"
+        )
+        return Completion(
+            text=text,
+            usage=usage,
+            model=model,
+            stop_reason=response.stop_reason,
+            refused=refused,
+            refusal_category=category,
+        )
+
+    def _usage_from(self, response: Any, model: str) -> Usage:
+        raw = response.usage
+        usage = Usage(
+            input_tokens=getattr(raw, "input_tokens", 0) or 0,
+            output_tokens=getattr(raw, "output_tokens", 0) or 0,
+            cache_read_tokens=getattr(raw, "cache_read_input_tokens", 0) or 0,
+            cache_write_tokens=getattr(raw, "cache_creation_input_tokens", 0) or 0,
+            calls=1,
+            models_used=[model],
+        )
+        usage.cost_usd = price(model, usage)
+        return usage
+
+
+class LLMError(Exception):
+    """A model call failed in a way the caller may want to retry."""
+
+    def __init__(self, message: str, *, retryable: bool = False):
+        super().__init__(message)
+        self.retryable = retryable
+
+
+class OfflineClient:
+    """A deterministic stand-in for when no API key is configured.
+
+    It cannot write geometry, so the freeform path is unavailable and says so.
+    What it *can* do is the template path end to end: the registry's lexical
+    matcher picks a template and the numbers in the prompt fill its schema. That
+    covers the majority of real traffic by design (spec section 6.2), which is
+    why this is worth having rather than a hard failure.
+
+    Every method reports `offline: true` in its output so nothing downstream can
+    mistake a heuristic answer for a model's.
+    """
+
+    def __init__(self) -> None:
+        self.total = Usage()
+
+    @property
+    def available(self) -> bool:
+        return False
+
+    def complete(
+        self,
+        *,
+        system: list[dict] | str,
+        messages: list[dict],
+        tier: Tier = Tier.STANDARD,
+        max_tokens: int = 8000,
+        effort: str = "high",
+        purpose: str = "",
+    ) -> Completion:
+        raise LLMError(
+            f"no Claude API client is configured, so {purpose or 'this step'} "
+            "cannot run. Set ANTHROPIC_API_KEY (or run `ant auth login`) to "
+            "enable intent parsing, freeform code generation and visual "
+            "critique. The template path works without it."
+        )
+
+
+def build_client(
+    *,
+    prefer_offline: bool = False,
+    models: dict[Tier, str] | None = None,
+) -> LLMClient:
+    """Return the best available client, falling back to offline.
+
+    Deliberately never raises: a missing key is a reduced-capability mode, not a
+    crash, and the caller finds out by checking `.available`.
+    """
+    if prefer_offline or os.environ.get("FORMFORGE_OFFLINE") == "1":
+        return OfflineClient()
+    try:
+        import anthropic  # noqa: F401, PLC0415
+    except ImportError:
+        log.info("the anthropic package is not installed; running offline")
+        return OfflineClient()
+    try:
+        return AnthropicClient(models=models)
+    except Exception as exc:
+        log.info("no usable Claude API credentials (%s); running offline", exc)
+        return OfflineClient()
+
+
+# ---------------------------------------------------------------------------
+# Content helpers
+# ---------------------------------------------------------------------------
+
+
+def cached_system(*blocks: str) -> list[dict]:
+    """Build a system prompt whose stable prefix is cached.
+
+    The cache breakpoint goes on the last block, so everything before it is
+    cached together. Callers must pass the stable blocks first and anything
+    request-specific last, or the prefix changes every call and the cache never
+    hits (spec section 5.2).
+    """
+    parts = [text for text in blocks if text]
+    if not parts:
+        return []
+    payload = [{"type": "text", "text": text} for text in parts]
+    payload[-1]["cache_control"] = {"type": "ephemeral"}
+    return payload
+
+
+def image_block(path: str | Path, media_type: str = "image/png") -> dict:
+    """A base64 image content block, for the visual critique step."""
+    data = base64.standard_b64encode(Path(path).read_bytes()).decode("ascii")
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": media_type, "data": data},
+    }
+
+
+def text_block(text: str) -> dict:
+    return {"type": "text", "text": text}
