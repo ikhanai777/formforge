@@ -99,51 +99,75 @@ def _literal(node: ast.expr) -> Bindable | _Sentinel:
     return _SENTINEL
 
 
-class _Binder(ast.NodeTransformer):
-    def __init__(self, values: dict[str, Bindable]):
-        self.values = values
-        self.applied: dict[str, Bindable] = {}
-        self._depth = 0
+@dataclass
+class _Edit:
+    """One constant's value, located precisely in the source text."""
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
-        return self._nested(node)
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
-        return self._nested(node)
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
-        return self._nested(node)
-
-    def _nested(self, node: ast.AST) -> ast.AST:
-        # Only module-level constants are parameters. A same-named local inside
-        # a function is that function's business.
-        self._depth += 1
-        self.generic_visit(node)
-        self._depth -= 1
-        return node
-
-    def visit_Assign(self, node: ast.Assign) -> ast.AST:
-        if self._depth == 0:
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id in self.values:
-                    node.value = _to_node(self.values[target.id])
-                    self.applied[target.id] = self.values[target.id]
-        return node
-
-    def visit_AnnAssign(self, node: ast.AnnAssign) -> ast.AST:
-        if (
-            self._depth == 0
-            and node.value is not None
-            and isinstance(node.target, ast.Name)
-            and node.target.id in self.values
-        ):
-            node.value = _to_node(self.values[node.target.id])
-            self.applied[node.target.id] = self.values[node.target.id]
-        return node
+    name: str
+    value: Bindable
+    lineno: int
+    end_lineno: int
+    col_offset: int
+    end_col_offset: int
 
 
-def _to_node(value: Bindable) -> ast.expr:
-    return ast.Constant(value=value)
+def _find_edits(tree: ast.Module, values: dict[str, Bindable]) -> list[_Edit]:
+    """Locate the module-level constant assignments to rewrite.
+
+    Only module-level statements are considered: a same-named local inside a
+    function is that function's business, not a parameter.
+    """
+    edits: list[_Edit] = []
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign):
+            targets, value = list(stmt.targets), stmt.value
+        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+            targets, value = [stmt.target], stmt.value
+        else:
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id in values:
+                edits.append(
+                    _Edit(
+                        name=target.id,
+                        value=values[target.id],
+                        lineno=value.lineno,
+                        end_lineno=value.end_lineno or value.lineno,
+                        col_offset=value.col_offset,
+                        end_col_offset=value.end_col_offset or value.col_offset,
+                    )
+                )
+    return edits
+
+
+def _apply_edits(source: str, edits: list[_Edit]) -> str:
+    """Rewrite the located values in place, leaving the rest of the file alone.
+
+    Textual rather than an AST round-trip. `ast.unparse` would produce a correct
+    script but throw away every comment, blank line and formatting choice --
+    and the comments in a template are where the reasoning lives ("chamfer
+    before cutting the hole, or the hole's rim gets chamfered too"). Since the
+    bundle's `source.py` is meant to be read and edited by the user, losing them
+    would gut the artifact this whole approach exists to produce.
+    """
+    lines = source.splitlines(keepends=True)
+    # Apply from the end so earlier edits do not shift later offsets.
+    for edit in sorted(edits, key=lambda e: (e.lineno, e.col_offset), reverse=True):
+        start_index = edit.lineno - 1
+        end_index = edit.end_lineno - 1
+        if start_index < 0 or end_index >= len(lines):
+            continue
+        replacement = repr(edit.value)
+        if start_index == end_index:
+            line = lines[start_index]
+            lines[start_index] = (
+                line[: edit.col_offset] + replacement + line[edit.end_col_offset :]
+            )
+        else:
+            head = lines[start_index][: edit.col_offset]
+            tail = lines[end_index][edit.end_col_offset :]
+            lines[start_index : end_index + 1] = [head + replacement + tail]
+    return "".join(lines)
 
 
 def bind(
@@ -182,12 +206,22 @@ def bind(
         return BindResult(source=source, bound={}, unbound=unbound, declared=declared)
 
     tree = ast.parse(source)
-    binder = _Binder(values)
-    binder.visit(tree)
-    ast.fix_missing_locations(tree)
+    edits = _find_edits(tree, values)
+    rewritten = _apply_edits(source, edits)
+
+    # A rewrite that does not parse would be shipped to the user as a broken
+    # script and only fail when they ran it. Cheaper to catch here.
+    try:
+        ast.parse(rewritten)
+    except SyntaxError as exc:
+        raise BindingError(
+            f"binding parameters produced a script that does not parse: {exc.msg} "
+            f"at line {exc.lineno}"
+        ) from exc
+
     return BindResult(
-        source=ast.unparse(tree),
-        bound=binder.applied,
+        source=rewritten,
+        bound={edit.name: edit.value for edit in edits},
         unbound=unbound,
         declared=declared,
     )
