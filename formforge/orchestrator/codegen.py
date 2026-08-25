@@ -92,11 +92,14 @@ def fill_template_params(
     """
     heuristic = _heuristic_params(template, intent)
     if not getattr(client, "available", False):
-        return CodegenResult(
-            source=template.render_source(heuristic),
-            params=template.merge_params(heuristic),
-            language=template.language,
-            notes="parameters filled from the parsed dimensions (no model available)",
+        # Preconditions are the template's own declared requirements. They have
+        # to hold whoever chose the values -- skipping them here let the
+        # heuristic filler produce combinations the schema forbids and only
+        # discover it after the geometry was built.
+        return _finalise(
+            template,
+            heuristic,
+            note="parameters filled from the parsed dimensions (no model available)",
         )
 
     request = json.dumps(
@@ -124,11 +127,8 @@ def fill_template_params(
             purpose="template parameter fill",
         )
     except Exception as exc:
-        return CodegenResult(
-            source=template.render_source(heuristic),
-            params=template.merge_params(heuristic),
-            language=template.language,
-            notes=f"parameters filled heuristically: {exc}",
+        return _finalise(
+            template, heuristic, note=f"parameters filled heuristically: {exc}"
         )
 
     payload = completion.json_block() or {}
@@ -138,17 +138,39 @@ def fill_template_params(
     for key, value in heuristic.items():
         chosen.setdefault(key, value)
 
+    return _finalise(template, chosen)
+
+
+def _finalise(template, chosen: dict[str, Any], *, note: str = "") -> CodegenResult:
+    """Check the chosen values against the template and build the source.
+
+    Every route into a template's parameters comes through here -- the model,
+    the offline heuristic, and the fallback when the model call fails -- so a
+    template's declared requirements hold whoever picked the values.
+
+    When they do not hold, the values are not simply thrown away. First the
+    defaults nobody asked about are moved to see whether that resolves it
+    (`_relax_defaults`); only if it does not are the offending values dropped
+    back to their defaults and the reason recorded. Neither path fails the
+    generation: a template with a dozen parameters should not fail because one
+    knob nobody asked about landed out of range.
+    """
     problems = template.validate_params(template.merge_params(chosen))
     if problems:
-        # Rather than fail, drop the offending values back to their defaults and
-        # record it. A template with 12 parameters should not fail because the
-        # model picked one out-of-range value for a knob nobody asked about.
-        chosen = _drop_invalid(template, chosen)
-        note = "some parameter values were out of range and were reset: " + "; ".join(
-            problems[:4]
-        )
-    else:
-        note = ""
+        relaxed = _relax_defaults(template, chosen, problems)
+        if relaxed is not None:
+            chosen, moved = relaxed
+            adjusted = "adjusted to keep the requested size buildable: " + ", ".join(
+                f"{name}={value:g}" if isinstance(value, (int, float)) else f"{name}={value}"
+                for name, value in sorted(moved.items())
+            )
+            note = f"{note}; {adjusted}" if note else adjusted
+        else:
+            chosen = _drop_invalid(template, chosen)
+            reset = "some parameter values did not satisfy the template and were reset: " + (
+                "; ".join(problems[:3])
+            )
+            note = f"{note}; {reset}" if note else reset
 
     merged = template.merge_params(chosen)
     return CodegenResult(
@@ -169,20 +191,42 @@ def _heuristic_params(template, intent) -> dict[str, Any]:
     chosen: dict[str, Any] = {}
     properties = template.properties
 
+    # The template's dimension_map already says which of its parameters drives
+    # which bounding-box axis, so use that rather than guessing from names. A
+    # keychain's length parameter is `body_l_mm`, which contains neither
+    # "length" nor "width" -- matching on the word alone silently dropped a
+    # stated dimension and built the default size instead.
+    by_axis: dict[str, str] = {}
+    for param, axis in template.dimension_map.items():
+        by_axis.setdefault(axis, param)
+
+    # Intent axis names to bounding-box axes. "length" and "width" both mean the
+    # long horizontal axis in ordinary speech; "depth" is the other one.
+    axis_for = {
+        "length_mm": "width",
+        "width_mm": "width",
+        "depth_mm": "depth",
+        "height_mm": "height",
+    }
+
     for key, value in intent.dimensions.items():
         if key in properties:
             chosen[key] = value
             continue
-        axis = key.replace("_mm", "")
+        mapped = by_axis.get(axis_for.get(key, ""))
+        if mapped and mapped not in chosen:
+            chosen[mapped] = value
+            continue
+        word = key.replace("_mm", "")
         for name in properties:
             if name in chosen:
                 continue
-            if axis in name and name.endswith("_mm"):
+            if word in name and name.endswith("_mm"):
                 chosen[name] = value
                 break
 
     # A width with nowhere to go still has an obvious home on a round or
-    # regular-polygon part.
+    # regular-polygon part, where the schema names the size after the shape.
     if "width_mm" in intent.dimensions:
         for name in ("across_flats_mm", "plate_d_mm", "outer_l_mm", "body_l_mm"):
             if name in properties and name not in chosen:
@@ -193,6 +237,7 @@ def _heuristic_params(template, intent) -> dict[str, Any]:
         for name in ("text", "label", "caption"):
             if name in properties:
                 chosen[name] = intent.text_content
+                _fit_body_to_text(template, chosen, intent.text_content)
                 break
 
     if intent.mount_type and "mount" in properties:
@@ -207,6 +252,45 @@ def _heuristic_params(template, intent) -> dict[str, Any]:
     }
 
 
+# Roughly the advance width of a character as a fraction of cap height, for a
+# medium-weight sans-serif. Used only to size a body to its text, so being a
+# little generous is the safe direction.
+_CHAR_ADVANCE_RATIO = 0.62
+
+
+def _fit_body_to_text(template, chosen: dict[str, Any], text: str) -> None:
+    """Lengthen the body so the requested text fits on it.
+
+    Without this, a long name on a default-length tag violates the template's
+    own "text must fit" precondition, the value is reset, and the user silently
+    gets a tag saying something other than what they asked for. Growing the body
+    is what a person would do, and the schema's maximum bounds it.
+    """
+    properties = template.properties
+    length_param = next(
+        (n for n in ("body_l_mm", "outer_l_mm", "plate_d_mm") if n in properties), None
+    )
+    if not length_param:
+        return
+
+    merged = template.merge_params(chosen)
+    cap = float(merged.get("cap_h_mm") or 0)
+    if cap <= 0:
+        return
+
+    inset = float(merged.get("ring_inset_mm") or 0)
+    needed = len(text) * cap * _CHAR_ADVANCE_RATIO + inset * 2 + 4.0
+    spec = properties[length_param]
+    maximum = spec.get("maximum")
+    current = float(merged.get(length_param) or 0)
+    if needed <= current:
+        return
+
+    target = min(needed, maximum) if maximum is not None else needed
+    if target > current:
+        chosen[length_param] = round(target, 1)
+
+
 def _out_of_range(spec: dict | None, value: Any) -> bool:
     if not isinstance(spec, dict) or not isinstance(value, (int, float)):
         return False
@@ -216,14 +300,102 @@ def _out_of_range(spec: dict | None, value: Any) -> bool:
     return maximum is not None and value > maximum
 
 
+# How many defaults the relaxation pass may move. Three is enough for the
+# chains the registry actually contains (a border width that constrains a
+# hanging hole that constrains a lattice) and small enough that the result is
+# still describable in one sentence.
+_RELAX_ROUNDS = 3
+
+
+def _relax_defaults(
+    template, chosen: dict[str, Any], problems: list[str]
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Try to satisfy failing preconditions by moving *defaults*, not the ask.
+
+    When a stated dimension and an untouched default cannot both hold, dropping
+    the stated value is the wrong half to lose: the user asked for a 40 mm tile
+    and would get a 100 mm one, with the reason buried in a note. The default
+    border width they never mentioned is the knob that should move.
+
+    So: among the parameters the failing rules mention that the caller did not
+    choose, try each at either end of its declared range, keep the first move
+    that leaves strictly fewer problems, and go again. Returns the parameters
+    and what was moved, or `None` if nothing worked -- in which case the caller
+    falls back to dropping values.
+
+    Deliberately not a solver: two candidate values per parameter, one
+    parameter per round, three rounds, in schema order. Bounded, deterministic
+    and explainable. A template that needs more than this to yield any valid
+    combination has a schema problem, and the range sweep is what should be
+    reporting it.
+    """
+    from ..validation.invariants import names_in  # noqa: PLC0415
+
+    properties = template.properties
+    candidate = dict(chosen)
+    remaining = list(problems)
+    moved: dict[str, Any] = {}
+
+    for _ in range(_RELAX_ROUNDS):
+        failing: set[str] = set()
+        for expression in template.preconditions:
+            if any(f"`{expression}`" in problem for problem in remaining):
+                failing |= names_in(expression)
+
+        progress = None
+        for name in properties:
+            if name not in failing or name in chosen or name in moved:
+                continue
+            spec = properties[name]
+            if not isinstance(spec, dict):
+                continue
+            for bound in ("minimum", "maximum"):
+                value = spec.get(bound)
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                trial = dict(candidate)
+                trial[name] = value
+                trial_problems = template.validate_params(template.merge_params(trial))
+                if len(trial_problems) < len(remaining):
+                    progress = (name, value, trial, trial_problems)
+                    break
+            if progress:
+                break
+
+        if progress is None:
+            return None
+        name, value, candidate, remaining = progress
+        moved[name] = value
+        if not remaining:
+            return candidate, moved
+
+    return None
+
+
 def _drop_invalid(template, chosen: dict[str, Any]) -> dict[str, Any]:
-    """Remove only the values that fail validation, keeping the rest."""
+    """Remove only the values that fail validation, keeping the rest.
+
+    Admitted one at a time, and retried until nothing more can be admitted.
+    The retry is not tidiness: preconditions relate parameters to each other,
+    so a value can be invalid on its own and valid once its partner is in. A
+    long label does not fit a default-length tag, but fits the longer body that
+    arrives two keys later -- a single pass would drop the user's text and keep
+    the length, which is the wrong half of the pair to lose.
+    """
     kept: dict[str, Any] = {}
-    for key, value in chosen.items():
-        candidate = dict(kept)
-        candidate[key] = value
-        if not template.validate_params(template.merge_params(candidate)):
-            kept = candidate
+    pending = dict(chosen)
+    while pending:
+        admitted = []
+        for key, value in pending.items():
+            candidate = dict(kept)
+            candidate[key] = value
+            if not template.validate_params(template.merge_params(candidate)):
+                kept = candidate
+                admitted.append(key)
+        if not admitted:
+            break
+        for key in admitted:
+            pending.pop(key)
     return kept
 
 

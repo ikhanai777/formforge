@@ -100,6 +100,26 @@ def evaluate(expression: str, context: dict[str, Any]) -> Any:
     return _eval_node(tree.body, context, expression)
 
 
+def names_in(expression: str) -> set[str]:
+    """The identifiers an expression reads.
+
+    Used to answer "which parameters is this rule actually about", so a caller
+    that has to resolve a failing rule knows which knobs are in play. Parsed
+    with the same `implies` rewrite as `evaluate`, so the two never disagree
+    about what an expression contains. An expression that does not parse simply
+    names nothing -- reporting the syntax error is `evaluate`'s job.
+    """
+    match = _IMPLIES_RE.match(expression.strip())
+    source = (
+        f"(not ({match.group('lhs')})) or ({match.group('rhs')})" if match else expression
+    )
+    try:
+        tree = ast.parse(source, mode="eval")
+    except SyntaxError:
+        return set()
+    return {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+
+
 def _eval_node(node: ast.AST, ctx: dict[str, Any], source: str) -> Any:
     if isinstance(node, ast.Constant):
         return node.value

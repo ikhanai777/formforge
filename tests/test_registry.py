@@ -152,6 +152,28 @@ class TestMatching:
         assert match is not None
         assert match.template.id == expected, f"{query!r} matched {match.template.id}"
 
+    def test_a_literal_to_render_outranks_an_equally_similar_template(self, registry):
+        """The tie the lexical scorer cannot break on its own.
+
+        'a keychain that says "RIVER"' shares exactly one scoring token with
+        both keychain templates -- "keychain". The literal itself matches
+        nothing, so the two score identically and the winner would be whichever
+        loaded first. A bottle opener has nowhere to put the word.
+        """
+        query = 'a keychain that says "RIVER", 70mm long'
+        assert registry.best_match(query).template.id in {
+            "keychain_text_tag",
+            "keychain_bottle_opener",
+        }
+        match = registry.best_match(query, requires_text=True)
+        assert match.template.id == "keychain_text_tag"
+
+    def test_the_text_signal_only_demotes_templates_that_cannot_render_text(self, registry):
+        """It must not reorder requests that carry no literal."""
+        plain = registry.best_match("bottle opener keyring")
+        assert plain.template.id == "keychain_bottle_opener"
+        assert registry.best_match("bottle opener keyring", requires_text=False).score == plain.score
+
     def test_a_strong_match_routes_to_the_template_path(self, registry):
         route, match = registry.route("gridfinity bin")
         assert route is Route.TEMPLATE

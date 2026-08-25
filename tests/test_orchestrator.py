@@ -190,3 +190,58 @@ class TestLoop:
         payload = json.loads(json.dumps(result.as_dict(), default=str))
         assert payload["status"] == "ok"
         assert payload["events"]
+
+
+class TestOfflineParameterFilling:
+    """The no-model path fills a template's schema from the parsed prompt.
+
+    It is not a fallback nobody exercises: with no API key this is the whole
+    template path, and it is what the benchmark measures.
+    """
+
+    def _fill(self, registry, prompt: str):
+        from formforge.orchestrator.codegen import fill_template_params
+
+        parsed = parse_heuristically(prompt)
+        route, match = registry.route(
+            parsed.search_query(), parsed.category, requires_text=bool(parsed.text_content)
+        )
+        assert match is not None
+        return match.template, fill_template_params(match.template, parsed, OfflineClient())
+
+    def test_a_stated_length_reaches_the_parameter_that_controls_it(self, registry):
+        """`length_mm` has to find `body_l_mm`, which shares no word with it."""
+        template, result = self._fill(registry, 'a keychain that says "RIVER", 70mm long')
+        assert template.id == "keychain_text_tag"
+        assert result.params["body_l_mm"] == pytest.approx(70.0)
+        assert result.params["text"] == "RIVER"
+
+    def test_a_long_label_lengthens_the_tag_rather_than_being_dropped(self, registry):
+        """The failure this replaced was silent: the tag said something else."""
+        template, result = self._fill(
+            registry, 'a luggage tag with "A. MORGAN" on it, big enough to read'
+        )
+        assert result.params["text"] == "A. MORGAN"
+        assert not template.check_preconditions(result.params)
+
+    def test_the_offline_path_enforces_preconditions(self, registry):
+        """Whoever chose the values, the template's own requirements hold."""
+        template, result = self._fill(registry, "a hex tile wall panel 60mm across")
+        assert template.validate_params(result.params) == []
+
+    def test_a_default_yields_to_the_requested_size_rather_than_the_reverse(self, registry):
+        """A 40 mm tile is buildable, but not with the default border.
+
+        The failure this replaced reset the *stated* dimension and built a
+        100 mm tile -- the user's actual request was the one thing dropped.
+        """
+        template, result = self._fill(registry, "a hex tile wall panel 40mm across")
+        assert template.id == "wall_decor_hex_tile"
+        assert result.params["across_flats_mm"] == pytest.approx(40.0)
+        assert template.validate_params(result.params) == []
+        assert "adjusted" in result.notes
+
+    def test_what_was_adjusted_is_named(self, registry):
+        """A silent adjustment is the same bug wearing a different hat."""
+        _, result = self._fill(registry, "a hex tile wall panel 40mm across")
+        assert "border_w_mm" in result.notes

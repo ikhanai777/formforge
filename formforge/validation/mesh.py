@@ -71,6 +71,7 @@ class ThicknessResult:
 
     min_mm: float
     p01_mm: float
+    p05_mm: float
     median_mm: float
     location_mm: list[float] | None
     samples: int
@@ -87,6 +88,20 @@ class ThicknessResult:
         because tessellating and sampling it lands a few microns low.
         """
         return self.p01_mm + THICKNESS_TOLERANCE_MM
+
+    @property
+    def p05_with_tolerance_mm(self) -> float:
+        """The representative thickness when the model carries raised text.
+
+        Embossed lettering is thin by design, and on a small tag its sidewalls
+        are a few percent of the sampled surface -- enough to drag the 1st
+        percentile below what the body actually measures. Text is governed by
+        cap height, stroke width and relief depth, which the text-legibility
+        check owns; using a higher percentile here stops the two checks
+        double-counting the same geometry and rejecting a perfectly printable
+        name tag.
+        """
+        return self.p05_mm + THICKNESS_TOLERANCE_MM
 
 
 @dataclass
@@ -361,6 +376,7 @@ class MeshMeasurements:
         return ThicknessResult(
             min_mm=float(distances.min()),
             p01_mm=float(np.percentile(distances, 1)),
+            p05_mm=float(np.percentile(distances, 5)),
             median_mm=float(np.median(distances)),
             location_mm=[float(v) for v in hit_points[worst]],
             samples=int(len(distances)),

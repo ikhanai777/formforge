@@ -42,6 +42,14 @@ the mesh is tessellated at 0.05 mm and sampled finitely, so a wall modelled at
 exactly 2.0 mm measures 1.9997 — and "exactly the minimum" is precisely what a
 careful template author picks.
 
+*On a model with raised lettering, the 5th percentile.* Text sidewalls are thin
+by design, and on a small tag they are enough of the sampled surface to drag the
+1st percentile below what the body actually measures. Text is already governed
+by cap height, stroke width and relief depth in the legibility check; measuring
+it a second time as thin walls rejected a printable name tag twice for the same
+reason. The template declares that it renders text, so this is not a guess about
+the geometry.
+
 The same value is exposed to template invariants as `min_wall`, so a template's
 own guarantee and the built-in check compare the same number. If they differed,
 every template author would have to declare a bound lower than the rule they are
@@ -149,6 +157,48 @@ So templates declare both:
 
 Both are evaluated by a restricted AST walker, never `eval`, so a registry entry
 cannot become an execution vector.
+
+### Routing knows when a request carries a literal
+
+Similarity scoring cannot route `a keychain that says "RIVER"`. The literal
+itself matches no template's vocabulary, so the query shares exactly one
+scoring token — "keychain" — with both keychain templates, they tie, and the
+winner is whichever loaded first. Half the time that is the bottle opener,
+which has nowhere to put the word: it would build a plausible part and silently
+drop the one thing the user actually asked for.
+
+So routing takes a second input: whether the parsed intent carries text to
+render. Templates that declare no text parameter are scaled down when it does.
+A penalty rather than a boost for the ones that can, because the claim is that
+those candidates are *wrong*, not that the others are more similar — and
+scaling down can never lift a weak match over a threshold it had not already
+cleared. Ties are then broken by template id, so the same query always routes
+the same way.
+
+### When two values conflict, the default yields
+
+A stated dimension and an untouched default can be individually valid and
+jointly forbidden. A 40 mm hex tile is within the schema; so is the 10 mm
+default border; together they violate the template's own
+`border_w_mm * 2 + 20 < across_flats_mm`.
+
+The first version resolved this by dropping values until what remained
+validated — and dropped the 40 mm, because it was the value present in the
+conflict. The user asked for a 40 mm tile and got a 100 mm one, with the reason
+buried in a note. That is the wrong half of the pair to lose: the border width
+is a knob nobody mentioned.
+
+So before dropping anything, the parameters the failing rules mention *that the
+caller did not choose* are tried at either end of their declared range, keeping
+any move that leaves strictly fewer problems, for at most three rounds. It is
+deliberately not a solver — two candidate values per parameter, one parameter
+per round, in schema order — because the result has to be describable in a
+sentence, and it is: "border_w_mm=6, hang_d_mm=0". A template that needs more
+than that to produce any valid combination has a schema problem, and §6 is what
+should be reporting it.
+
+Whatever moved is named in the result. A silent adjustment is the same bug
+wearing a different hat.
 
 ### The offline path is real
 

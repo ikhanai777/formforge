@@ -28,8 +28,9 @@ def run(
     text_features: list[dict] | None = None,
 ) -> None:
     """Append every Tier 2 check to the report."""
-    _wall_thickness(m, report, limits)
-    _feature_size(m, report, limits)
+    has_text = bool(text_features)
+    _wall_thickness(m, report, limits, has_text=has_text)
+    _feature_size(m, report, limits, has_text=has_text)
     _holes(report, limits, brep_features)
     _build_volume(m, report, limits)
     _overhangs(m, report, limits)
@@ -42,7 +43,13 @@ def run(
     _triangle_count(m, report, limits)
 
 
-def _wall_thickness(m: MeshMeasurements, report: ValidationReport, lim: DFMLimits) -> None:
+def _wall_thickness(
+    m: MeshMeasurements,
+    report: ValidationReport,
+    lim: DFMLimits,
+    *,
+    has_text: bool = False,
+) -> None:
     thickness = m.thickness
     if thickness is None:
         report.skipped.append("printability.wall_thickness")
@@ -51,11 +58,18 @@ def _wall_thickness(m: MeshMeasurements, report: ValidationReport, lim: DFMLimit
     report.measurements["min_wall_mm"] = round(thickness.min_mm, 3)
     report.measurements["median_wall_mm"] = round(thickness.median_mm, 3)
 
-    # The 1st percentile rather than the raw minimum decides the hard failure.
-    # A single sample landing in the tangent crease of a fillet reads thin and
+    # A percentile rather than the raw minimum decides the hard failure. A
+    # single sample landing in the tangent crease of a fillet reads thin and
     # prints fine; failing on it would reject good models forever. The absolute
     # minimum is still reported so the model knows where to look.
-    representative = thickness.p01_with_tolerance_mm
+    #
+    # On a model with raised lettering the text sidewalls are a few percent of
+    # the sampled surface and are thin by design. Text is checked separately,
+    # against cap height, stroke width and relief depth; measuring it again here
+    # as thin walls would reject a printable name tag twice for the same reason.
+    representative = (
+        thickness.p05_with_tolerance_mm if has_text else thickness.p01_with_tolerance_mm
+    )
     hard_ok = representative >= lim.min_wall_fail_mm
     report.add(
         check(
@@ -65,7 +79,7 @@ def _wall_thickness(m: MeshMeasurements, report: ValidationReport, lim: DFMLimit
             hard_ok,
             message=(
                 f"Thinnest wall {thickness.min_mm:.2f} mm "
-                f"(1st percentile {representative:.2f} mm)."
+                f"(representative {representative:.2f} mm)."
                 if hard_ok
                 else f"Walls down to {representative:.2f} mm, below the "
                 f"{lim.min_wall_fail_mm:.2f} mm the nozzle can extrude. These "
@@ -106,7 +120,13 @@ def _wall_thickness(m: MeshMeasurements, report: ValidationReport, lim: DFMLimit
         )
 
 
-def _feature_size(m: MeshMeasurements, report: ValidationReport, lim: DFMLimits) -> None:
+def _feature_size(
+    m: MeshMeasurements,
+    report: ValidationReport,
+    lim: DFMLimits,
+    *,
+    has_text: bool = False,
+) -> None:
     """Smallest standalone protrusion.
 
     Approximated from the thickness distribution: a protrusion thinner than the
@@ -125,7 +145,9 @@ def _feature_size(m: MeshMeasurements, report: ValidationReport, lim: DFMLimits)
     # long thin tail wherever the surface curves sharply, and failing a whole
     # model on its single thinnest sample rejects good parts -- the same reason
     # the wall check uses a percentile.
-    measured = thickness.p01_with_tolerance_mm
+    measured = (
+        thickness.p05_with_tolerance_mm if has_text else thickness.p01_with_tolerance_mm
+    )
     ok = not (isolated and measured < lim.min_feature_mm)
     report.add(
         check(

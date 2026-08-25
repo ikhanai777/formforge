@@ -270,7 +270,11 @@ class Orchestrator:
             from ..registry import Match  # noqa: PLC0415
 
             return Route.TEMPLATE, Match(template, 1.0, Route.TEMPLATE)
-        return self.registry.route(parsed.search_query(), parsed.category)
+        return self.registry.route(
+            parsed.search_query(),
+            parsed.category,
+            requires_text=bool(parsed.text_content),
+        )
 
     # -- the loop ----------------------------------------------------------
     def _iterate(
@@ -476,7 +480,12 @@ class Orchestrator:
         exemplars = []
         if route is Route.TEMPLATE_SEED and template is not None:
             exemplars.append(template)
-        for match in self.registry.search(parsed.search_query(), parsed.category, limit=3):
+        for match in self.registry.search(
+            parsed.search_query(),
+            parsed.category,
+            limit=3,
+            requires_text=bool(parsed.text_content),
+        ):
             if match.template not in exemplars:
                 exemplars.append(match.template)
         return exemplars[:3]

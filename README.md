@@ -199,7 +199,14 @@ pytest                                             # the suite
 python -m formforge.eval.check_templates           # every template builds
 python -m formforge.eval.check_templates --extremes  # ...at every range extreme
 python -m formforge.eval.benchmark                 # the metrics from the spec
+python -m formforge.eval.benchmark --baseline docs/benchmark-baseline.json
 ```
+
+`docs/benchmark-baseline.json` is the last committed run, and `--baseline`
+fails when a metric drops against it. Almost every change here is to a prompt,
+a DFM constant or a template — none of which have types, and all of which
+regress silently — so the baseline is the type system they do not have. Update
+it in the same commit as the change that moves it, and say which metric moved.
 
 The template harness is not optional tooling. A schema that permits a 200 mm
 planter is a promise that a 200 mm planter builds, and the sweep is what holds

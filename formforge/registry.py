@@ -610,27 +610,59 @@ class TemplateRegistry:
         query: str,
         category: str | None = None,
         limit: int = 5,
+        requires_text: bool = False,
     ) -> list[Match]:
-        """Rank templates against a query, best first."""
+        """Rank templates against a query, best first.
+
+        `requires_text` says the request carries a literal the part has to
+        render -- a quoted string, or "a tag that says RIVER". A template with
+        no text parameter cannot satisfy that request at all: it would build
+        something plausible and silently drop the one word the user actually
+        asked for. Similarity scoring cannot see this, because the literal
+        itself ("RIVER") matches no template's vocabulary, so the two keychain
+        templates score identically on the word "keychain" alone and the tie
+        falls to whichever loaded first.
+        """
         candidates = self.list(category)
         template_threshold, seed_threshold = self.matcher.thresholds
         scored: list[Match] = []
         for template in candidates:
             score = self.matcher.score(query, template)
+            if requires_text and not template.text_features:
+                score *= _NO_TEXT_PENALTY
             scored.append(Match(template, score, _route_for(score, template_threshold, seed_threshold)))
-        scored.sort(key=lambda m: m.score, reverse=True)
+        # Ties are broken by id so the same query always routes the same way.
+        scored.sort(key=lambda m: (-m.score, m.template.id))
         return scored[:limit]
 
-    def best_match(self, query: str, category: str | None = None) -> Match | None:
-        matches = self.search(query, category, limit=1)
+    def best_match(
+        self,
+        query: str,
+        category: str | None = None,
+        requires_text: bool = False,
+    ) -> Match | None:
+        matches = self.search(query, category, limit=1, requires_text=requires_text)
         return matches[0] if matches else None
 
-    def route(self, query: str, category: str | None = None) -> tuple[Route, Match | None]:
+    def route(
+        self,
+        query: str,
+        category: str | None = None,
+        requires_text: bool = False,
+    ) -> tuple[Route, Match | None]:
         """The generation path this query should take, and why."""
-        match = self.best_match(query, category)
+        match = self.best_match(query, category, requires_text=requires_text)
         if match is None:
             return Route.FREEFORM, None
         return match.route, match
+
+
+# How far a template that cannot render text is pushed down when the request
+# names a literal to render. A penalty rather than a boost for the templates
+# that can: the evidence is that these candidates are *wrong*, not that the
+# others are more similar, and scaling down never lifts a weak match over a
+# routing threshold it had not already cleared.
+_NO_TEXT_PENALTY = 0.5
 
 
 def _route_for(score: float, template_threshold: float, seed_threshold: float) -> Route:

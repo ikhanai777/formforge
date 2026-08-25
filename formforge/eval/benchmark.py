@@ -53,6 +53,15 @@ LOWER_IS_BETTER = {"mean_iterations", "p50_latency_s", "p95_latency_s", "cost_pe
 # How far a metric may drop before a regression gate fails it (spec 13.3).
 REGRESSION_MARGIN = 0.02
 
+# Metrics measured in seconds or dollars rather than as a fraction, where the
+# same absolute margin means something entirely different. Two points of
+# accuracy is a real regression; twenty milliseconds of wall clock is the
+# machine being busy. Holding a latency to +/-0.02 s produces a gate that fails
+# on noise, which is worse than no gate at all -- it gets muted, and then the
+# real regressions go through with it. These get a proportional band instead.
+NOISY_METRICS = {"p50_latency_s", "p95_latency_s", "cost_per_accepted_usd"}
+NOISE_FRACTION = 0.25
+
 
 @dataclass
 class CaseOutcome:
@@ -66,8 +75,15 @@ class CaseOutcome:
     iterations: int = 0
     template_id: str | None = None
     route: str = ""
+    # Did this case produce a mesh? A case that never built has no geometry to
+    # be manifold or unprintable, and folding it into those rates conflates
+    # "the geometry was bad" with "the geometry was never attempted".
+    built: bool = False
     manifold: bool = False
     dfm_passed: bool = False
+    # Set when the case could not run for want of a capability rather than
+    # because anything was wrong with it -- e.g. freeform with no API key.
+    unavailable: bool = False
     dimensions_correct: bool | None = None
     routed_correctly: bool | None = None
     refusal_correct: bool | None = None
@@ -131,7 +147,17 @@ class BenchmarkReport:
                 f"{'<=' if name in LOWER_IS_BETTER else '>='} {_fmt(name, target)}  [{marker}]"
             )
 
-        failures = [o for o in self.outcomes if not o.ok]
+        unavailable = [o for o in self.outcomes if o.unavailable]
+        if unavailable:
+            lines += [
+                "",
+                f"{len(unavailable)} case(s) could not run and are excluded from "
+                "every rate above:",
+            ]
+            for outcome in unavailable[:20]:
+                lines.append(f"  {outcome.case_id:<28} {outcome.message[:70]}")
+
+        failures = [o for o in self.outcomes if not o.ok and not o.unavailable]
         if failures:
             lines += ["", f"{len(failures)} case(s) did not pass:"]
             for outcome in failures[:20]:
@@ -186,8 +212,10 @@ def run_case(case: BenchmarkCase, orchestrator: Orchestrator) -> CaseOutcome:
         iterations=result.iterations,
         template_id=result.template_id,
         route=result.route,
+        built=bool(measurements),
         manifold=bool(measurements.get("watertight")),
         dfm_passed=bool(report.get("passed")),
+        unavailable="needs a Claude API client" in (result.message or ""),
         overhang_fraction=measurements.get("overhang_fraction"),
         cost_usd=float(result.usage.cost_usd or 0.0),
         message=result.message,
@@ -235,8 +263,15 @@ def _dimensions_match(bbox: list[float], expected: dict[str, float], tolerance: 
 
 def compute_metrics(outcomes: list[CaseOutcome]) -> dict[str, float]:
     """Aggregate the per-case outcomes into the spec's metric set."""
-    built = [o for o in outcomes if o.difficulty not in {"adversarial", "clarify"}]
-    succeeded = [o for o in built if o.ok]
+    attempted = [o for o in outcomes if o.difficulty not in {"adversarial", "clarify"}]
+    # Cases blocked by a missing capability are excluded from every rate. They
+    # are counted separately, because a run with no API key would otherwise
+    # report the freeform cases as geometry failures -- which is exactly the
+    # opposite of what happened.
+    scorable = [o for o in attempted if not o.unavailable]
+    succeeded = [o for o in scorable if o.ok]
+    # Geometry rates are measured over cases that produced geometry.
+    with_geometry = [o for o in scorable if o.built]
     metrics: dict[str, float] = {}
 
     def record(name: str, numerator: list, denominator: list) -> None:
@@ -252,9 +287,9 @@ def compute_metrics(outcomes: list[CaseOutcome]) -> dict[str, float]:
     def rate(numerator: list, denominator: list) -> float:
         return round(len(numerator) / len(denominator), 4) if denominator else 0.0
 
-    record("completion_rate", succeeded, built)
-    record("manifold_rate", [o for o in built if o.manifold], built)
-    record("dfm_pass_rate", [o for o in built if o.dfm_passed], built)
+    record("completion_rate", succeeded, scorable)
+    record("manifold_rate", [o for o in with_geometry if o.manifold], with_geometry)
+    record("dfm_pass_rate", [o for o in with_geometry if o.dfm_passed], with_geometry)
     record("first_pass_rate", [o for o in succeeded if o.iterations <= 1], succeeded)
 
     if succeeded:
@@ -262,14 +297,14 @@ def compute_metrics(outcomes: list[CaseOutcome]) -> dict[str, float]:
             statistics.mean(o.iterations for o in succeeded), 3
         )
 
-    dimensioned = [o for o in built if o.dimensions_correct is not None]
+    dimensioned = [o for o in scorable if o.dimensions_correct is not None]
     record(
         "dimensional_fidelity", [o for o in dimensioned if o.dimensions_correct], dimensioned
     )
 
     routed = [o for o in outcomes if o.routed_correctly is not None]
     record("routing_accuracy", [o for o in routed if o.routed_correctly], routed)
-    record("template_hit_rate", [o for o in built if o.template_id], built)
+    record("template_hit_rate", [o for o in scorable if o.template_id], scorable)
 
     support_free = [o for o in succeeded if o.overhang_fraction is not None]
     record(
@@ -341,11 +376,14 @@ def compare(current: BenchmarkReport, baseline: dict) -> list[str]:
         if before is None:
             continue
         delta = value - before
-        worse = delta > REGRESSION_MARGIN if name in LOWER_IS_BETTER else delta < -REGRESSION_MARGIN
+        margin = REGRESSION_MARGIN
+        if name in NOISY_METRICS:
+            margin = max(margin, abs(before) * NOISE_FRACTION)
+        worse = delta > margin if name in LOWER_IS_BETTER else delta < -margin
         if worse:
             regressions.append(
                 f"{name}: {_fmt(name, before)} -> {_fmt(name, value)} "
-                f"({delta:+.3f}, margin {REGRESSION_MARGIN})"
+                f"({delta:+.3f}, margin {margin:.3g})"
             )
     return regressions
 
