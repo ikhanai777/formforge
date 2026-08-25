@@ -42,7 +42,7 @@ param_schema:
     inner_w_mm:
       type: number
       minimum: 20
-      maximum: 160
+      maximum: 120
       default: 60
       ui: { widget: slider, step: 5, label: "Inner width" }
     inner_h_mm:
@@ -96,8 +96,12 @@ invariants:
   - "min_wall >= 1.2"
   - "bbox.x >= inner_l_mm + wall_mm"
   - "trapped_volumes == 0"
-  - "clearance_mm >= 0.15"
+
+preconditions:
   - "lid_t_mm < inner_h_mm"
+  - "inner_fillet_mm <= floor_mm"
+  - "inner_fillet_mm * 2 < inner_w_mm"
+  - "clearance_mm * 4 < wall_mm"
 
 notes: >
   Emits both parts laid out side by side on the plate, which is why
@@ -129,6 +133,8 @@ source: |
   LID_W_MM = RAIL_W_MM - 2 * CLEARANCE_MM
   LID_L_MM = OUTER_L_MM - CLEARANCE_MM
   LID_Z_MM = OUTER_H_MM - LID_T_MM
+  # A fillet larger than the floor it sits on cannot be built.
+  FILLET_MM = min(INNER_FILLET_MM, FLOOR_MM * 0.9)
 
   with BuildPart() as box:
       Box(
@@ -142,9 +148,9 @@ source: |
           Rectangle(INNER_L_MM, INNER_W_MM)
       extrude(amount=INNER_H_MM, mode=Mode.SUBTRACT)
 
-      if INNER_FILLET_MM > 0:
+      if FILLET_MM > 0.2:
           floor_face = box.faces().filter_by(Plane.XY).sort_by(Axis.Z)[1]
-          fillet(floor_face.edges(), radius=INNER_FILLET_MM)
+          fillet(floor_face.edges(), radius=FILLET_MM)
 
       # Rail slot: full length so the lid can slide in from either end.
       with BuildSketch(Plane.XY.offset(LID_Z_MM)) as rail:

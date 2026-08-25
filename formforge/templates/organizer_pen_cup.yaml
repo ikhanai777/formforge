@@ -86,6 +86,8 @@ invariants:
   - "is_watertight"
   - "min_wall >= 1.5"
   - "plate_contact_fraction >= 0.5"
+
+preconditions:
   - "corner_r_mm < min(outer_l_mm, outer_w_mm) / 2"
   - "wall_mm + floor_mm < height_mm"
 
@@ -104,6 +106,10 @@ source: |
   # The cavity's corner radius follows the outer one inward, so the wall is a
   # constant thickness all the way round rather than thickening at the corners.
   INNER_R_MM = max(CORNER_R_MM - WALL_MM, 0.8)
+  # A fillet cannot be larger than the floor it sits on, nor than the inner
+  # corner it has to follow round. Clamping here means a thin floor or a tight
+  # corner produces a smaller fillet rather than a failed build.
+  FILLET_MM = min(INNER_FILLET_MM, FLOOR_MM * 0.9, INNER_R_MM * 0.9, WALL_MM * 0.9)
 
   with BuildPart() as cup:
       with BuildSketch() as plan:
@@ -125,8 +131,8 @@ source: |
 
       # Select the interior floor by plane and height, not by index into all
       # faces: the chamfer above adds faces and would shift a positional index.
-      if INNER_FILLET_MM > 0:
+      if FILLET_MM > 0.2:
           inner_floor = cup.faces().filter_by(Plane.XY).sort_by(Axis.Z)[1]
-          fillet(inner_floor.edges(), radius=INNER_FILLET_MM)
+          fillet(inner_floor.edges(), radius=FILLET_MM)
 
   result = cup.part

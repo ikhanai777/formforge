@@ -35,14 +35,14 @@ param_schema:
     outer_l_mm:
       type: number
       minimum: 50
-      maximum: 250
+      maximum: 200
       default: 150
       description: "Measure the drawer and subtract 2 mm for clearance."
       ui: { widget: slider, step: 5, label: "Length" }
     outer_w_mm:
       type: number
       minimum: 40
-      maximum: 250
+      maximum: 200
       default: 100
       ui: { widget: slider, step: 5, label: "Width" }
     height_mm:
@@ -93,8 +93,11 @@ invariants:
   - "plate_contact_fraction >= 0.5"
   - "bbox.x <= outer_l_mm * 1.02"
   - "bbox.y <= outer_w_mm * 1.02"
+
+preconditions:
   - "outer_l_mm - wall_mm * (cols + 1) >= cols * 12"
   - "outer_w_mm - wall_mm * (rows + 1) >= rows * 12"
+  - "floor_mm < height_mm"
 
 source: |
   from build123d import *
@@ -112,6 +115,8 @@ source: |
   # Cells absorb the remainder, so the tray always fills the drawer exactly.
   CELL_L_MM = (OUTER_L_MM - WALL_MM * (COLS + 1)) / COLS
   CELL_W_MM = (OUTER_W_MM - WALL_MM * (ROWS + 1)) / ROWS
+  # Never fillet larger than the floor it stands on.
+  FILLET_MM = min(INNER_FILLET_MM, FLOOR_MM * 0.9, WALL_MM * 0.9)
 
   with BuildPart() as tray:
       Box(
@@ -137,8 +142,8 @@ source: |
 
       # Every compartment floor sits at the same height, so one selection by
       # plane and Z catches all of them at once.
-      if INNER_FILLET_MM > 0:
+      if FILLET_MM > 0.2:
           floors = tray.faces().filter_by(Plane.XY).group_by(Axis.Z)[1]
-          fillet(floors.edges(), radius=INNER_FILLET_MM)
+          fillet(floors.edges(), radius=FILLET_MM)
 
   result = tray.part

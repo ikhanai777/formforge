@@ -105,8 +105,15 @@ invariants:
   - "bbox.z <= height_mm + tab_h_mm + 1.0"
   - "bbox.z >= height_mm"
   - "trapped_volumes == 0"
-  - "drainage == 'none' implies hole_count >= 1"
+  # Drainage is required unless the user explicitly asked for a cachepot.
+  - "drainage != 'none' implies hole_count >= 1"
   - "mount == 'keyhole_slot' implies hole_count >= 2"
+
+preconditions:
+  - "floor_mm + lip_mm * 2 < height_mm"
+  - "wall_mm * 4 + 20 < width_mm"
+  - "lip implies lip_mm < wall_mm * 2"
+  - "drainage != 'none' implies drain_d_mm + wall_mm * 4 < width_mm"
 
 notes: >
   Modelled in its mounted orientation, which is also its print orientation: the

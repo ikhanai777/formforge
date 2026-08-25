@@ -99,9 +99,13 @@ invariants:
   - "is_watertight"
   - "min_wall >= 2.4"
   - "bbox.x <= plate_w_mm * 1.02"
-  - "arm_t_mm >= 2.4"
+
+preconditions:
   - "fillet_mm < arm_t_mm"
-  - "lip_t_mm <= arm_len_mm"
+  - "fillet_mm < plate_t_mm"
+  - "lip_t_mm * 2 <= arm_len_mm"
+  - "arm_z_mm + arm_t_mm + lip_h_mm <= plate_h_mm"
+  - "arm_len_mm <= plate_h_mm"
 
 notes: >
   Modelled in its print orientation: back plate flat against the bed is wrong

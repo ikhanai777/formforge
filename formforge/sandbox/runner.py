@@ -17,6 +17,7 @@ that actually matters (spec section 10.1).
 
 from __future__ import annotations
 
+import base64
 import builtins
 import contextlib
 import io
@@ -560,10 +561,26 @@ def main() -> int:
 
 
 def _emit(payload: dict) -> None:
-    """Write the result between sentinels so script output cannot forge it."""
+    """Write the result between sentinels, base64-encoded.
+
+    Two separate protections, and both are needed:
+
+    The script's own output is captured to a buffer rather than the real stdout,
+    so it cannot inject a sentinel into the stream directly.
+
+    The payload is then base64-encoded, because the captured output is *echoed
+    back inside* the payload's `stdout` field. A script that prints the end
+    sentinel would otherwise plant a copy of it inside the JSON, and the
+    executor's non-greedy match would terminate the frame early on it -- leaving
+    the parent with truncated JSON and no result. That is not a forged model,
+    but it is a script deciding it cannot be reported on, which is its own
+    problem. Base64's alphabet contains no angle brackets, so an encoded payload
+    provably cannot contain either sentinel.
+    """
     sys.stdout.flush()
+    encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
     sys.__stdout__.write(f"\n{RESULT_BEGIN}\n")
-    sys.__stdout__.write(json.dumps(payload))
+    sys.__stdout__.write(encoded)
     sys.__stdout__.write(f"\n{RESULT_END}\n")
     sys.__stdout__.flush()
 

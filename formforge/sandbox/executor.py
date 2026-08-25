@@ -20,6 +20,7 @@ traffic when it does not.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -406,6 +407,21 @@ class GeometrySandbox:
                 compute_ms=compute_ms,
             )
         stderr = _sanitize(proc.stderr or "")
+        # SIGXCPU (24) is what the CPU rlimit raises, and SIGKILL (9) is what
+        # lands when the hard limit follows. Both mean the script ran too long,
+        # and saying so is far more useful than the generic crash path.
+        if proc.returncode in (-24, -152, 152) or "SIGXCPU" in stderr:
+            return ExecuteResult(
+                status="error",
+                phase="execute",
+                error_class="Timeout",
+                message="the script exceeded its CPU time limit",
+                hint="The script did not finish in time. This is almost always a "
+                "pattern with too many instances, a tessellation deflection set "
+                "far too fine, or a boolean against a very high-facet solid. "
+                "Reduce the instance count and coarsen the tessellation.",
+                compute_ms=compute_ms,
+            )
         if proc.returncode in (-9, 137) or "MemoryError" in stderr:
             return ExecuteResult(
                 status="error",
@@ -442,12 +458,19 @@ _TMP_RE = re.compile(r"/(?:tmp|var|home|root|Users)/[^\s\"']*")
 
 
 def _extract_result(stdout: str) -> dict | None:
+    """Decode the result frame the runner wrote.
+
+    The payload is base64 so that nothing a script prints -- which is echoed
+    back inside the payload's own `stdout` field -- can contain a sentinel and
+    truncate the frame.
+    """
     match = _RESULT_RE.search(stdout)
     if not match:
         return None
+    body = match.group(1).strip()
     try:
-        return json.loads(match.group(1))
-    except json.JSONDecodeError:
+        return json.loads(base64.b64decode(body, validate=True).decode("utf-8"))
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError):
         return None
 
 

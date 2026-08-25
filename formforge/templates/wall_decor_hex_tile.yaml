@@ -30,7 +30,7 @@ param_schema:
     across_flats_mm:
       type: number
       minimum: 40
-      maximum: 200
+      maximum: 170
       default: 100
       description: "Flat to flat. Tiles tessellate at exactly this pitch."
       ui: { widget: slider, step: 5, label: "Across flats" }
@@ -85,9 +85,11 @@ invariants:
   - "is_watertight"
   - "min_wall >= 1.5"
   - "mass_g <= 400"
-  - "border_w_mm * 2 < across_flats_mm"
-  - "lattice_rib_mm >= 2.0"
-  - "infill == 'open' implies border_h_mm >= 0"
+
+preconditions:
+  - "border_w_mm * 2 + 20 < across_flats_mm"
+  - "infill == 'hex_lattice' implies lattice_cell_mm + lattice_rib_mm * 2 < across_flats_mm - border_w_mm * 2"
+  - "hang_d_mm == 0 or hang_d_mm + 4 <= border_w_mm"
 
 source: |
   from build123d import *

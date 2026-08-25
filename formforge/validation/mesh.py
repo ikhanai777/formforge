@@ -53,6 +53,17 @@ BRUTE_FORCE_CHUNK = 64
 # facing it grazed an edge rather than crossing a wall; see _exit_is_opposing.
 GRAZING_EXIT_COS = 0.5
 
+# Measurement uncertainty on a sampled thickness, in millimetres.
+#
+# The mesh is tessellated at 0.05 mm deflection and sampled at finitely many
+# points, so a wall modelled at exactly 2.0 mm measures 1.9997. Comparing that
+# to a 2.0 mm threshold to three decimal places is false precision, and it fails
+# every part built at exactly the minimum its own schema allows -- which is a
+# large fraction of them, because "the minimum" is what a careful author picks.
+# The allowance is well under a layer height, so nothing genuinely too thin
+# passes because of it.
+THICKNESS_TOLERANCE_MM = 0.02
+
 
 @dataclass
 class ThicknessResult:
@@ -66,6 +77,16 @@ class ThicknessResult:
     # Fraction of samples below each threshold, which is what separates "one
     # sliver at a fillet tangent" from "the whole wall is too thin".
     fraction_below: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def p01_with_tolerance_mm(self) -> float:
+        """The representative thickness, plus the measurement's own uncertainty.
+
+        This is the value to compare against a threshold. Comparing the raw
+        measurement instead fails a wall modelled at exactly the minimum, purely
+        because tessellating and sampling it lands a few microns low.
+        """
+        return self.p01_mm + THICKNESS_TOLERANCE_MM
 
 
 @dataclass

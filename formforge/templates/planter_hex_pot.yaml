@@ -33,7 +33,7 @@ param_schema:
     across_flats_mm:
       type: number
       minimum: 50
-      maximum: 220
+      maximum: 170
       default: 90
       description: >
         Inner width flat to flat at the rim. A 4 inch nursery pot needs about
@@ -87,8 +87,13 @@ invariants:
   - "trapped_volumes == 0"
   - "bbox.z <= height_mm * 1.02"
   - "plate_contact_fraction >= 0.3"
-  - "drainage == 'none' implies hole_count >= 1"
+  # Drainage is required unless the user explicitly asked for a cachepot.
+  - "drainage != 'none' implies hole_count >= 1"
+
+preconditions:
   - "floor_mm < height_mm"
+  - "wall_mm * 2 + 20 < across_flats_mm"
+  - "drainage != 'none' implies drain_d_mm + wall_mm * 4 < across_flats_mm"
 
 source: |
   from build123d import *

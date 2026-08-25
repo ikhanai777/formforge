@@ -97,8 +97,13 @@ invariants:
   - "is_watertight"
   - "hole_count >= 1"
   - "mass_g <= 400"
-  - "cap_h_mm <= plate_d_mm * 0.75"
+
+preconditions:
+  - "cap_h_mm <= plate_d_mm * 0.6"
   - "hang_inset_mm - hang_d_mm / 2 >= 3.0"
+  - "hang_inset_mm < plate_d_mm / 3"
+  - "relief_mm <= plate_t_mm"
+  - "len(text) * cap_h_mm * 0.62 <= plate_d_mm * 0.9"
 
 source: |
   from build123d import *

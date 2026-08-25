@@ -84,7 +84,7 @@ param_schema:
       description: "Hole centre from the end. Leaves ring_inset - ring_d/2 of material."
     cap_h_mm:
       type: number
-      minimum: 3
+      minimum: 6
       maximum: 30
       default: 9
       description: "Text cap height. Below 3 mm nothing reads; use engraving under 5 mm."
@@ -113,8 +113,18 @@ invariants:
   - "bbox.x <= body_l_mm * 1.02"
   - "bbox.y <= body_w_mm * 1.02"
   - "min_hole_diameter >= 4.0"
+
+# Relationships between parameters, checked before building. A JSON Schema can
+# only constrain each number on its own, so "the text has to fit on the tag"
+# has to live here.
+preconditions:
   - "ring_inset_mm - ring_d_mm / 2 >= 2.5"
   - "cap_h_mm <= body_w_mm - 6.0"
+  - "corner_r_mm < min(body_l_mm, body_w_mm) / 2"
+  - "ring_d_mm + 5.0 <= body_w_mm"
+  - "ring_inset_mm * 2 < body_l_mm"
+  - "emboss_mm <= cap_h_mm * 0.15"
+  - "len(text) * cap_h_mm * 0.62 <= body_l_mm - ring_inset_mm * 2"
 
 source: |
   from build123d import *

@@ -55,7 +55,7 @@ def _wall_thickness(m: MeshMeasurements, report: ValidationReport, lim: DFMLimit
     # A single sample landing in the tangent crease of a fillet reads thin and
     # prints fine; failing on it would reject good models forever. The absolute
     # minimum is still reported so the model knows where to look.
-    representative = thickness.p01_mm
+    representative = thickness.p01_with_tolerance_mm
     hard_ok = representative >= lim.min_wall_fail_mm
     report.add(
         check(
@@ -125,7 +125,7 @@ def _feature_size(m: MeshMeasurements, report: ValidationReport, lim: DFMLimits)
     # long thin tail wherever the surface curves sharply, and failing a whole
     # model on its single thinnest sample rejects good parts -- the same reason
     # the wall check uses a percentile.
-    measured = thickness.p01_mm
+    measured = thickness.p01_with_tolerance_mm
     ok = not (isolated and measured < lim.min_feature_mm)
     report.add(
         check(

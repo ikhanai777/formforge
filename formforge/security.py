@@ -152,6 +152,20 @@ LITERAL_OK_KEYWORDS: frozenset[str] = frozenset(
 # indices, identity scales and axis selectors constantly.
 LITERAL_OK_VALUES: frozenset[float] = frozenset({0.0, 1.0, -1.0, 2.0, 360.0, 180.0, 90.0})
 
+# Positional arguments that are counts rather than dimensions, by constructor.
+# `RegularPolygon(radius, side_count)` -- the radius is a dimension and belongs
+# in a constant, the side count is what makes it a hexagon. Requiring
+# `SIDES = 6` adds a knob that means nothing to a user and would be wrong to
+# expose as a slider. Listed explicitly per constructor rather than inferred
+# from the value, because `Box(60, 40, 3)` is three dimensions that happen to
+# be small integers.
+POSITIONAL_COUNT_ARGS: dict[str, frozenset[int]] = {
+    "RegularPolygon": frozenset({1}),
+    "PolarLocations": frozenset({1}),
+    "GridLocations": frozenset({2, 3}),
+    "HexLocations": frozenset({1, 2}),
+}
+
 
 @dataclass
 class Violation:
@@ -314,7 +328,10 @@ class _Scanner(ast.NodeVisitor):
             self._geometry_depth -= 1
 
     def _check_literals(self, node: ast.Call, func_name: str) -> None:
-        for arg in node.args:
+        count_positions = POSITIONAL_COUNT_ARGS.get(func_name, frozenset())
+        for index, arg in enumerate(node.args):
+            if index in count_positions:
+                continue
             self._check_literal_arg(arg, func_name, None)
         for kw in node.keywords:
             if kw.arg in LITERAL_OK_KEYWORDS:

@@ -96,8 +96,14 @@ invariants:
   - "min_hole_diameter >= 4.0"
   - "bbox.z >= 2.5"
   - "bbox.x <= body_l_mm * 1.02"
-  - "catch_d_mm + lip_mm * 2 <= body_w_mm + 6"
+
+preconditions:
+  - "catch_d_mm + 4 <= body_w_mm"
+  - "lip_mm * 2 < catch_d_mm"
+  - "body_l_mm >= catch_d_mm + ring_d_mm + 26"
+  - "corner_r_mm < body_w_mm / 3"
   - "washer_insert implies washer_t_mm < body_t_mm"
+  - "washer_insert implies washer_od_mm > catch_d_mm"
 
 source: |
   from build123d import *

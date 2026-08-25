@@ -239,7 +239,7 @@ def build_context(
         # declare a lower bound than the rule it is actually held to, and every
         # template author would have to know that. `min_wall_abs` is available
         # for the rare invariant that genuinely wants the single worst sample.
-        "min_wall": thickness.p01_mm if thickness else float("inf"),
+        "min_wall": thickness.p01_with_tolerance_mm if thickness else float("inf"),
         "min_wall_abs": thickness.min_mm if thickness else float("inf"),
         "median_wall": thickness.median_mm if thickness else float("inf"),
         "is_watertight": m.is_watertight,

@@ -109,7 +109,19 @@ class Template:
     source: str
     tags: list[str] = field(default_factory=list)
     embedding_text: str = ""
+    # Postconditions: expressions over the *measured geometry*, checked after
+    # the build.
     invariants: list[str] = field(default_factory=list)
+    # Preconditions: expressions over the *parameters*, checked before it.
+    #
+    # The distinction is load-bearing. A JSON Schema constrains each parameter
+    # independently, so it cannot say "the text must fit on the plate" -- that
+    # is a relationship between two of them. Checking such a rule after the
+    # build reports it as a validation failure, which reads as "the geometry is
+    # broken" when the truth is "those two numbers cannot both be right". A
+    # precondition rejects the combination up front with a message that names
+    # the actual problem, and costs nothing to evaluate.
+    preconditions: list[str] = field(default_factory=list)
     tested: PrintTest | None = None
     expected_solids: int = 1
     # Maps a schema parameter to the bbox axis it should control, so the
@@ -151,12 +163,42 @@ class Template:
         return merged
 
     def validate_params(self, params: dict[str, Any]) -> list[str]:
-        """Check parameters against the schema, returning readable problems.
+        """Check parameters against the schema and the template's preconditions.
 
-        Uses jsonschema when available and falls back to a direct check of the
-        constraints that actually matter here -- type, range and enum. The
-        fallback exists because a parameter silently escaping its tested range
-        is exactly how a validated template starts producing unprintable parts.
+        Returns readable problems, empty when the parameters are usable.
+        """
+        return self._validate_schema(params) + self.check_preconditions(params)
+
+    def check_preconditions(self, params: dict[str, Any]) -> list[str]:
+        """Evaluate the cross-parameter constraints.
+
+        A malformed precondition is reported as a problem rather than swallowed:
+        a registry entry whose guard silently stops being checked is worse than
+        one that fails loudly during review.
+        """
+        if not self.preconditions:
+            return []
+        from .validation.invariants import InvariantError, evaluate  # noqa: PLC0415
+
+        merged = self.merge_params(params)
+        problems: list[str] = []
+        for expression in self.preconditions:
+            try:
+                if not evaluate(expression, dict(merged)):
+                    problems.append(
+                        f"these values do not satisfy the template's requirement "
+                        f"`{expression}`"
+                    )
+            except InvariantError as exc:
+                problems.append(f"precondition `{expression}` could not be evaluated: {exc}")
+        return problems
+
+    def _validate_schema(self, params: dict[str, Any]) -> list[str]:
+        """Type, range and enum, via jsonschema when it is installed.
+
+        The fallback exists because a parameter silently escaping its tested
+        range is exactly how a validated template starts producing unprintable
+        parts.
         """
         try:
             import jsonschema  # noqa: PLC0415
@@ -235,6 +277,7 @@ class Template:
                 "language": self.language,
                 "param_schema": self.param_schema,
                 "invariants": self.invariants,
+                "requirements": self.preconditions,
                 "defaults": self.defaults(),
             }
         )
@@ -648,6 +691,7 @@ def parse_template(raw: dict[str, Any]) -> Template:
         tags=[str(t) for t in raw.get("tags") or []],
         embedding_text=str(raw.get("embedding_text", "")),
         invariants=[str(i) for i in raw.get("invariants") or []],
+        preconditions=[str(i) for i in raw.get("preconditions") or []],
         tested=tested,
         expected_solids=int(raw.get("expected_solids", 1)),
         dimension_map=dict(raw.get("dimension_map") or {}),

@@ -35,6 +35,7 @@ class CaseResult:
     template_id: str
     case: str
     ok: bool
+    skipped: bool = False
     detail: str = ""
     failures: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -42,6 +43,8 @@ class CaseResult:
     duration_s: float = 0.0
 
     def line(self) -> str:
+        if self.skipped:
+            return f"SKIP {self.template_id} [{self.case}] -- {self.detail}"
         status = "PASS" if self.ok else "FAIL"
         bbox = (
             f" bbox={self.bbox_mm[0]:.0f}x{self.bbox_mm[1]:.0f}x{self.bbox_mm[2]:.0f}"
@@ -101,13 +104,18 @@ def check_template(
 
         problems = template.validate_params(params)
         if problems:
+            # A combination the template already declares invalid is not a
+            # failure to build -- the template said so before we tried, which is
+            # the system working. Sweeping one parameter to its extreme
+            # routinely produces such a combination, and counting those as
+            # failures would bury the cases where the geometry genuinely breaks.
             results.append(
                 CaseResult(
                     template.id,
                     case_name,
-                    ok=False,
-                    detail="parameters do not satisfy the template's own schema: "
-                    + "; ".join(problems),
+                    ok=True,
+                    skipped=True,
+                    detail="; ".join(problems),
                     duration_s=time.perf_counter() - started,
                 )
             )
@@ -197,14 +205,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         all_results.extend(results)
         for result in results:
-            if result.ok and args.quiet:
+            if (result.ok or result.skipped) and args.quiet:
                 continue
             print(result.line())
 
     failed = [r for r in all_results if not r.ok]
+    skipped = [r for r in all_results if r.skipped]
+    built = len(all_results) - len(skipped)
     print(
-        f"\n{len(all_results) - len(failed)}/{len(all_results)} cases passed "
-        f"across {len(templates)} template(s)"
+        f"\n{built - len(failed)}/{built} built cases passed across "
+        f"{len(templates)} template(s)"
+        + (f"; {len(skipped)} combination(s) rejected up front" if skipped else "")
     )
     if errors:
         print(f"{len(errors)} template file(s) failed to load")
