@@ -248,3 +248,35 @@ Stated plainly, so nothing here reads as more finished than it is.
   value item in the whole plan, and it is the one thing no amount of validation
   substitutes for. The DFM constants are conventional maker values, not
   empirical ones, until then.
+
+---
+
+## 6. What the range sweep is for
+
+`python -m formforge.eval.check_templates --extremes` builds every template at
+its defaults *and* at each parameter's declared minimum and maximum, one
+parameter at a time. The premise is simple: a schema that permits a 200 mm
+planter is a promise that a 200 mm planter builds, and nothing else in the
+system holds the registry to that promise.
+
+It has earned its runtime. Findings that no unit test would have produced:
+
+| What broke | Why nothing else caught it |
+|---|---|
+| Thickness rays grazing a sharp convex edge reported 3 µm walls | Only appears on parts with text or a flat-meets-curve seam |
+| A 2 mm rim lip round a 120 mm pot read as a 55 mm unbridgeable span | Needed a real annular ceiling to expose the metric's flaw |
+| The planter's hanger tab came out as a second disconnected solid | Coplanar contact looks like a union until you count the bodies |
+| The honeycomb lattice cut its own panel into seven pieces | Only at the minimum rib width, where the overlap finally bit |
+| A "120 mm" hexagonal sign came out 139 mm across | The default shape is a circle, where the bug does not exist |
+| Fillets larger than the floor they sit on | Only at the minimum floor thickness |
+
+The pattern is consistent: **defaults are the configuration that gets tested by
+hand, so bugs accumulate at the edges of the ranges.** Sweeping one parameter at
+a time rather than all at once keeps each failure attributable to a single
+value; sweeping combinations would find more, at the cost of reports nobody can
+act on.
+
+Combinations a template already declares invalid are reported as skipped rather
+than failed. Driving one parameter to an extreme routinely produces a
+combination its preconditions forbid, and counting those as failures would bury
+the cases where the geometry genuinely breaks.
