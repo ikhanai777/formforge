@@ -17,6 +17,7 @@ from formforge.bundle import write_bundle
 from formforge.llm import OfflineClient
 from formforge.mcp.server import TOOL_DEFINITIONS, FormForgeTools, ToolError
 from formforge.orchestrator import Orchestrator
+from formforge.store import Store
 
 
 @pytest.fixture(scope="module")
@@ -104,6 +105,9 @@ def tools(registry, tmp_path_factory) -> FormForgeTools:
             output_dir=tmp_path_factory.mktemp("mcp"),
         ),
         store_dir=tmp_path_factory.mktemp("mcpstore"),
+        # Never the developer's real database. A test suite that writes into
+        # it would corrupt the only dataset here that cannot be regenerated.
+        db=Store.memory(),
     )
 
 
@@ -169,6 +173,45 @@ class TestMcpTools:
         assert second["parent_model_id"] == first["model_id"]
         assert second["params"]["text"] == "B"
 
+    def test_a_print_outcome_can_be_reported_back(self, tools):
+        """The only ground truth the system has, reachable from the assistant.
+
+        A user says "it warped"; that sentence is the entire empirical basis
+        the DFM constants will ever have, and it is worth nothing unless it
+        lands against the model it describes.
+        """
+        made = tools.generate_from_template("keychain_text_tag", {"text": "P"})
+        recorded = tools.report_print_result(
+            made["model_id"], success=False, issues=["warping"], printer="Bambu P1S"
+        )
+        assert recorded["recorded"] is True
+        outcome = next(
+            o for o in tools.db.print_outcomes() if o["model_id"] == made["model_id"]
+        )
+        assert outcome["issues"] == ["warping"]
+
+    def test_a_print_outcome_for_an_unrecorded_model_is_refused(self, tools):
+        with pytest.raises(ToolError) as excinfo:
+            tools.report_print_result("nope", success=True)
+        assert "generate_" in str(excinfo.value)
+
+    def test_the_print_issue_vocabulary_is_enforced_at_the_tool_boundary(self, tools):
+        """Free text here cannot be aggregated, and aggregation is the point."""
+        made = tools.generate_from_template("keychain_text_tag", {"text": "Q"})
+        with pytest.raises(ToolError) as excinfo:
+            tools.report_print_result(
+                made["model_id"], success=False, issues=["went a bit wrong"]
+            )
+        assert "warping" in str(excinfo.value)
+
+    def test_the_reporting_tool_does_not_invite_invented_outcomes(self):
+        """A model that infers "it must have worked" from a returning user
+        poisons the one dataset that cannot be regenerated."""
+        definition = next(
+            t for t in TOOL_DEFINITIONS if t["name"] == "report_print_result"
+        )
+        assert "only what the user actually said" in definition["description"]
+
 
 @pytest.fixture(scope="module")
 def client(registry, tmp_path_factory):
@@ -187,6 +230,17 @@ def client(registry, tmp_path_factory):
     )
     with fastapi_testclient.TestClient(app) as test_client:
         yield test_client
+
+
+def _generate(client, prompt: str) -> str:
+    """Submit a prompt and return the model id once the run has finished.
+
+    TestClient runs background tasks before the response returns, so by the
+    time this comes back the generation is persisted.
+    """
+    response = client.post("/v1/generate", json={"prompt": prompt, "interactive": False})
+    assert response.status_code == 202
+    return response.json()["model_id"]
 
 
 class TestHttpApi:
@@ -226,18 +280,73 @@ class TestHttpApi:
     def test_an_unknown_model_is_a_404(self, client):
         assert client.get("/v1/models/nope/status").status_code == 404
 
-    def test_records_print_feedback(self, client):
-        """The only ground truth for whether any of this works."""
+    def test_records_print_feedback_against_a_real_model(self, client):
+        """The only ground truth for whether any of this works.
+
+        Against a real model id, because feedback that points at nothing can
+        never be cross-referenced with what the validator measured -- which is
+        the entire reason the table exists.
+        """
+        model_id = _generate(client, 'a keychain that says "TEST"')
         response = client.post(
             "/v1/feedback",
             json={
-                "model_id": "abc",
+                "model_id": model_id,
                 "printed": True,
                 "success": False,
                 "issues": ["warping"],
+                "notes": "lifted at one corner",
             },
         )
         assert response.status_code == 201
+        assert response.json()["feedback_id"]
+
+        outcomes = client.get("/v1/stats/prints").json()["outcomes"]
+        row = next(o for o in outcomes if o["model_id"] == model_id)
+        # The point of the view: the reported failure sits next to the number
+        # the validator measured at the time.
+        assert row["issues"] == ["warping"]
+        assert row["min_wall_mm"] is not None
+
+    def test_feedback_for_an_unknown_model_is_rejected(self, client):
+        response = client.post(
+            "/v1/feedback", json={"model_id": "nope", "printed": True}
+        )
+        assert response.status_code == 404
+
+    def test_an_unknown_issue_is_rejected_rather_than_stored(self, client):
+        """A free-text issue column cannot be aggregated, so the set is closed."""
+        model_id = _generate(client, "a pen cup 80mm across")
+        response = client.post(
+            "/v1/feedback",
+            json={"model_id": model_id, "printed": True, "issues": ["went a bit wrong"]},
+        )
+        assert response.status_code == 422
+        assert "warping" in response.json()["detail"]
+
+    def test_the_per_step_log_survives_the_generation(self, client):
+        """What makes a four-iteration run explicable after the fact."""
+        model_id = _generate(client, "a pen cup 80mm across and 100mm tall")
+        events = client.get(f"/v1/models/{model_id}/events").json()["events"]
+        assert [e["phase"] for e in events][:2] == ["intent", "route"]
+        assert all(e["created_at"] for e in events)
+
+    def test_a_modification_records_its_parent(self, client):
+        """Lineage that only exists in memory is lineage that does not exist."""
+        parent = _generate(client, "a pen cup 80mm across")
+        response = client.post(
+            f"/v1/models/{parent}/modify", json={"param_changes": {"wall_mm": 2.5}}
+        )
+        assert response.status_code in (200, 202)
+        child = response.json()["model_id"]
+        events = client.get(f"/v1/models/{child}/events")
+        assert events.status_code == 200
+
+    def test_stats_answer_what_memory_cannot(self, client):
+        payload = client.get("/v1/stats").json()
+        assert payload["totals"]["generations"] >= 1
+        assert payload["totals"]["write_failures"] == 0
+        assert any(t["template_id"] for t in payload["templates"])
 
     def test_refuses_to_start_on_an_unisolated_sandbox_by_default(self, registry, tmp_path):
         """The single most consequential misconfiguration this system has.

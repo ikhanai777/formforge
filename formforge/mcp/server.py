@@ -35,6 +35,7 @@ from ..bundle import write_bundle
 from ..dfm import DEFAULT_PROFILE_ID, PROFILES
 from ..llm import build_client
 from ..orchestrator import Orchestrator
+from ..store import PRINT_ISSUES, Store
 from ..registry import TemplateRegistry
 from ..render import STANDARD_VIEWS, render_views
 from ..slicer import slice_model
@@ -265,6 +266,41 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "report_print_result",
+        "description": (
+            "Record what happened when a generated model was actually printed. "
+            "Call this whenever the user mentions how a print came out -- "
+            "including when it went fine. This is the only ground truth the "
+            "system has: every printability threshold it applies is a "
+            "conventional maker value until outcomes accumulate here, and none "
+            "of it can be collected after the fact. Report only what the user "
+            "actually said; do not infer an outcome from their tone or from the "
+            "fact that they came back."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["model_id", "success"],
+            "properties": {
+                "model_id": {"type": "string"},
+                "success": {
+                    "type": "boolean",
+                    "description": "Did the print come out usable?",
+                },
+                "issues": {
+                    "type": "array",
+                    "description": "What went wrong, if anything.",
+                    "items": {"type": "string", "enum": sorted(PRINT_ISSUES)},
+                },
+                "printer": {"type": "string"},
+                "material": {"type": "string"},
+                "notes": {
+                    "type": "string",
+                    "description": "The user's own description, in their words.",
+                },
+            },
+        },
+    },
+    {
         "name": "list_printer_profiles",
         "description": (
             "List the printer profiles the DFM rules can be evaluated against, "
@@ -293,10 +329,14 @@ class FormForgeTools:
         registry: TemplateRegistry | None = None,
         orchestrator: Orchestrator | None = None,
         store_dir: Path | str | None = None,
+        db: Store | None = None,
     ):
         self.registry = registry or TemplateRegistry.load(strict=False)
         self.store = Path(store_dir or Path.home() / ".formforge" / "models")
         self.store.mkdir(parents=True, exist_ok=True)
+        # Same database the CLI and the API write to, so a model generated in
+        # one place can have its print outcome reported from another.
+        self.db = db if db is not None else Store()
         self.orchestrator = orchestrator or Orchestrator(
             registry=self.registry,
             client=build_client(),
@@ -347,6 +387,7 @@ class FormForgeTools:
         params: dict,
         printer_profile: str = DEFAULT_PROFILE_ID,
         material: str = "PLA",
+        parent_id: str | None = None,
     ) -> dict:
         try:
             template = self.registry.get(template_id)
@@ -368,7 +409,7 @@ class FormForgeTools:
             template_id=template_id,
             params=params,
         )
-        return self._record(result, template)
+        return self._record(result, template, parent_id=parent_id)
 
     def generate_from_prompt(
         self,
@@ -475,6 +516,10 @@ class FormForgeTools:
             merged,
             printer_profile=previous.intent.get("printer_profile", DEFAULT_PROFILE_ID),
             material=previous.intent.get("material", "PLA"),
+            # Lineage is recorded, not just reported: a modification is a new
+            # model with a parent, never an edit in place, because the original
+            # may already have been downloaded and printed.
+            parent_id=model_id,
         )
         outcome["parent_model_id"] = model_id
         return outcome
@@ -568,8 +613,11 @@ class FormForgeTools:
         }
 
     # -- internals ---------------------------------------------------------
-    def _record(self, result, template) -> dict:
+    def _record(self, result, template, *, parent_id: str | None = None) -> dict:
         self._models[result.model_id] = result
+        # Every generation, whatever its outcome. The in-session cache above is
+        # for follow-up tool calls; this is the part that outlives the session.
+        self.db.record_generation(result, parent_id=parent_id)
         payload = {
             "model_id": result.model_id,
             "status": result.status,
@@ -590,6 +638,52 @@ class FormForgeTools:
                 "summary": result.critique["summary"],
             }
         return payload
+
+    def report_print_result(
+        self,
+        model_id: str,
+        success: bool,
+        issues: list[str] | None = None,
+        printer: str | None = None,
+        material: str | None = None,
+        notes: str | None = None,
+    ) -> dict:
+        """Record a print outcome against a generated model.
+
+        Refused when the issue vocabulary does not match, and when the model is
+        unknown: an outcome that cannot be joined to what the validator measured
+        at the time answers no question worth asking.
+        """
+        unknown = sorted(set(issues or []) - PRINT_ISSUES)
+        if unknown:
+            raise ToolError(
+                f"unknown issue(s) {', '.join(unknown)}. Use one of: "
+                + ", ".join(sorted(PRINT_ISSUES))
+            )
+        if self.db.get_model(model_id) is None:
+            raise ToolError(
+                f"no model {model_id} was recorded. Print outcomes attach to a "
+                "model id returned by a generate_* call."
+            )
+        feedback_id = self.db.record_feedback(
+            {
+                "model_id": model_id,
+                "printed": True,
+                "success": success,
+                "printer": printer,
+                "material": material,
+                "issues": issues or [],
+                "notes": notes,
+            }
+        )
+        return {
+            "recorded": True,
+            "feedback_id": feedback_id,
+            "message": (
+                "Recorded. This is the only evidence the printability rules "
+                "ever get tuned from."
+            ),
+        }
 
     def _get(self, model_id: str):
         try:
@@ -614,6 +708,7 @@ class FormForgeTools:
             "render_views": self.render_views,
             "slice_preview": self.slice_preview,
             "export_model": self.export_model,
+            "report_print_result": self.report_print_result,
         }.get(name)
         if handler is None:
             raise ToolError(f"unknown tool {name!r}")

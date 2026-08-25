@@ -91,7 +91,22 @@ formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
 formforge check model.stl --profile bambu_p1s_0.4 --category planter
 formforge render model.stl --out previews/
 formforge rules --profile prusa_mk4_0.4          # the DFM rules being applied
+formforge stats                                  # what the recorded runs say
+formforge feedback <model-id> --failed --issue warping
 ```
+
+Every `generate` is recorded to a local SQLite database (`$FORMFORGE_DB`,
+default `~/.formforge/formforge.db`) — the generation, its per-step log, and
+any refusal. `formforge stats` reads it back: which templates are quietly
+failing, which errors actually dominate, and whether anything printed. None of
+those three can be answered retroactively, which is why collection is on by
+default rather than behind a flag (`--no-store` opts out).
+
+`formforge feedback` is the one that matters most and the one with no
+substitute. Every DFM constant in this system is a conventional maker value;
+a print outcome recorded against a model is the only thing that can make one
+of them a measurement, and it lands next to what the validator measured at the
+time.
 
 ### From Claude, over MCP
 
@@ -103,6 +118,11 @@ Then ask Claude for "a hex wall planter for a 4-inch pot". The tool results
 carry the preview images inline, so Claude can see what it made and correct
 itself in the same turn.
 
+`report_print_result` is the tool worth knowing about: when the user comes back
+and says how a print came out, that sentence is the only empirical evidence this
+system will ever have about its own thresholds, and it lands against the model
+it describes.
+
 ### As a service
 
 ```bash
@@ -113,6 +133,11 @@ FORMFORGE_SANDBOX_RUNTIME=gvisor uvicorn formforge.api.app:app
 `/v1/models/{id}/stream` replays every step of the loop as it happens. The loop
 is worth showing rather than hiding — watching it find a 1.1 mm wall and
 regenerate is the clearest possible argument for the whole approach.
+
+`GET /v1/models/{id}/events` replays it again afterwards, from the database.
+`GET /v1/stats` reports template health and the dominant failure classes;
+`POST /v1/feedback` takes a print outcome and `GET /v1/stats/prints` reads it
+back beside what the validator measured at the time.
 
 ## How it works
 
@@ -229,6 +254,7 @@ formforge/
   hints.py        OCCT errors mapped to causes a model can act on
   policy.py       IP and safety screening, before any geometry
   registry.py     the template registry, matching and routing
+  store.py        the tables that cannot be backfilled
   sandbox/        isolated execution and the in-sandbox runner
   validation/     the three tiers and the measurements behind them
   render/         numpy rasteriser, PNG encoder, section cuts

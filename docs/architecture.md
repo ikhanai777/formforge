@@ -213,6 +213,31 @@ makes the whole loop testable in CI without credentials.
 
 ---
 
+### Collection is on by default
+
+`generation_events` and `print_feedback` are the two tables that cannot be
+backfilled — the first is how a four-iteration run becomes explicable after the
+fact, the second is the only ground truth that exists for whether any of this
+prints — so both are written from the CLI and the API alike, on someone's laptop
+as well as in a deployment. Early on the laptop is where the runs are.
+
+Two rules follow from what each table is for:
+
+*Telemetry writes never raise into the caller.* Losing a row is a bad day;
+failing a generation the user waited thirty seconds for because an event could
+not be logged is worse. Failures are counted, and `write_failures` is what a
+health check reads.
+
+*Feedback writes do raise.* That caller is a person telling us what happened to
+their print, and dropping it silently is worse than a 500 they can retry. It is
+also refused outright when it names a model that was never recorded: feedback
+that cannot be joined to what the validator measured answers no question.
+
+The `issues` vocabulary is closed for the same reason. "Warped a bit on one
+corner" and "warping" have to be the same row before any of this can tune a DFM
+constant, and each term names a failure that some check already measures — so
+`weak` lands next to the `min_wall_mm` recorded at the time.
+
 ## 3. Cost and caching
 
 The freeform path is five to ten times the template path, so **template coverage
@@ -273,6 +298,12 @@ tier that executes generated code.
 the host kernel, and `create_app` refuses to start when it does not. Override
 only for local development.
 
+The database belongs to the orchestrator tier and nothing else. `FORMFORGE_DB`
+points at it (default `~/.formforge/formforge.db`); the API opens one beside its
+artifact store. The geometry tier must not reach it — that tier executes
+generated code, and the whole point of giving it no credentials is that there is
+nothing there to take.
+
 ---
 
 ## 5. What is not built
@@ -286,18 +317,26 @@ Stated plainly, so nothing here reads as more finished than it is.
   itself is not implemented.
 - **OpenSCAD execution.** The adapter is written and reports cleanly when the
   binary is absent; it has not been exercised.
-- **Persistence.** The data model is in `docs/schema.sql`; the running system
-  keeps jobs in memory. `generation_events` and `print_feedback` are the two
-  tables that matter most and are the least optional: the first is how the loop
-  gets debugged, the second is the only ground truth about whether any of this
-  works, and neither can be collected retroactively.
+- **Postgres.** The data model is in `docs/schema.sql` and `formforge/store.py`
+  implements it on SQLite — same tables, same column names, same two views. The
+  Postgres-only parts are absent rather than faked: the `vector(1536)` embedding
+  column and its ivfflat index, `citext`, and the `users` table that auth would
+  need. Moving over is a dialect change; §2 has the reasoning for starting on
+  the file-backed one, which is that a persistence layer needing a running
+  database is one that gets switched off in development, and a table empty for
+  six months is worth nothing.
 - **Auth, quotas, billing.** The API has no authentication.
 - **Physical print testing.** Every template carries a `tested` block, and those
   blocks are *unverified* — no model in this repository has been printed. Spec
   section 13.3 is right that thirty physical prints before launch is the highest
   value item in the whole plan, and it is the one thing no amount of validation
   substitutes for. The DFM constants are conventional maker values, not
-  empirical ones, until then.
+  empirical ones, until then. What *is* built is the path from a print to a
+  constant: `formforge feedback`, `POST /v1/feedback` and the MCP
+  `report_print_result` tool all land a row in `print_feedback`, and
+  `print_outcomes` reads it back beside the wall thickness measured at the
+  time. `formforge doctor` says how many rows are there, which is currently
+  zero and should be visible.
 
 ---
 

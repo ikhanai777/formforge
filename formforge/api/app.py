@@ -32,7 +32,6 @@ rather than a paragraph in a runbook.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import uuid
@@ -67,6 +66,7 @@ from ..orchestrator import Orchestrator
 from ..registry import TemplateRegistry
 from ..sandbox import GeometrySandbox
 from ..slicer import slice_model
+from ..store import PRINT_ISSUES, Store
 
 STORE_DIR = Path(os.environ.get("FORMFORGE_STORE", Path.home() / ".formforge" / "models"))
 
@@ -207,6 +207,7 @@ def create_app(
     registry: TemplateRegistry | None = None,
     orchestrator: Orchestrator | None = None,
     store_dir: Path | None = None,
+    db: Store | None = None,
     allow_unsafe_sandbox: bool = False,
 ):
     """Build the FastAPI application."""
@@ -245,6 +246,11 @@ def create_app(
         output_dir=store,
     )
     jobs = JobStore()
+    # `docs/schema.sql` says to start collecting on day one, before anything
+    # consumes it, because none of these tables can be backfilled. Defaulting
+    # to a file next to the artifacts is what makes that true of a development
+    # server as well as a deployment.
+    database = db if db is not None else Store(store / "formforge.db")
 
     app = FastAPI(
         title="FormForge",
@@ -307,6 +313,12 @@ def create_app(
                 write_bundle, result, store / result.model_id / "bundle", template=template
             )
             result.artifacts.update(bundle.files)
+
+        # Persisted for every terminal status, not just success: a store that
+        # holds only the runs that worked cannot answer a question worth
+        # asking. The write is best-effort by design -- see store.Store.
+        database.record_generation(result, parent_id=job.parent_id)
+        _record_policy(result)
 
         jobs.publish(
             job,
@@ -382,6 +394,10 @@ def create_app(
             child.result = result
             child.status = result.status
             child.phase = "done"
+            # Recorded with its parent: a modification is a new model with a
+            # parent, never an edit in place, and the lineage is only useful
+            # if it outlives the process.
+            database.record_generation(result, parent_id=child.parent_id)
 
         background.add_task(run)
         return {"job_id": child.job_id, "model_id": child.model_id, "parent_id": model_id}
@@ -465,22 +481,103 @@ def create_app(
 
     @app.post("/v1/feedback", status_code=201)
     async def feedback(request: FeedbackRequest):
-        record = request.model_dump()
-        path = store / "print_feedback.jsonl"
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record) + "\n")
-        return {"recorded": True}
+        payload = request.model_dump()
+        unknown = [i for i in payload.get("issues") or [] if i not in PRINT_ISSUES]
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"unknown issue(s) {', '.join(sorted(unknown))}; "
+                    f"expected one of {', '.join(sorted(PRINT_ISSUES))}"
+                ),
+            )
+        if database.get_model(payload["model_id"]) is None:
+            # Feedback that points at nothing is feedback that can never be
+            # cross-referenced against what the validator measured, which is
+            # the only reason this table exists.
+            raise HTTPException(
+                status_code=404, detail=f"no model {payload['model_id']}"
+            )
+        feedback_id = database.record_feedback(payload)
+        return {"recorded": True, "feedback_id": feedback_id}
+
+    # -- what the collected data is for --------------------------------
+    @app.get("/v1/stats")
+    async def stats():
+        """Totals, template health and the dominant failure classes.
+
+        The three questions this system cannot answer without persistence:
+        which templates are quietly failing, which errors actually dominate,
+        and whether any of it prints.
+        """
+        return {
+            "totals": database.totals(),
+            "templates": database.template_health(),
+            "failures": database.failure_classes(),
+        }
+
+    @app.get("/v1/stats/prints")
+    async def print_stats():
+        """Print outcomes against what the validator measured at the time.
+
+        Empty until real prints are reported, and that is the honest state:
+        every DFM constant in this system is a conventional maker value until
+        this endpoint has rows behind it.
+        """
+        return {"outcomes": database.print_outcomes()}
+
+    @app.get("/v1/models/{model_id}/events")
+    async def model_events(model_id: str):
+        """The per-step log for one generation.
+
+        A four-iteration run is inexplicable without this: you can see that it
+        took four attempts but not what changed between them.
+        """
+        events = database.events_for(model_id)
+        if not events and database.get_model(model_id) is None:
+            raise HTTPException(status_code=404, detail=f"no model {model_id}")
+        return {"model_id": model_id, "events": events}
 
     @app.get("/healthz")
     async def health():
+        totals = database.totals()
         return {
-            "ok": True,
+            # Telemetry writes are swallowed by design so they can never fail a
+            # generation, which means a broken database is silent unless a
+            # health check looks for it. This is where it looks.
+            "ok": totals["write_failures"] == 0,
             "templates": len(templates),
             "sandbox": sandbox.describe(),
             "model_client": engine.client.available,
+            "store": {
+                "generations": totals["generations"],
+                "prints_reported": totals["prints_reported"],
+                "write_failures": totals["write_failures"],
+            },
         }
 
     # -- helpers -------------------------------------------------------
+    def _record_policy(result) -> None:
+        """Log a refusal or a flag to its own table.
+
+        Kept separate from the generation's event log even though the same
+        decision appears there, because the question it answers is about a
+        *user* rather than a model: someone working through the IP classifier
+        one franchise at a time looks like nothing at all when their attempts
+        are filed under the generations they did not produce.
+        """
+        for event in result.events:
+            if event.phase != "policy":
+                continue
+            decision = (event.payload or {}).get("decision")
+            if decision and decision != "allow":
+                database.record_policy_event(
+                    result.prompt,
+                    decision,
+                    category=(event.payload or {}).get("category"),
+                    matched=(event.payload or {}).get("matched") or [],
+                )
+
     def _require_model(model_id: str) -> Job:
         job = jobs.for_model(model_id)
         if job is None:

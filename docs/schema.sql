@@ -14,6 +14,13 @@
 --                      lets them be set from evidence instead.
 --
 -- Start collecting both on day one, before anything consumes them.
+--
+-- This file is the Postgres target. `formforge/store.py` implements the same
+-- tables and column names on stdlib sqlite3, which is what actually runs
+-- today: a persistence layer that needs a database server is one that gets
+-- switched off in development, and a table that is empty for the first six
+-- months is worth nothing. Keep the two in step -- tests/test_store.py checks
+-- that every column declared here exists there.
 
 CREATE EXTENSION IF NOT EXISTS citext;
 CREATE EXTENSION IF NOT EXISTS vector;

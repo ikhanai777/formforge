@@ -70,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
     _add_render(subparsers)
     _add_slice(subparsers)
     _add_rules(subparsers)
+    _add_stats(subparsers)
+    _add_feedback(subparsers)
     _add_doctor(subparsers)
 
     args = parser.parse_args(argv)
@@ -96,6 +98,11 @@ def _add_generate(subparsers) -> None:
     )
     parser.add_argument("--no-critique", action="store_true", help="skip the visual critique")
     parser.add_argument("--json", action="store_true", help="print the result as JSON")
+    parser.add_argument(
+        "--no-store",
+        action="store_true",
+        help="do not record this run in the local database",
+    )
     parser.set_defaults(handler=_cmd_generate)
 
 
@@ -134,6 +141,15 @@ def _cmd_generate(args) -> int:
         )
         bundle = write_bundle(result, out_dir / result.model_id / "bundle", template=template)
         result.artifacts.update(bundle.files)
+
+    # Recorded for every terminal status. The two tables this fills cannot be
+    # backfilled, and a run on someone's laptop is as much evidence as a run in
+    # production -- more, early on, because that is where the runs are.
+    if not args.no_store:
+        from .store import Store  # noqa: PLC0415
+
+        with Store() as database:
+            database.record_generation(result)
 
     if args.json:
         print(json.dumps(result.as_dict(), indent=2, default=str))
@@ -476,6 +492,150 @@ def _add_rules(subparsers) -> None:
     parser.set_defaults(handler=lambda a: (print(rules_block(a.profile, a.material)), 0)[1])
 
 
+# ---------------------------------------------------------------------------
+# stats and feedback -- what the collected data is for
+# ---------------------------------------------------------------------------
+
+
+def _add_stats(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "stats", help="what the recorded generations say about the system"
+    )
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--db", help="database path (default: $FORMFORGE_DB)")
+    parser.set_defaults(handler=_cmd_stats)
+
+
+def _cmd_stats(args) -> int:
+    """Three questions no amount of validation can answer.
+
+    Which templates are quietly failing, which errors actually dominate, and
+    whether any of it prints. All three need history, and history has to have
+    been collected at the time.
+    """
+    from .store import Store  # noqa: PLC0415
+
+    with Store(args.db) as database:
+        totals = database.totals()
+        health = database.template_health()
+        failures = database.failure_classes()
+        prints = database.print_outcomes()
+
+    if args.json:
+        print(json.dumps(
+            {"totals": totals, "templates": health, "failures": failures,
+             "prints": prints},
+            indent=2, default=str,
+        ))
+        return 0
+
+    if not totals["generations"]:
+        print(_dim("No generations recorded yet."))
+        print(_dim("Run `formforge generate ...` -- every run is recorded."))
+        return 0
+
+    rate = totals["succeeded"] / totals["generations"]
+    print(_c("Generations", "1"))
+    print(f"  recorded       {totals['generations']}")
+    print(f"  succeeded      {totals['succeeded']} ({rate:.0%})")
+    print(f"  refused        {totals['refused']}")
+    print(f"  mean iterations{totals['mean_iterations']:>6.2f}")
+    print(f"  cost           ${totals['cost_usd']:.4f}")
+    if totals["write_failures"]:
+        print(_bad(f"  write failures {totals['write_failures']} -- telemetry is being lost"))
+
+    if health:
+        print()
+        print(_c("Templates", "1"))
+        print(f"  {'template':<28}{'runs':>6}{'ok':>7}{'iters':>7}{'prints':>8}")
+        for row in health[:15]:
+            success = row["success_rate"] or 0.0
+            label = f"  {row['template_id']:<28}{row['generations']:>6}"
+            label += f"{success:>6.0%} {row['mean_iterations'] or 0:>6.2f}"
+            label += f"{row['prints_reported'] or 0:>8}"
+            print(label if success >= 0.9 else _warn(label))
+
+    if failures:
+        print()
+        print(_c("Failure classes", "1"))
+        for row in failures:
+            print(f"  {row['error_class']:<34}{row['occurrences']:>5}   {row['last_seen']}")
+
+    print()
+    if prints:
+        reported = len(prints)
+        worked = sum(1 for p in prints if p["success"])
+        print(_c("Prints reported", "1") + f"  {worked}/{reported} succeeded")
+        issues: dict[str, int] = {}
+        for outcome in prints:
+            for issue in outcome["issues"]:
+                issues[issue] = issues.get(issue, 0) + 1
+        for issue, count in sorted(issues.items(), key=lambda kv: -kv[1]):
+            print(f"  {issue:<34}{count:>5}")
+    else:
+        # Stated rather than left blank: an empty table here is the difference
+        # between DFM constants that are measured and DFM constants that are
+        # conventional, and that difference should be visible.
+        print(_warn("No print outcomes reported yet."))
+        print(_dim("Until this has rows, every DFM constant is a maker convention,"))
+        print(_dim("not a measurement. `formforge feedback <model-id> ...` adds one."))
+    return 0
+
+
+def _add_feedback(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "feedback", help="record what happened when a model was printed"
+    )
+    parser.add_argument("model_id")
+    parser.add_argument(
+        "--failed",
+        action="store_true",
+        help="the print did not come out usable (default: it did)",
+    )
+    parser.add_argument(
+        "--issue",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="what went wrong; repeatable",
+    )
+    parser.add_argument("--printer")
+    parser.add_argument("--material")
+    parser.add_argument("--notes")
+    parser.add_argument("--db", help="database path (default: $FORMFORGE_DB)")
+    parser.set_defaults(handler=_cmd_feedback)
+
+
+def _cmd_feedback(args) -> int:
+    from .store import PRINT_ISSUES, Store  # noqa: PLC0415
+
+    unknown = sorted(set(args.issue) - PRINT_ISSUES)
+    if unknown:
+        print(_bad(f"unknown issue(s): {', '.join(unknown)}"))
+        print(_dim("expected: " + ", ".join(sorted(PRINT_ISSUES))))
+        return 2
+
+    with Store(args.db) as database:
+        if database.get_model(args.model_id) is None:
+            print(_bad(f"no model {args.model_id} in the database"))
+            print(_dim("feedback has to point at a recorded generation, so it can"))
+            print(_dim("be read back against what the validator measured."))
+            return 1
+        feedback_id = database.record_feedback(
+            {
+                "model_id": args.model_id,
+                "printed": True,
+                "success": not args.failed,
+                "printer": args.printer,
+                "material": args.material,
+                "issues": args.issue,
+                "notes": args.notes,
+            }
+        )
+    print(_ok("recorded") + f" {feedback_id}")
+    return 0
+
+
 def _add_doctor(subparsers) -> None:
     parser = subparsers.add_parser(
         "doctor", help="report what is installed, configured and safe"
@@ -527,6 +687,23 @@ def _cmd_doctor(args) -> int:
         print(f"  wall thickness {_warn('unaccelerated')} -- install rtree for full resolution")
 
     print(f"  profiles       {', '.join(sorted(PROFILES))}")
+
+    from .store import DEFAULT_PATH, Store  # noqa: PLC0415
+
+    with Store() as database:
+        totals = database.totals()
+    print(f"  database       {DEFAULT_PATH}")
+    print(
+        f"                 {totals['generations']} generation(s), "
+        f"{totals['prints_reported']} print outcome(s) reported"
+    )
+    if not totals["prints_reported"]:
+        # The honest state of the DFM constants, stated where someone checking
+        # their setup will read it.
+        print(
+            _warn("                 no prints reported -- every DFM threshold "
+                  "here is a convention, not a measurement")
+        )
     print()
 
     if not described["kernel_isolated"]:
