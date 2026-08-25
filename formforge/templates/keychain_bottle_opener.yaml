@@ -1,0 +1,152 @@
+id: keychain_bottle_opener
+version: 1
+category: keychain
+display_name: "Bottle Opener Keychain"
+description: >
+  Flat keyring bottle opener with an embedded steel washer as the lever face, or
+  a plastic-only version for light use. Prints flat with no supports; the washer
+  drops into a recess partway through the print.
+tags: [keychain, bottle_opener, tool, washer, insert, flat, no-supports]
+embedding_text: >
+  bottle opener keychain beer opener key ring bottle cap lifter pocket opener
+  keyring tool flat opener
+language: build123d
+tested:
+  printer: "Prusa MK4"
+  material: PETG
+  date: 2026-07-09
+  result: pass
+  notes: >
+    Plastic-only opens a twist-off but rounds off on a pry cap after a dozen
+    bottles. With an M8 washer dropped in at the pause it survives indefinitely.
+    PETG rather than PLA: PLA is too brittle at the lever throat.
+
+expected_solids: 1
+
+dimension_map:
+  body_l_mm: width
+  body_w_mm: depth
+
+param_schema:
+  type: object
+  required: [body_l_mm]
+  properties:
+    body_l_mm:
+      type: number
+      minimum: 45
+      maximum: 100
+      default: 62
+      ui: { widget: slider, step: 2, label: "Length" }
+    body_w_mm:
+      type: number
+      minimum: 20
+      maximum: 40
+      default: 26
+      ui: { widget: slider, step: 1, label: "Width" }
+    body_t_mm:
+      type: number
+      minimum: 3.5
+      maximum: 8
+      default: 4.5
+      description: "The lever throat carries the load; under 3.5 mm it flexes and cracks."
+      ui: { widget: slider, step: 0.5, label: "Thickness" }
+    corner_r_mm:
+      type: number
+      minimum: 2
+      maximum: 12
+      default: 6
+    ring_d_mm:
+      type: number
+      minimum: 4
+      maximum: 10
+      default: 5
+    catch_d_mm:
+      type: number
+      minimum: 14
+      maximum: 24
+      default: 18
+      description: "Opening the cap sits in. 18 mm suits a standard crown cap."
+      ui: { widget: slider, step: 0.5, label: "Cap opening" }
+    lip_mm:
+      type: number
+      minimum: 2.5
+      maximum: 8
+      default: 4.5
+      description: "How far the catch lip reaches over the cap."
+    washer_insert:
+      type: boolean
+      default: false
+      description: "Recess for an M8 washer as the lever face. Pause the print to drop it in."
+      ui: { widget: toggle, label: "Steel washer insert" }
+    washer_od_mm:
+      type: number
+      minimum: 14
+      maximum: 26
+      default: 17
+      description: "M8 washer outer diameter, plus press-fit clearance."
+    washer_t_mm:
+      type: number
+      minimum: 1.0
+      maximum: 3.0
+      default: 1.6
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "min_hole_diameter >= 4.0"
+  - "bbox.z >= 2.5"
+  - "bbox.x <= body_l_mm * 1.02"
+  - "catch_d_mm + lip_mm * 2 <= body_w_mm + 6"
+  - "washer_insert implies washer_t_mm < body_t_mm"
+
+source: |
+  from build123d import *
+
+  BODY_L_MM = 62.0
+  BODY_W_MM = 26.0
+  BODY_T_MM = 4.5
+  CORNER_R_MM = 6.0
+  RING_D_MM = 5.0
+  CATCH_D_MM = 18.0
+  LIP_MM = 4.5
+  WASHER_INSERT = False
+  WASHER_OD_MM = 17.0
+  WASHER_T_MM = 1.6
+
+  RING_INSET_MM = CORNER_R_MM + 2.0
+  # The catch sits toward the far end from the ring, leaving the middle solid
+  # so the throat between the two openings stays the strongest section.
+  CATCH_X_MM = BODY_L_MM / 2 - CATCH_D_MM / 2 - 3.0
+
+  with BuildPart() as opener:
+      with BuildSketch() as plan:
+          RectangleRounded(BODY_L_MM, BODY_W_MM, CORNER_R_MM)
+      extrude(amount=BODY_T_MM)
+
+      with BuildSketch(Plane.XY) as ring:
+          with Locations((-BODY_L_MM / 2 + RING_INSET_MM, 0)):
+              Circle(RING_D_MM / 2)
+      extrude(amount=BODY_T_MM, mode=Mode.SUBTRACT)
+
+      # The catch: a circular opening for the cap, with a slot cut out to the
+      # end of the body so the cap can be pushed in sideways. What remains
+      # bridging the slot is the lip that lifts the cap edge.
+      with BuildSketch(Plane.XY) as catch:
+          with Locations((CATCH_X_MM, 0)):
+              Circle(CATCH_D_MM / 2)
+          with Locations((BODY_L_MM / 2, 0)):
+              Rectangle(
+                  BODY_L_MM - CATCH_X_MM,
+                  CATCH_D_MM - LIP_MM * 2,
+                  align=(Align.MAX, Align.CENTER),
+              )
+      extrude(amount=BODY_T_MM, mode=Mode.SUBTRACT)
+
+      if WASHER_INSERT:
+          with BuildSketch(Plane.XY.offset(BODY_T_MM - WASHER_T_MM)) as recess:
+              with Locations((CATCH_X_MM, 0)):
+                  Circle(WASHER_OD_MM / 2)
+                  Circle(CATCH_D_MM / 2, mode=Mode.SUBTRACT)
+          extrude(amount=WASHER_T_MM, mode=Mode.SUBTRACT)
+
+  result = opener.part

@@ -1,0 +1,171 @@
+id: box_sliding_lid
+version: 1
+category: box
+display_name: "Sliding-Lid Box"
+description: >
+  Two-part box with a lid that slides into a dovetail rail. Both parts print
+  flat with no supports, and the rail clearance is a parameter so the fit can be
+  tuned to a printer rather than hoping.
+tags: [box, lid, sliding, storage, container, two-part, no-supports]
+embedding_text: >
+  sliding lid box storage box container with lid slide top box parts box
+  small box with cover stash box card box
+language: build123d
+tested:
+  printer: "Bambu P1S"
+  material: PLA
+  date: 2026-07-19
+  result: pass
+  notes: >
+    0.3 mm clearance per side slides smoothly on a well-tuned P1S. 0.2 mm needed
+    sanding; 0.4 mm rattled. This is the parameter most worth exposing, because
+    it is entirely printer-dependent.
+
+expected_solids: 2
+
+dimension_map:
+  # No entries: every dimension here is an internal one, and the bounding box is
+  # legitimately larger by the wall thickness plus the lid laid out beside the
+  # box. The invariants below check the relationship instead.
+
+param_schema:
+  type: object
+  required: [inner_l_mm, inner_w_mm, inner_h_mm]
+  properties:
+    inner_l_mm:
+      type: number
+      minimum: 25
+      maximum: 200
+      default: 90
+      description: "Usable internal length."
+      ui: { widget: slider, step: 5, label: "Inner length" }
+    inner_w_mm:
+      type: number
+      minimum: 20
+      maximum: 160
+      default: 60
+      ui: { widget: slider, step: 5, label: "Inner width" }
+    inner_h_mm:
+      type: number
+      minimum: 10
+      maximum: 120
+      default: 30
+      ui: { widget: slider, step: 2, label: "Inner height" }
+    wall_mm:
+      type: number
+      minimum: 2.0
+      maximum: 4
+      default: 2.4
+      description: "The rail is cut into this, so it must leave 1.6 mm of outer wall."
+      ui: { widget: slider, step: 0.2, label: "Wall" }
+    floor_mm:
+      type: number
+      minimum: 1.2
+      maximum: 4
+      default: 2.0
+    lid_t_mm:
+      type: number
+      minimum: 1.6
+      maximum: 4
+      default: 2.0
+      description: "Lid thickness, also the depth of the rail it slides in."
+    clearance_mm:
+      type: number
+      minimum: 0.15
+      maximum: 0.5
+      default: 0.3
+      description: >
+        Per-side sliding clearance. 0.3 mm is right for a well-tuned printer;
+        raise it if the lid binds, lower it if it rattles.
+      ui: { widget: slider, step: 0.05, label: "Slide clearance" }
+    inner_fillet_mm:
+      type: number
+      minimum: 0
+      maximum: 4
+      default: 1.5
+    lid_gap_mm:
+      type: number
+      minimum: 2
+      maximum: 20
+      default: 6
+      description: "Gap between the two parts on the build plate."
+
+invariants:
+  - "solids == 2"
+  - "is_watertight"
+  - "min_wall >= 1.2"
+  - "bbox.x >= inner_l_mm + wall_mm"
+  - "trapped_volumes == 0"
+  - "clearance_mm >= 0.15"
+  - "lid_t_mm < inner_h_mm"
+
+notes: >
+  Emits both parts laid out side by side on the plate, which is why
+  expected_solids is 2 rather than 1. The lid is the second solid.
+
+source: |
+  from build123d import *
+
+  INNER_L_MM = 90.0
+  INNER_W_MM = 60.0
+  INNER_H_MM = 30.0
+  WALL_MM = 2.4
+  FLOOR_MM = 2.0
+  LID_T_MM = 2.0
+  CLEARANCE_MM = 0.3
+  INNER_FILLET_MM = 1.5
+  LID_GAP_MM = 6.0
+
+  OUTER_L_MM = INNER_L_MM + 2 * WALL_MM
+  OUTER_W_MM = INNER_W_MM + 2 * WALL_MM
+  OUTER_H_MM = INNER_H_MM + FLOOR_MM + LID_T_MM
+
+  # The rail is a groove cut into the top of both side walls. Its depth is what
+  # is left after reserving 1.6 mm of outer wall: cutting a fixed fraction of
+  # the wall instead would leave under a millimetre of material holding the lid
+  # in, which splits the first time the lid is pulled at an angle.
+  RAIL_DEPTH_MM = max(0.8, WALL_MM - 1.6)
+  RAIL_W_MM = INNER_W_MM + 2 * RAIL_DEPTH_MM
+  LID_W_MM = RAIL_W_MM - 2 * CLEARANCE_MM
+  LID_L_MM = OUTER_L_MM - CLEARANCE_MM
+  LID_Z_MM = OUTER_H_MM - LID_T_MM
+
+  with BuildPart() as box:
+      Box(
+          OUTER_L_MM,
+          OUTER_W_MM,
+          OUTER_H_MM,
+          align=(Align.CENTER, Align.CENTER, Align.MIN),
+      )
+
+      with BuildSketch(Plane.XY.offset(FLOOR_MM)) as cavity:
+          Rectangle(INNER_L_MM, INNER_W_MM)
+      extrude(amount=INNER_H_MM, mode=Mode.SUBTRACT)
+
+      if INNER_FILLET_MM > 0:
+          floor_face = box.faces().filter_by(Plane.XY).sort_by(Axis.Z)[1]
+          fillet(floor_face.edges(), radius=INNER_FILLET_MM)
+
+      # Rail slot: full length so the lid can slide in from either end.
+      with BuildSketch(Plane.XY.offset(LID_Z_MM)) as rail:
+          Rectangle(OUTER_L_MM, RAIL_W_MM)
+      extrude(amount=LID_T_MM, mode=Mode.SUBTRACT)
+
+  with BuildPart() as lid:
+      with BuildSketch() as plate:
+          Rectangle(LID_L_MM, LID_W_MM)
+      extrude(amount=LID_T_MM)
+      # A finger notch at one end, so the lid can be started without a fingernail.
+      with BuildSketch(Plane.XY) as notch:
+          with Locations((LID_L_MM / 2, 0)):
+              Circle(LID_W_MM * 0.18)
+      extrude(amount=LID_T_MM, mode=Mode.SUBTRACT)
+
+  # Both parts on the plate, separated so the slicer treats them as separate
+  # objects and the brim of one does not fuse to the other.
+  result = Compound(
+      children=[
+          box.part,
+          Pos(0, OUTER_W_MM / 2 + LID_W_MM / 2 + LID_GAP_MM, 0) * lid.part,
+      ]
+  )

@@ -1,0 +1,185 @@
+id: box_gridfinity_bin
+version: 1
+category: box
+display_name: "Gridfinity Bin"
+description: >
+  Gridfinity-compatible storage bin on the standard 42 mm pitch, with the
+  correct three-stage base profile so it seats properly in a Gridfinity
+  baseplate and stacks with other bins. Optional scoop and label tab.
+tags: [box, storage, gridfinity, bin, modular, organizer, drawer, no-supports]
+embedding_text: >
+  gridfinity bin storage box modular drawer organizer 42mm grid baseplate
+  stackable bin parts bin tool organizer workshop storage
+language: build123d
+tested:
+  printer: "Bambu P1S"
+  material: PLA
+  date: 2026-07-21
+  result: pass
+  notes: >
+    Seats correctly in a printed Gridfinity baseplate with no sanding. The base
+    profile is the part that matters: 0.8 mm chamfer, 1.8 mm straight, 2.15 mm
+    chamfer. Get any of those wrong and it either rattles or will not drop in.
+
+expected_solids: 1
+
+notes: >
+  The 42 mm pitch, the 41.5 mm single-unit footprint and the 7 mm height unit
+  are fixed by the Gridfinity standard and are not parameters. Exposing them
+  would let a caller produce something that says Gridfinity and does not fit.
+
+param_schema:
+  type: object
+  required: [grid_x, grid_y, units_z]
+  properties:
+    grid_x:
+      type: integer
+      minimum: 1
+      maximum: 6
+      default: 2
+      description: "Width in 42 mm grid units."
+      ui: { widget: slider, step: 1, label: "Grid X" }
+    grid_y:
+      type: integer
+      minimum: 1
+      maximum: 6
+      default: 1
+      description: "Depth in 42 mm grid units."
+      ui: { widget: slider, step: 1, label: "Grid Y" }
+    units_z:
+      type: integer
+      minimum: 2
+      maximum: 12
+      default: 6
+      description: "Height in 7 mm units. 6 units is the common 42 mm bin."
+      ui: { widget: slider, step: 1, label: "Height units" }
+    wall_mm:
+      type: number
+      minimum: 0.8
+      maximum: 3.0
+      default: 1.2
+      description: "1.2 mm is three perimeters and the community default."
+      ui: { widget: slider, step: 0.2, label: "Wall" }
+    floor_mm:
+      type: number
+      minimum: 1.0
+      maximum: 4.0
+      default: 1.6
+    scoop:
+      type: boolean
+      default: false
+      description: "Radiused front floor so small parts sweep out with a finger."
+      ui: { widget: toggle, label: "Scoop" }
+    scoop_r_mm:
+      type: number
+      minimum: 4
+      maximum: 20
+      default: 10
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "min_wall >= 0.8"
+  - "trapped_volumes == 0"
+  - "bbox.x <= grid_x * 42.0"
+  - "bbox.y <= grid_y * 42.0"
+  - "bbox.z <= units_z * 7.0 + 0.1"
+
+source: |
+  from build123d import *
+
+  GRID_X = 2
+  GRID_Y = 1
+  UNITS_Z = 6
+  WALL_MM = 1.2
+  FLOOR_MM = 1.6
+  SCOOP = False
+  SCOOP_R_MM = 10.0
+
+  # Gridfinity standard. Not parameters: these are what "Gridfinity" means.
+  PITCH_MM = 42.0
+  BIN_CLEARANCE_MM = 0.5
+  UNIT_H_MM = 7.0
+  TOP_R_MM = 3.75
+  LOWER_CHAMFER_MM = 0.8
+  STRAIGHT_MM = 1.8
+  UPPER_CHAMFER_MM = 2.15
+
+  FOOT_H_MM = LOWER_CHAMFER_MM + STRAIGHT_MM + UPPER_CHAMFER_MM
+  CELL_MM = PITCH_MM - BIN_CLEARANCE_MM
+  INSET_MM = LOWER_CHAMFER_MM + UPPER_CHAMFER_MM
+  BODY_L_MM = GRID_X * PITCH_MM - BIN_CLEARANCE_MM
+  BODY_W_MM = GRID_Y * PITCH_MM - BIN_CLEARANCE_MM
+  BODY_H_MM = UNITS_Z * UNIT_H_MM
+
+  MID_SIZE_MM = CELL_MM - 2 * UPPER_CHAMFER_MM
+  MID_R_MM = max(TOP_R_MM - UPPER_CHAMFER_MM, 0.2)
+  BOTTOM_SIZE_MM = CELL_MM - 2 * INSET_MM
+  BOTTOM_R_MM = max(TOP_R_MM - INSET_MM, 0.2)
+
+  Z_STRAIGHT_MM = LOWER_CHAMFER_MM
+  Z_UPPER_MM = LOWER_CHAMFER_MM + STRAIGHT_MM
+
+  with BuildPart() as bin_part:
+      # One foot per grid cell, each the full three-stage Gridfinity profile.
+      for i in range(GRID_X):
+          for j in range(GRID_Y):
+              cx = (i - (GRID_X - 1) / 2) * PITCH_MM
+              cy = (j - (GRID_Y - 1) / 2) * PITCH_MM
+
+              with BuildPart() as foot:
+                  with BuildSketch(Plane.XY) as bottom:
+                      with Locations((cx, cy)):
+                          RectangleRounded(BOTTOM_SIZE_MM, BOTTOM_SIZE_MM, BOTTOM_R_MM)
+                  with BuildSketch(Plane.XY.offset(Z_STRAIGHT_MM)) as lower_top:
+                      with Locations((cx, cy)):
+                          RectangleRounded(MID_SIZE_MM, MID_SIZE_MM, MID_R_MM)
+                  loft()
+
+                  with BuildSketch(Plane.XY.offset(Z_STRAIGHT_MM)) as straight:
+                      with Locations((cx, cy)):
+                          RectangleRounded(MID_SIZE_MM, MID_SIZE_MM, MID_R_MM)
+                  extrude(amount=STRAIGHT_MM)
+
+                  with BuildSketch(Plane.XY.offset(Z_UPPER_MM)) as upper_bottom:
+                      with Locations((cx, cy)):
+                          RectangleRounded(MID_SIZE_MM, MID_SIZE_MM, MID_R_MM)
+                  with BuildSketch(Plane.XY.offset(FOOT_H_MM)) as upper_top:
+                      with Locations((cx, cy)):
+                          RectangleRounded(CELL_MM, CELL_MM, TOP_R_MM)
+                  loft()
+
+              add(foot.part)
+
+      with BuildSketch(Plane.XY.offset(FOOT_H_MM)) as body:
+          RectangleRounded(BODY_L_MM, BODY_W_MM, TOP_R_MM)
+      extrude(amount=BODY_H_MM - FOOT_H_MM)
+
+      with BuildSketch(Plane.XY.offset(FOOT_H_MM + FLOOR_MM)) as cavity:
+          RectangleRounded(
+              BODY_L_MM - 2 * WALL_MM,
+              BODY_W_MM - 2 * WALL_MM,
+              max(TOP_R_MM - WALL_MM, 0.5),
+          )
+      extrude(amount=BODY_H_MM, mode=Mode.SUBTRACT)
+
+      # The scoop is material added into the back inner corner, forming a ramp
+      # that curves the floor up to the wall so small parts sweep out with a
+      # finger rather than jamming in a square corner. Built as a corner block
+      # minus a cylinder -- the concave complement of a fillet -- because
+      # filleting the edge directly means selecting one edge out of the cavity
+      # by position, which breaks the moment a parameter changes.
+      if SCOOP:
+          floor_z = FOOT_H_MM + FLOOR_MM
+          inner_depth = BODY_W_MM / 2 - WALL_MM
+          inner_width = BODY_L_MM - 2 * WALL_MM
+          usable_r = min(SCOOP_R_MM, BODY_H_MM - floor_z - 1.0, inner_depth - 1.0)
+          if usable_r > 1.0:
+              with BuildSketch(Plane.YZ) as scoop_profile:
+                  with Locations((inner_depth - usable_r / 2, floor_z + usable_r / 2)):
+                      Rectangle(usable_r, usable_r)
+                  with Locations((inner_depth - usable_r, floor_z + usable_r)):
+                      Circle(usable_r, mode=Mode.SUBTRACT)
+              extrude(amount=inner_width / 2, both=True)
+
+  result = bin_part.part

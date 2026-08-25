@@ -1,0 +1,150 @@
+id: hook_wall_j
+version: 1
+category: hook
+display_name: "J-Hook Wall Hook"
+description: >
+  Screw-mounted J hook for keys, bags, towels or headphones. The whole profile
+  is drawn in the side view and extruded sideways, so the load path runs along
+  the layer lines rather than across them.
+tags: [hook, wall, key, coat, towel, screw, no-supports, cantilever]
+embedding_text: >
+  wall hook key hook coat hook towel hook bag hanger headphone hook screw
+  mounted hook peg entryway organiser hanging
+language: build123d
+tested:
+  printer: "Prusa MK4"
+  material: PETG
+  date: 2026-07-08
+  result: pass
+  notes: >
+    Held 4 kg on the 26 mm arm without visible deflection. Printed in the
+    modelled orientation the layers run across the arm, which is the only way
+    this survives -- printed lying down it snapped at the root under 1 kg.
+
+expected_solids: 1
+
+dimension_map:
+  plate_w_mm: width
+  plate_h_mm: height
+
+param_schema:
+  type: object
+  required: [arm_len_mm]
+  properties:
+    plate_w_mm:
+      type: number
+      minimum: 18
+      maximum: 60
+      default: 28
+      ui: { widget: slider, step: 2, label: "Plate width" }
+    plate_h_mm:
+      type: number
+      minimum: 25
+      maximum: 90
+      default: 46
+      ui: { widget: slider, step: 2, label: "Plate height" }
+    plate_t_mm:
+      type: number
+      minimum: 3
+      maximum: 10
+      default: 5
+      description: "Back plate thickness. Also the thickness around the screw hole."
+    arm_len_mm:
+      type: number
+      minimum: 12
+      maximum: 60
+      default: 26
+      description: "How far the hook projects. Longer arms need a thicker root."
+      ui: { widget: slider, step: 2, label: "Arm length" }
+    arm_t_mm:
+      type: number
+      minimum: 4
+      maximum: 12
+      default: 6
+      description: "Arm thickness at the root. Under 2.4 mm it shears along a layer."
+      ui: { widget: slider, step: 0.5, label: "Arm thickness" }
+    arm_z_mm:
+      type: number
+      minimum: 4
+      maximum: 40
+      default: 8
+      description: "Height of the arm above the plate's bottom edge."
+    lip_h_mm:
+      type: number
+      minimum: 0
+      maximum: 30
+      default: 14
+      description: "Upturned tip that stops things sliding off. 0 makes a straight peg."
+      ui: { widget: slider, step: 1, label: "Lip height" }
+    lip_t_mm:
+      type: number
+      minimum: 3
+      maximum: 10
+      default: 5
+    screw_d_mm:
+      type: number
+      minimum: 3
+      maximum: 8
+      default: 4.2
+      description: "Screw shank clearance: nominal diameter plus 0.4 mm."
+    fillet_mm:
+      type: number
+      minimum: 0
+      maximum: 8
+      default: 3
+      description: "Fillet at the root. This is what carries the bending load."
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "min_wall >= 2.4"
+  - "bbox.x <= plate_w_mm * 1.02"
+  - "arm_t_mm >= 2.4"
+  - "fillet_mm < arm_t_mm"
+  - "lip_t_mm <= arm_len_mm"
+
+notes: >
+  Modelled in its print orientation: back plate flat against the bed is wrong
+  for this part, so it is modelled standing as it hangs. Every face is either
+  vertical or a bridge under 10 mm, so it prints without supports anyway.
+
+source: |
+  from build123d import *
+
+  PLATE_W_MM = 28.0
+  PLATE_H_MM = 46.0
+  PLATE_T_MM = 5.0
+  ARM_LEN_MM = 26.0
+  ARM_T_MM = 6.0
+  ARM_Z_MM = 8.0
+  LIP_H_MM = 14.0
+  LIP_T_MM = 5.0
+  SCREW_D_MM = 4.2
+  FILLET_MM = 3.0
+
+  with BuildPart() as hook:
+      # The whole side view in one sketch: back plate, arm, upturned lip. Drawing
+      # it as a single profile means the three parts are one solid by
+      # construction, with no boolean to fail at the root -- which is exactly
+      # where this part is loaded.
+      with BuildSketch(Plane.YZ) as profile:
+          Rectangle(PLATE_T_MM, PLATE_H_MM, align=(Align.MIN, Align.MIN))
+          with Locations((0, ARM_Z_MM)):
+              Rectangle(ARM_LEN_MM, ARM_T_MM, align=(Align.MIN, Align.MIN))
+          if LIP_H_MM > 0:
+              with Locations((ARM_LEN_MM - LIP_T_MM, ARM_Z_MM)):
+                  Rectangle(LIP_T_MM, LIP_H_MM, align=(Align.MIN, Align.MIN))
+      extrude(amount=PLATE_W_MM / 2, both=True)
+
+      # Fillet the inner corners where the arm meets the plate and the lip. The
+      # front-most edge group is the outside of the lip, so the group at the
+      # back is the one that matters structurally.
+      if FILLET_MM > 0:
+          fillet(hook.edges().filter_by(Axis.X).group_by(Axis.Y)[0], radius=FILLET_MM)
+
+      with BuildSketch(Plane.XZ) as screws:
+          with Locations((0, PLATE_H_MM - PLATE_T_MM - SCREW_D_MM)):
+              Circle(SCREW_D_MM / 2)
+      extrude(amount=PLATE_T_MM * 2, both=True, mode=Mode.SUBTRACT)
+
+  result = hook.part

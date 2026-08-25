@@ -1,0 +1,140 @@
+id: organizer_cable_clip
+version: 1
+category: organizer
+display_name: "Cable Clip"
+description: >
+  C-shaped clip that snaps over a cable and screws or sticks to a desk edge.
+  The opening is narrower than the cable so it grips, and the clip is oriented
+  so the snap flexes across the layers rather than pulling them apart.
+tags: [organizer, cable, clip, desk, management, screw, adhesive, no-supports]
+embedding_text: >
+  cable clip cable management desk cable holder wire clip cord organizer cable
+  tidy under desk cable routing charger cable holder
+language: build123d
+tested:
+  printer: "Prusa MK4"
+  material: PETG
+  date: 2026-07-04
+  result: pass
+  notes: >
+    PETG, not PLA: the clip has to flex to accept the cable and PLA cracks at
+    the opening within a few cycles. A 55% opening grips a 6 mm cable firmly and
+    still lets it be pushed in by thumb.
+
+expected_solids: 1
+
+param_schema:
+  type: object
+  required: [cable_d_mm]
+  properties:
+    cable_d_mm:
+      type: number
+      minimum: 2
+      maximum: 20
+      default: 6
+      description: "Cable diameter. A USB-C cable is about 4 mm, a laptop brick lead 6-7 mm."
+      ui: { widget: slider, step: 0.5, label: "Cable diameter" }
+    wall_mm:
+      type: number
+      minimum: 1.6
+      maximum: 5
+      default: 2.4
+      ui: { widget: slider, step: 0.2, label: "Wall" }
+    depth_mm:
+      type: number
+      minimum: 5
+      maximum: 30
+      default: 10
+      description: "How wide the clip is along the cable."
+      ui: { widget: slider, step: 1, label: "Clip depth" }
+    base_w_mm:
+      type: number
+      minimum: 12
+      maximum: 60
+      default: 24
+      ui: { widget: slider, step: 2, label: "Base width" }
+    base_t_mm:
+      type: number
+      minimum: 1.6
+      maximum: 5
+      default: 2.4
+    opening_frac:
+      type: number
+      minimum: 0.35
+      maximum: 0.9
+      default: 0.55
+      description: >
+        Mouth width as a fraction of the cable diameter. Lower grips harder and
+        is harder to push in; below 0.35 the clip cracks instead of flexing.
+      ui: { widget: slider, step: 0.05, label: "Grip" }
+    mount:
+      type: string
+      enum: [screw, adhesive]
+      default: screw
+      ui: { widget: select, label: "Mount" }
+    screw_d_mm:
+      type: number
+      minimum: 2.5
+      maximum: 6
+      default: 3.4
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "min_wall >= 1.5"
+  - "mount == 'screw' implies hole_count >= 2"
+  - "opening_frac >= 0.35"
+  - "base_w_mm > cable_d_mm + wall_mm * 2"
+
+notes: >
+  Printed mouth-up on its base, which puts the flexing hinge in the XY plane.
+  The mouth is a small overhang at the top of the arc and bridges without
+  support at every size in the schema.
+
+source: |
+  from build123d import *
+
+  CABLE_D_MM = 6.0
+  WALL_MM = 2.4
+  DEPTH_MM = 10.0
+  BASE_W_MM = 24.0
+  BASE_T_MM = 2.4
+  OPENING_FRAC = 0.55
+  MOUNT = "screw"
+  SCREW_D_MM = 3.4
+
+  ARC_R_MM = CABLE_D_MM / 2 + WALL_MM
+  MOUTH_MM = CABLE_D_MM * OPENING_FRAC
+  SCREW_INSET_MM = max(SCREW_D_MM, 4.0)
+
+  # Sit the cable directly on the base, but never let the arc's outer surface
+  # dip below the bed. Centring the arc one radius above the base would leave it
+  # merely tangent to the base, and a tangent contact is not an overlap: the two
+  # would come out as separate solids joined at a single line.
+  ARC_CZ_MM = max(BASE_T_MM + CABLE_D_MM / 2, ARC_R_MM)
+
+  with BuildPart() as clip:
+      # Side view: the C in the XZ plane, extruded along Y by the clip depth.
+      with BuildSketch(Plane.XZ) as profile:
+          with Locations((0, ARC_CZ_MM)):
+              Circle(ARC_R_MM)
+              Circle(CABLE_D_MM / 2, mode=Mode.SUBTRACT)
+              # Mouth: cut upward from the arc's centre so the opening is at
+              # the top, where it bridges cleanly.
+              Rectangle(
+                  MOUTH_MM,
+                  ARC_R_MM * 2,
+                  align=(Align.CENTER, Align.MIN),
+                  mode=Mode.SUBTRACT,
+              )
+          Rectangle(BASE_W_MM, BASE_T_MM, align=(Align.CENTER, Align.MIN))
+      extrude(amount=DEPTH_MM / 2, both=True)
+
+      if MOUNT == "screw":
+          with BuildSketch(Plane.XY) as screws:
+              for sign in (-1, 1):
+                  with Locations((sign * (BASE_W_MM / 2 - SCREW_INSET_MM), 0)):
+                      Circle(SCREW_D_MM / 2)
+          extrude(amount=BASE_T_MM, mode=Mode.SUBTRACT)
+
+  result = clip.part

@@ -1,0 +1,140 @@
+id: wall_decor_monogram
+version: 1
+category: wall_decor
+display_name: "Monogram Wall Sign"
+description: >
+  Round or square backing plate with a raised letter, word or monogram and a
+  keyhole hanging slot on the back. Prints face-down flat on the bed, so the
+  visible face is the smooth one against the build plate.
+tags: [wall_decor, sign, monogram, letter, name, plaque, keyhole, no-supports]
+embedding_text: >
+  monogram wall sign letter plaque name sign initial wall art nursery sign
+  door sign hanging plaque decorative letter word art
+language: build123d
+tested:
+  printer: "Bambu P1S"
+  material: PLA
+  date: 2026-07-11
+  result: pass
+  notes: >
+    2 mm relief is enough to read across a room. Printed letter-side up; the
+    letter's top surface is the only face that shows, and it comes out clean at
+    0.2 mm layers with no ironing.
+
+expected_solids: 1
+
+dimension_map:
+  plate_d_mm: width
+
+text_features:
+  - label_param: text
+    cap_height_param: cap_h_mm
+    depth_param: relief_mm
+    stroke_ratio: 0.18
+
+param_schema:
+  type: object
+  required: [text]
+  properties:
+    text:
+      type: string
+      minLength: 1
+      maxLength: 16
+      default: "M"
+      ui: { widget: text, label: "Text" }
+    plate_d_mm:
+      type: number
+      minimum: 60
+      maximum: 220
+      default: 120
+      description: "Plate diameter, or side length when square."
+      ui: { widget: slider, step: 5, label: "Plate size" }
+    plate_shape:
+      type: string
+      enum: [circle, square, hexagon]
+      default: circle
+      ui: { widget: select, label: "Plate shape" }
+    plate_t_mm:
+      type: number
+      minimum: 2.5
+      maximum: 10
+      default: 4
+      ui: { widget: slider, step: 0.5, label: "Plate thickness" }
+    cap_h_mm:
+      type: number
+      minimum: 10
+      maximum: 160
+      default: 70
+      description: "Letter cap height. Keep it under about 60% of the plate size."
+      ui: { widget: slider, step: 5, label: "Text size" }
+    relief_mm:
+      type: number
+      minimum: 0.6
+      maximum: 6
+      default: 2.0
+      description: "How far the letter stands proud."
+      ui: { widget: slider, step: 0.2, label: "Relief" }
+    hang_d_mm:
+      type: number
+      minimum: 4
+      maximum: 10
+      default: 5
+      description: "Hanging hole diameter. 5 mm clears a picture nail head."
+    hang_inset_mm:
+      type: number
+      minimum: 6
+      maximum: 30
+      default: 9
+      description: "Hole centre from the top edge."
+    edge_chamfer_mm:
+      type: number
+      minimum: 0
+      maximum: 2
+      default: 0.6
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "hole_count >= 1"
+  - "mass_g <= 400"
+  - "cap_h_mm <= plate_d_mm * 0.75"
+  - "hang_inset_mm - hang_d_mm / 2 >= 3.0"
+
+source: |
+  from build123d import *
+
+  TEXT = "M"
+  PLATE_D_MM = 120.0
+  PLATE_SHAPE = "circle"
+  PLATE_T_MM = 4.0
+  CAP_H_MM = 70.0
+  RELIEF_MM = 2.0
+  HANG_D_MM = 5.0
+  HANG_INSET_MM = 9.0
+  EDGE_CHAMFER_MM = 0.6
+
+  with BuildPart() as sign:
+      with BuildSketch() as plan:
+          if PLATE_SHAPE == "square":
+              RectangleRounded(PLATE_D_MM, PLATE_D_MM, PLATE_D_MM * 0.06)
+          elif PLATE_SHAPE == "hexagon":
+              RegularPolygon(PLATE_D_MM / 2, 6, major_radius=False)
+          else:
+              Circle(PLATE_D_MM / 2)
+      extrude(amount=PLATE_T_MM)
+
+      # Chamfer the plate outline before adding the letter, so the letter's own
+      # edges are left crisp.
+      if EDGE_CHAMFER_MM > 0:
+          chamfer(sign.edges().group_by(Axis.Z)[0], length=EDGE_CHAMFER_MM)
+
+      with BuildSketch(Plane.XY) as hanger:
+          with Locations((0, PLATE_D_MM / 2 - HANG_INSET_MM)):
+              Circle(HANG_D_MM / 2)
+      extrude(amount=PLATE_T_MM, mode=Mode.SUBTRACT)
+
+      with BuildSketch(Plane.XY.offset(PLATE_T_MM)) as letter:
+          Text(TEXT, font_size=CAP_H_MM)
+      extrude(amount=RELIEF_MM)
+
+  result = sign.part

@@ -233,7 +233,14 @@ def build_context(
         # Solid-plastic mass. Real prints are 15-25% infill, so this is an upper
         # bound -- the right side to be on for a load-bearing check.
         "mass_g": volume_cm3 * density,
-        "min_wall": thickness.min_mm if thickness else float("inf"),
+        # `min_wall` is the 1st percentile, deliberately: it is the same
+        # statistic the built-in wall check compares against its threshold. If
+        # invariants read the raw minimum instead, a template would have to
+        # declare a lower bound than the rule it is actually held to, and every
+        # template author would have to know that. `min_wall_abs` is available
+        # for the rare invariant that genuinely wants the single worst sample.
+        "min_wall": thickness.p01_mm if thickness else float("inf"),
+        "min_wall_abs": thickness.min_mm if thickness else float("inf"),
         "median_wall": thickness.median_mm if thickness else float("inf"),
         "is_watertight": m.is_watertight,
         "solids": m.solid_count,

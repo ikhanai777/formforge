@@ -1,0 +1,144 @@
+id: organizer_drawer_tray
+version: 1
+category: organizer
+display_name: "Drawer Divider Tray"
+description: >
+  Rectangular tray divided into a grid of compartments, sized to fit a drawer.
+  Cell sizes are derived from the outer dimensions and the grid, so the tray
+  always fills the space you measured rather than leaving a gap at one end.
+tags: [organizer, drawer, divider, tray, grid, compartments, no-supports]
+embedding_text: >
+  drawer organizer divider tray compartments grid cutlery tray desk drawer
+  insert jewellery tray parts tray sorting bins sections
+language: build123d
+tested:
+  printer: "Bambu A1"
+  material: PLA
+  date: 2026-07-05
+  result: pass
+  notes: >
+    A 150 x 100 tray with 2 mm internal walls is rigid enough to lift out full.
+    The internal fillets are load-bearing here: without them the wall-to-floor
+    joint cracks the first time the tray is dropped.
+
+expected_solids: 1
+
+dimension_map:
+  outer_l_mm: width
+  outer_w_mm: depth
+  height_mm: height
+
+param_schema:
+  type: object
+  required: [outer_l_mm, outer_w_mm, cols, rows]
+  properties:
+    outer_l_mm:
+      type: number
+      minimum: 50
+      maximum: 250
+      default: 150
+      description: "Measure the drawer and subtract 2 mm for clearance."
+      ui: { widget: slider, step: 5, label: "Length" }
+    outer_w_mm:
+      type: number
+      minimum: 40
+      maximum: 250
+      default: 100
+      ui: { widget: slider, step: 5, label: "Width" }
+    height_mm:
+      type: number
+      minimum: 15
+      maximum: 120
+      default: 45
+      ui: { widget: slider, step: 5, label: "Height" }
+    cols:
+      type: integer
+      minimum: 1
+      maximum: 8
+      default: 3
+      ui: { widget: slider, step: 1, label: "Columns" }
+    rows:
+      type: integer
+      minimum: 1
+      maximum: 8
+      default: 2
+      ui: { widget: slider, step: 1, label: "Rows" }
+    wall_mm:
+      type: number
+      minimum: 1.6
+      maximum: 4
+      default: 2.0
+      ui: { widget: slider, step: 0.2, label: "Wall" }
+    floor_mm:
+      type: number
+      minimum: 1.2
+      maximum: 4
+      default: 1.6
+    inner_fillet_mm:
+      type: number
+      minimum: 0
+      maximum: 4
+      default: 1.5
+      description: "Fillet where the compartment walls meet the floor."
+    base_chamfer_mm:
+      type: number
+      minimum: 0
+      maximum: 1.5
+      default: 0.5
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "min_wall >= 1.5"
+  - "plate_contact_fraction >= 0.5"
+  - "bbox.x <= outer_l_mm * 1.02"
+  - "bbox.y <= outer_w_mm * 1.02"
+  - "outer_l_mm - wall_mm * (cols + 1) >= cols * 12"
+  - "outer_w_mm - wall_mm * (rows + 1) >= rows * 12"
+
+source: |
+  from build123d import *
+
+  OUTER_L_MM = 150.0
+  OUTER_W_MM = 100.0
+  HEIGHT_MM = 45.0
+  COLS = 3
+  ROWS = 2
+  WALL_MM = 2.0
+  FLOOR_MM = 1.6
+  INNER_FILLET_MM = 1.5
+  BASE_CHAMFER_MM = 0.5
+
+  # Cells absorb the remainder, so the tray always fills the drawer exactly.
+  CELL_L_MM = (OUTER_L_MM - WALL_MM * (COLS + 1)) / COLS
+  CELL_W_MM = (OUTER_W_MM - WALL_MM * (ROWS + 1)) / ROWS
+
+  with BuildPart() as tray:
+      Box(
+          OUTER_L_MM,
+          OUTER_W_MM,
+          HEIGHT_MM,
+          align=(Align.CENTER, Align.CENTER, Align.MIN),
+      )
+      if BASE_CHAMFER_MM > 0:
+          chamfer(tray.edges().group_by(Axis.Z)[0], length=BASE_CHAMFER_MM)
+
+      cell_positions = []
+      for i in range(COLS):
+          for j in range(ROWS):
+              x = -OUTER_L_MM / 2 + WALL_MM + CELL_L_MM / 2 + i * (CELL_L_MM + WALL_MM)
+              y = -OUTER_W_MM / 2 + WALL_MM + CELL_W_MM / 2 + j * (CELL_W_MM + WALL_MM)
+              cell_positions.append((x, y))
+
+      with BuildSketch(Plane.XY.offset(FLOOR_MM)) as cells:
+          with Locations(*cell_positions):
+              Rectangle(CELL_L_MM, CELL_W_MM)
+      extrude(amount=HEIGHT_MM, mode=Mode.SUBTRACT)
+
+      # Every compartment floor sits at the same height, so one selection by
+      # plane and Z catches all of them at once.
+      if INNER_FILLET_MM > 0:
+          floors = tray.faces().filter_by(Plane.XY).group_by(Axis.Z)[1]
+          fillet(floors.edges(), radius=INNER_FILLET_MM)
+
+  result = tray.part

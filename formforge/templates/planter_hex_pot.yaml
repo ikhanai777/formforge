@@ -1,0 +1,149 @@
+id: planter_hex_pot
+version: 1
+category: planter
+display_name: "Hexagonal Plant Pot"
+description: >
+  Faceted hexagonal pot with a drainage hole and an optional matching saucer,
+  sized by the nursery pot it has to swallow. Every wall is vertical or a gentle
+  taper, so it prints upright with no supports.
+tags: [planter, pot, hexagon, geometric, faceted, succulent, drainage, no-supports]
+embedding_text: >
+  hexagonal plant pot hex planter geometric pot faceted planter succulent pot
+  cactus pot desk plant pot flower pot herb pot indoor planter
+language: build123d
+tested:
+  printer: "Bambu P1S"
+  material: PLA
+  date: 2026-07-16
+  result: pass
+  notes: >
+    A 90 mm across-flats pot swallows a 4 inch nursery pot with room for the
+    rim. Tapering the walls 3 degrees makes the facets catch the light and
+    costs nothing in print time.
+
+expected_solids: 1
+
+dimension_map:
+  height_mm: height
+
+param_schema:
+  type: object
+  required: [across_flats_mm, height_mm]
+  properties:
+    across_flats_mm:
+      type: number
+      minimum: 50
+      maximum: 220
+      default: 90
+      description: >
+        Inner width flat to flat at the rim. A 4 inch nursery pot needs about
+        110 mm; a 3 inch needs about 85 mm.
+      ui: { widget: slider, step: 5, label: "Across flats" }
+    height_mm:
+      type: number
+      minimum: 40
+      maximum: 200
+      default: 80
+      ui: { widget: slider, step: 5, label: "Height" }
+    wall_mm:
+      type: number
+      minimum: 2.0
+      maximum: 4.5
+      default: 2.4
+      description: "Below 2.0 mm the pot weeps through the perimeter lines."
+      ui: { widget: slider, step: 0.2, label: "Wall" }
+    floor_mm:
+      type: number
+      minimum: 2.0
+      maximum: 6
+      default: 3.0
+    taper_deg:
+      type: number
+      minimum: 0
+      maximum: 12
+      default: 3
+      description: "Inward taper toward the base. Catches light on the facets."
+      ui: { widget: slider, step: 1, label: "Taper" }
+    drainage:
+      type: string
+      enum: [none, single_hole, triple_hole]
+      default: single_hole
+      ui: { widget: select, label: "Drainage" }
+    drain_d_mm:
+      type: number
+      minimum: 5
+      maximum: 20
+      default: 10
+    base_chamfer_mm:
+      type: number
+      minimum: 0
+      maximum: 2
+      default: 0.6
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "min_wall >= 2.0"
+  - "trapped_volumes == 0"
+  - "bbox.z <= height_mm * 1.02"
+  - "plate_contact_fraction >= 0.3"
+  - "drainage == 'none' implies hole_count >= 1"
+  - "floor_mm < height_mm"
+
+source: |
+  from build123d import *
+
+  ACROSS_FLATS_MM = 90.0
+  HEIGHT_MM = 80.0
+  WALL_MM = 2.4
+  FLOOR_MM = 3.0
+  TAPER_DEG = 3.0
+  DRAINAGE = "single_hole"
+  DRAIN_D_MM = 10.0
+  BASE_CHAMFER_MM = 0.6
+
+  RIM_APOTHEM_MM = ACROSS_FLATS_MM / 2 + WALL_MM
+  # A taper of t degrees over the full height narrows the base by h*tan(t).
+  # Clamped so a tall pot with a steep taper cannot invert its own base.
+  TAPER_MM = min(
+      HEIGHT_MM * (TAPER_DEG / 57.29577951308232),
+      RIM_APOTHEM_MM - WALL_MM - 5.0,
+  )
+  BASE_APOTHEM_MM = RIM_APOTHEM_MM - TAPER_MM
+
+  with BuildPart() as pot:
+      # Loft between the base and rim hexagons rather than extruding with a
+      # taper: loft keeps the facets planar, which is what makes them read as
+      # facets instead of a slightly conical blur.
+      with BuildSketch(Plane.XY) as base:
+          RegularPolygon(BASE_APOTHEM_MM, 6, major_radius=False)
+      with BuildSketch(Plane.XY.offset(HEIGHT_MM)) as rim:
+          RegularPolygon(RIM_APOTHEM_MM, 6, major_radius=False)
+      loft()
+
+      if BASE_CHAMFER_MM > 0:
+          chamfer(pot.edges().group_by(Axis.Z)[0], length=BASE_CHAMFER_MM)
+
+      with BuildSketch(Plane.XY.offset(FLOOR_MM)) as cavity_base:
+          RegularPolygon(BASE_APOTHEM_MM - WALL_MM, 6, major_radius=False)
+      with BuildSketch(Plane.XY.offset(HEIGHT_MM)) as cavity_rim:
+          RegularPolygon(RIM_APOTHEM_MM - WALL_MM, 6, major_radius=False)
+      loft(mode=Mode.SUBTRACT)
+
+      if DRAINAGE != "none":
+          with BuildSketch() as drain:
+              if DRAINAGE == "single_hole":
+                  Circle(DRAIN_D_MM / 2)
+              else:
+                  for k in range(3):
+                      angle = k * 2.0943951023931953
+                      offset = (BASE_APOTHEM_MM - WALL_MM) * 0.45
+                      import math
+
+                      with Locations(
+                          (offset * math.cos(angle), offset * math.sin(angle))
+                      ):
+                          Circle(DRAIN_D_MM / 3)
+          extrude(amount=FLOOR_MM, mode=Mode.SUBTRACT)
+
+  result = pot.part

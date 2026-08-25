@@ -1,0 +1,160 @@
+id: wall_decor_hex_tile
+version: 1
+category: wall_decor
+display_name: "Hex Tile Panel"
+description: >
+  Honeycomb wall panel: a hexagonal tile with a raised border and an optional
+  perforated lattice centre. Tiles tessellate edge to edge, so a set builds a
+  continuous honeycomb across a wall. Mounts with adhesive pads or a screw hole.
+tags: [wall_decor, hexagon, honeycomb, panel, tile, modular, lattice, no-supports]
+embedding_text: >
+  hex tile honeycomb wall panel hexagon wall art modular wall tiles geometric
+  wall decor hexagonal panel accent wall tiles
+language: build123d
+tested:
+  printer: "Bambu A1"
+  material: PLA
+  date: 2026-07-12
+  result: pass
+  notes: >
+    Tiles butt cleanly with no gap at the default size. The lattice centre needs
+    at least 2 mm ribs; at 1.5 mm the unsupported spans between holes started
+    drooping on the first layer above the border.
+
+expected_solids: 1
+
+param_schema:
+  type: object
+  required: [across_flats_mm]
+  properties:
+    across_flats_mm:
+      type: number
+      minimum: 40
+      maximum: 200
+      default: 100
+      description: "Flat to flat. Tiles tessellate at exactly this pitch."
+      ui: { widget: slider, step: 5, label: "Across flats" }
+    panel_t_mm:
+      type: number
+      minimum: 2
+      maximum: 10
+      default: 3
+      ui: { widget: slider, step: 0.5, label: "Panel thickness" }
+    border_w_mm:
+      type: number
+      minimum: 6
+      maximum: 25
+      default: 10
+      description: "Must exceed the hanging hole by 4 mm so material remains either side."
+      ui: { widget: slider, step: 1, label: "Border width" }
+    border_h_mm:
+      type: number
+      minimum: 0
+      maximum: 12
+      default: 3
+      description: "How far the border stands proud of the panel face."
+      ui: { widget: slider, step: 0.5, label: "Border relief" }
+    infill:
+      type: string
+      enum: [solid, hex_lattice, open]
+      default: hex_lattice
+      description: "'open' leaves just the border ring, for layering over another tile."
+      ui: { widget: select, label: "Centre" }
+    lattice_cell_mm:
+      type: number
+      minimum: 8
+      maximum: 40
+      default: 16
+      description: "Lattice hole size across flats."
+      ui: { widget: slider, step: 2, label: "Lattice cell" }
+    lattice_rib_mm:
+      type: number
+      minimum: 2.0
+      maximum: 8
+      default: 3.0
+      description: "Material between lattice holes. Under 2 mm the ribs droop."
+    hang_d_mm:
+      type: number
+      minimum: 0
+      maximum: 10
+      default: 5
+      description: "Hanging hole in the border. 0 for adhesive mounting only."
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "min_wall >= 1.5"
+  - "mass_g <= 400"
+  - "border_w_mm * 2 < across_flats_mm"
+  - "lattice_rib_mm >= 2.0"
+  - "infill == 'open' implies border_h_mm >= 0"
+
+source: |
+  from build123d import *
+  import math
+
+  ACROSS_FLATS_MM = 100.0
+  PANEL_T_MM = 3.0
+  BORDER_W_MM = 8.0
+  BORDER_H_MM = 3.0
+  INFILL = "hex_lattice"
+  LATTICE_CELL_MM = 16.0
+  LATTICE_RIB_MM = 3.0
+  HANG_D_MM = 5.0
+
+  APOTHEM_MM = ACROSS_FLATS_MM / 2
+  INNER_APOTHEM_MM = APOTHEM_MM - BORDER_W_MM
+
+  with BuildPart() as tile:
+      with BuildSketch() as outline:
+          RegularPolygon(APOTHEM_MM, 6, major_radius=False)
+      extrude(amount=PANEL_T_MM)
+
+      # Raised border ring, added on the face so the back stays flat against
+      # the wall and flat on the build plate.
+      if BORDER_H_MM > 0:
+          with BuildSketch(Plane.XY.offset(PANEL_T_MM)) as border:
+              RegularPolygon(APOTHEM_MM, 6, major_radius=False)
+              RegularPolygon(INNER_APOTHEM_MM, 6, major_radius=False, mode=Mode.SUBTRACT)
+          extrude(amount=BORDER_H_MM)
+
+      if INFILL == "open":
+          with BuildSketch(Plane.XY) as opening:
+              RegularPolygon(INNER_APOTHEM_MM, 6, major_radius=False)
+          extrude(amount=PANEL_T_MM, mode=Mode.SUBTRACT)
+
+      elif INFILL == "hex_lattice":
+          # Rows offset by half a pitch, which is what makes a hex lattice
+          # tessellate rather than line up in square columns.
+          cell_apothem = LATTICE_CELL_MM / 2
+          pitch_x = LATTICE_CELL_MM + LATTICE_RIB_MM
+          pitch_y = pitch_x * math.sqrt(3.0) / 2.0
+          rows = int(INNER_APOTHEM_MM * 2 / pitch_y) + 2
+          cols = int(INNER_APOTHEM_MM * 2 / pitch_x) + 2
+
+          holes = []
+          for row in range(-rows, rows + 1):
+              for col in range(-cols, cols + 1):
+                  x = col * pitch_x + (pitch_x / 2 if row % 2 else 0.0)
+                  y = row * pitch_y
+                  # Keep the whole cell, ribs included, inside the border.
+                  if math.hypot(x, y) <= INNER_APOTHEM_MM - cell_apothem - LATTICE_RIB_MM:
+                      holes.append((x, y))
+
+          if holes:
+              with BuildSketch(Plane.XY) as lattice:
+                  with Locations(*holes):
+                      RegularPolygon(cell_apothem, 6, major_radius=False)
+              extrude(amount=PANEL_T_MM, mode=Mode.SUBTRACT)
+
+      # Clamped so at least 2 mm of border survives on each side of the hole.
+      # At the schema's minimum border width an unclamped 10 mm hole would leave
+      # a 1.5 mm sliver that splits the first time the tile is hung.
+      hang_d = min(HANG_D_MM, BORDER_W_MM - 4.0)
+      if hang_d >= 3.0:
+          with BuildSketch(Plane.XY) as hanger:
+              with Locations((0, APOTHEM_MM - BORDER_W_MM / 2)):
+                  Circle(hang_d / 2)
+          extrude(amount=PANEL_T_MM + BORDER_H_MM, mode=Mode.SUBTRACT)
+
+  result = tile.part
