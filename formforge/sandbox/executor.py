@@ -7,14 +7,23 @@ repair loop converges -- see `formforge.hints`.
 
 Runtimes
 --------
-`subprocess`  Local development. rlimits and the import guard only; no kernel
-              isolation. Never acceptable for untrusted input in production.
-`docker`      Container with no network, read-only rootfs, dropped capabilities.
+`subprocess`  Local development only. rlimits, a stripped environment and the
+              import guard -- and *no filesystem isolation whatsoever*. The
+              static gate blocks `open()`, but numpy and trimesh are on the
+              allowlist and both write files, so a script can put bytes
+              anywhere the host user can. There is no network isolation either.
+`docker`      Container with no network, read-only rootfs, a tmpfs at /work,
+              dropped capabilities, non-root, pids limit.
 `gvisor`      As docker, plus `--runtime=runsc`. The production default.
+
+**The isolation lives in the runtime, not in this module.** The static gate and
+the import guard raise the cost of the obvious attacks; they do not contain a
+determined one, and nothing here should be mistaken for a boundary. The boundary
+is the container.
 
 The runtime is chosen by `FORMFORGE_SANDBOX_RUNTIME` so a deployment cannot
 accidentally ship the development path: `production_ready()` reports whether the
-active runtime provides kernel isolation, and the API refuses to serve untrusted
+active runtime provides that boundary, and the API refuses to serve untrusted
 traffic when it does not.
 """
 
@@ -204,7 +213,9 @@ class GeometrySandbox:
             "warning": (
                 None
                 if self.production_ready()
-                else "runtime does not isolate the host kernel; development use only"
+                else "no kernel or filesystem isolation: generated code can write "
+                "anywhere the host user can, and reach the network. Development "
+                "use only."
             ),
         }
 

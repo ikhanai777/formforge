@@ -123,6 +123,38 @@ result = Box(total, total, total)
         assert not result.ok
         assert result.error_class in {"Timeout", "OutOfMemory", "SandboxCrash"}
 
+    def test_the_static_gate_is_not_a_filesystem_boundary(self, sandbox, tmp_path):
+        """Documents where containment actually comes from.
+
+        The gate blocks `open()`, but numpy and trimesh are on the import
+        allowlist and both write files, so under the subprocess runtime a script
+        can put bytes anywhere the host user can. That is not a bug in the gate
+        -- a static scan cannot enumerate every write path in every allowed
+        library -- it is the reason the container is the boundary and the
+        subprocess runtime is refused in production.
+
+        If this assertion ever starts failing, someone has added real filesystem
+        isolation to the subprocess path, and the API's startup check and the
+        docs should be revisited.
+        """
+        if sandbox.production_ready():
+            pytest.skip("the container runtime does isolate the filesystem")
+
+        target = tmp_path / "escaped.npy"
+        source = f"""
+from build123d import *
+import numpy
+SIZE_MM = 10.0
+numpy.save({str(target)!r}, numpy.zeros(4))
+result = Box(SIZE_MM, SIZE_MM, SIZE_MM)
+"""
+        result = sandbox.execute(ExecuteRequest(source=source))
+        assert result.ok, result.feedback()
+        assert target.exists(), (
+            "the write was contained, which contradicts what the docs and the "
+            "production startup check say about this runtime"
+        )
+
     def test_reports_whether_the_runtime_isolates_the_kernel(self, sandbox):
         described = sandbox.describe()
         assert described["kernel_isolated"] is (sandbox.runtime in {"gvisor", "firecracker"})

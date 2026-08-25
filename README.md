@@ -167,14 +167,24 @@ the truth is "those two numbers cannot both be right".
 
 The sandbox executes model-authored Python. That is the entire threat model.
 
+**The container is the boundary.** Everything else raises the cost of the
+obvious attacks without containing a determined one:
+
 - No network. A prompt injection that succeeds in running arbitrary code still
   has nowhere to send anything.
-- Read-only rootfs, empty environment, dropped capabilities, non-root, pid
-  limit, CPU and memory rlimits, one job per container, destroyed after.
+- Read-only rootfs, a tmpfs at `/work`, empty environment, dropped capabilities,
+  non-root, pid limit, CPU and memory rlimits, one job per container, destroyed
+  after.
 - gVisor or Firecracker in production. Plain Docker shares the host kernel.
 - A static AST gate rejects disallowed imports, dynamic execution, dunder access
   and unbounded loops *before* a container is spawned — and a guarded
   `__import__` catches the dynamically-constructed names the static scan cannot.
+
+The `subprocess` runtime used for local development has **no filesystem or
+network isolation at all**. The gate blocks `open()`, but numpy and trimesh are
+on the import allowlist and both write files, so a script can put bytes anywhere
+the host user can. A test pins that fact in place so nobody mistakes the gate
+for containment.
 
 The AST gate is defence in depth, not the primary control. Assume it is
 bypassable. **The API refuses to start when the runtime does not isolate the
