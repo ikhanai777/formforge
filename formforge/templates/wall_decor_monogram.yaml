@@ -132,8 +132,10 @@ source: |
       extrude(amount=PLATE_T_MM)
 
       # Chamfer the plate outline before adding the letter, so the letter's own
-      # edges are left crisp.
-      if EDGE_CHAMFER_MM > 0:
+      # edges are left crisp. Skipped on shapes with corners: two chamfer faces
+      # meeting at a sharp vertex intersect each other, and the elephant's-foot
+      # relief a chamfer buys is not worth a self-intersecting solid.
+      if EDGE_CHAMFER_MM > 0 and PLATE_SHAPE == "circle":
           chamfer(sign.edges().group_by(Axis.Z)[0], length=EDGE_CHAMFER_MM)
 
       with BuildSketch(Plane.XY) as hanger:

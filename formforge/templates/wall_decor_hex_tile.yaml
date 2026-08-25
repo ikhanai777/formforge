@@ -128,21 +128,33 @@ source: |
           extrude(amount=PANEL_T_MM, mode=Mode.SUBTRACT)
 
       elif INFILL == "hex_lattice":
-          # Rows offset by half a pitch, which is what makes a hex lattice
-          # tessellate rather than line up in square columns.
+          # A hexagon does not have the same reach in every direction, and the
+          # lattice pitch has to respect that. RegularPolygon puts a vertex on
+          # +X, so across the flats (Y) the cell spans 2 * apothem, while across
+          # the corners (X) it spans 2 * circumradius -- about 15% more. Spacing
+          # both axes by cell + rib overlaps neighbouring cells along X, which
+          # eats the ribs between them and cuts the panel into loose pieces.
           cell_apothem = LATTICE_CELL_MM / 2
-          pitch_x = LATTICE_CELL_MM + LATTICE_RIB_MM
-          pitch_y = pitch_x * math.sqrt(3.0) / 2.0
+          # Flat-to-flat direction: the pitch is simply cell plus rib.
+          pitch_y = LATTICE_CELL_MM + LATTICE_RIB_MM
+          # Corner direction: three quarters of the corner-to-corner span, which
+          # works out as the same pitch scaled by sqrt(3)/2.
+          pitch_x = pitch_y * math.sqrt(3.0) / 2.0
           rows = int(INNER_APOTHEM_MM * 2 / pitch_y) + 2
           cols = int(INNER_APOTHEM_MM * 2 / pitch_x) + 2
 
           holes = []
-          for row in range(-rows, rows + 1):
-              for col in range(-cols, cols + 1):
-                  x = col * pitch_x + (pitch_x / 2 if row % 2 else 0.0)
-                  y = row * pitch_y
-                  # Keep the whole cell, ribs included, inside the border.
-                  if math.hypot(x, y) <= INNER_APOTHEM_MM - cell_apothem - LATTICE_RIB_MM:
+          for col in range(-cols, cols + 1):
+              for row in range(-rows, rows + 1):
+                  x = col * pitch_x
+                  # Alternate columns drop by half a pitch; that offset is what
+                  # makes it a honeycomb rather than a square grid.
+                  y = row * pitch_y + (pitch_y / 2 if col % 2 else 0.0)
+                  # Keep the whole cell, ribs included, inside the border. The
+                  # circumradius is the right reach to test with, not the
+                  # apothem, for the same reason the pitch differs by axis.
+                  cell_reach = cell_apothem * 2.0 / math.sqrt(3.0)
+                  if math.hypot(x, y) <= INNER_APOTHEM_MM - cell_reach - LATTICE_RIB_MM:
                       holes.append((x, y))
 
           if holes:

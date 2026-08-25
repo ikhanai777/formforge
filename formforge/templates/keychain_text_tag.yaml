@@ -129,6 +129,10 @@ preconditions:
   - "ring_d_mm + 5.0 <= body_w_mm"
   - "ring_inset_mm * 2 < body_l_mm"
   - "emboss_mm <= cap_h_mm * 0.15"
+  # Embossed text needs more cap height than engraved text. The nominal stroke
+  # at 6 mm is fine; the thin places inside a glyph are not, and a raised
+  # feature has to stand up on its own where an engraved one does not.
+  - "engrave or cap_h_mm >= 8.0"
   - "len(text) * cap_h_mm * 0.62 <= body_l_mm - ring_inset_mm * 2"
 
 source: |

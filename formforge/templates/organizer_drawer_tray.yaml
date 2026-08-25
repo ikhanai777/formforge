@@ -74,9 +74,10 @@ param_schema:
       ui: { widget: slider, step: 0.2, label: "Wall" }
     floor_mm:
       type: number
-      minimum: 1.2
+      minimum: 1.6
       maximum: 4
       default: 1.6
+      description: "The floor is often the thinnest part; 1.6 mm is 8 layers at 0.2 mm."
     inner_fillet_mm:
       type: number
       minimum: 0

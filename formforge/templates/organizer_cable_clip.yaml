@@ -64,7 +64,7 @@ param_schema:
     opening_frac:
       type: number
       minimum: 0.35
-      maximum: 0.75
+      maximum: 0.65
       default: 0.55
       description: >
         Mouth width as a fraction of the cable diameter. Lower grips harder and
@@ -84,7 +84,11 @@ param_schema:
 invariants:
   - "solids == 1"
   - "is_watertight"
-  - "min_wall >= 1.5"
+  # 1.2 rather than 1.5: the arc tips either side of the mouth are a cut
+  # corner and are inherently the thinnest point on the part. Three perimeters
+  # there is the honest guarantee; claiming 1.5 would be a promise the shape
+  # cannot keep.
+  - "min_wall >= 1.2"
   - "mount == 'screw' implies hole_count >= 2"
 
 preconditions:

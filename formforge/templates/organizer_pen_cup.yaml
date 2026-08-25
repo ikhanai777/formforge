@@ -61,9 +61,10 @@ param_schema:
       ui: { widget: slider, step: 0.2, label: "Wall" }
     floor_mm:
       type: number
-      minimum: 1.2
+      minimum: 1.6
       maximum: 6
       default: 2.0
+      description: "The floor is often the thinnest part, and it carries the contents."
     corner_r_mm:
       type: number
       minimum: 2
@@ -92,6 +93,9 @@ invariants:
 preconditions:
   - "corner_r_mm < min(outer_l_mm, outer_w_mm) / 2"
   - "wall_mm + floor_mm < height_mm"
+  # The cavity's corner radius is the outer one minus the wall. Below this the
+  # inner corner degenerates and the floor fillet self-intersects against it.
+  - "corner_r_mm >= wall_mm + 1.0"
 
 source: |
   from build123d import *

@@ -52,7 +52,7 @@ param_schema:
       ui: { widget: slider, step: 5, label: "Height" }
     wall_mm:
       type: number
-      minimum: 2.0
+      minimum: 2.2
       maximum: 4.0
       default: 2.4
       description: "Below 2.0 mm the pot weeps through the perimeter lines with wet soil."

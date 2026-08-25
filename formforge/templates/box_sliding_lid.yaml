@@ -105,6 +105,10 @@ preconditions:
   - "inner_fillet_mm <= floor_mm"
   - "inner_fillet_mm * 2 < inner_w_mm"
   - "clearance_mm * 4 < wall_mm"
+  # Box and lid are laid out side by side, so the plate footprint is roughly
+  # twice the box depth. Without this the schema permits a pair that validates
+  # individually and does not fit on any plate together.
+  - "(inner_w_mm + wall_mm * 2) * 2 + lid_gap_mm <= 200"
 
 notes: >
   Emits both parts laid out side by side on the plate, which is why
