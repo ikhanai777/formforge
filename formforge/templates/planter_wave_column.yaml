@@ -205,11 +205,18 @@ source: |
   # rim, which is what stops the base reading as a cookie cutter.
   BASE_CREASE = 0.55
   # A plain cosine gives crests and valleys the same width, which reads as
-  # fluting. Below 1 this exponent broadens the crests and pinches the valleys
-  # into the creases the shape is actually about. It is bounded away from 0
-  # because a very sharp valley is a very thin wall: the wall is perpendicular
-  # to the surface, and at the crease the surface is no longer radial.
-  CREASE_POWER = 0.72
+  # fluting rather than as the folds this shape is about. Subtracting a little
+  # of the second harmonic broadens the crests and pinches the valleys, and
+  # adding it back as a constant returns the wave to exactly [-1, 1] so
+  # LOBE_DEPTH keeps meaning what it says. Above 0.25 the extremes leave 0 and
+  # pi and that normalisation stops holding.
+  #
+  # The first version shaped the wave with a fractional power instead. That
+  # put a cusp at the bottom of every valley, and a cusp is not something an
+  # interpolating spline can pass through: at eight lobes it overshot into a
+  # loop, and the loft came out self-intersecting and not watertight. This
+  # form is band-limited, so there is nothing for the spline to overshoot.
+  CREASE_HARMONIC = 0.2
   # Triple drainage sits at this fraction of the inner base radius. Each of the
   # three holes gets a radius of a third of the single hole's diameter, so the
   # three together pass a little more water than the one they replace.
@@ -225,8 +232,12 @@ source: |
       profile = BASE_RATIO + (1.0 - BASE_RATIO) * (height_fraction**FLARE_EXP)
       amplitude = LOBE_DEPTH * (BASE_CREASE + (1.0 - BASE_CREASE) * height_fraction)
       phase = math.radians(TWIST_DEG) * height_fraction
-      crest = (1.0 + math.cos(LOBES * (angle - phase))) / 2
-      wave = 2.0 * (max(crest, 0.0) ** CREASE_POWER) - 1.0
+      turns = LOBES * (angle - phase)
+      wave = (
+          math.cos(turns)
+          - CREASE_HARMONIC * math.cos(2 * turns)
+          + CREASE_HARMONIC
+      )
       return nominal_rim_r * profile * (1.0 + amplitude * wave)
 
 
@@ -250,8 +261,32 @@ source: |
   ]
   RIM_FITTED_MM = RIM_R_MM * WIDTH_MM / (max(xs) - min(xs))
 
-  # Filleting the lip cannot eat more than half the wall on either side.
-  RIM_FILLET_MM = min(RIM_ROUND_MM, WALL_MM * 0.45)
+  def radial_wall_cosine(height_fraction, nominal_rim_r):
+      """How much of a radial inset survives as perpendicular wall.
+
+      The cavity is inset radially; wall thickness is measured normal to the
+      surface, and on a wave the two directions differ. The ratio is the
+      cosine of the surface's departure from radial, and it is why this
+      template's wall floor is 2.6 mm to clear a 2.0 mm rule.
+      """
+      steepest = 0.0
+      step = math.pi / POINTS
+      for index in range(POINTS):
+          angle = 2 * math.pi * index / POINTS
+          here = wave_radius(height_fraction, angle, nominal_rim_r)
+          ahead = wave_radius(height_fraction, angle + step, nominal_rim_r)
+          behind = wave_radius(height_fraction, angle - step, nominal_rim_r)
+          steepest = max(steepest, abs(ahead - behind) / (2 * step * here))
+      return 1.0 / math.sqrt(1.0 + steepest * steepest)
+
+
+  # Filleting the lip cannot eat more than half the wall from either side, and
+  # the wall it has to fit inside is the perpendicular one, not the radial
+  # parameter -- clamping against WALL_MM alone asks OCCT for a fillet wider
+  # than the material at the rim, and it refuses rather than guessing.
+  RIM_FILLET_MM = min(
+      RIM_ROUND_MM, WALL_MM * radial_wall_cosine(1.0, RIM_FITTED_MM) * 0.45
+  )
 
   with BuildPart() as pot:
       for step in range(SECTIONS + 1):
