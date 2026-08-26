@@ -78,6 +78,12 @@ EASY: tuple[BenchmarkCase, ...] = (
         "easy", "planter", "planter_hex_pot", {"height_mm": 90.0},
     ),
     BenchmarkCase(
+        "easy_wave_planter",
+        "a tall rippled floor planter 165mm wide and 200mm tall with drainage",
+        "easy", "planter", "planter_wave_column",
+        {"width_mm": 165.0, "height_mm": 200.0},
+    ),
+    BenchmarkCase(
         "easy_monogram", 'a monogram wall sign with the letter "R", 140mm across',
         "easy", "wall_decor", "wall_decor_monogram",
     ),
@@ -119,6 +125,12 @@ MEDIUM: tuple[BenchmarkCase, ...] = (
         "med_herb_planter", "a wall-mounted planter for herbs that hangs on two screws",
         "medium", "planter", "planter_halfmoon_wall",
         notes="Mount type stated indirectly.",
+    ),
+    BenchmarkCase(
+        "med_wavy_floor_pot", "a big wavy pot for the corner of my living room, 20cm tall",
+        "medium", "planter", "planter_wave_column",
+        notes="Organic shape words have to outrank the two geometric planters, "
+        "and 'big' plus 'corner of my living room' is a floor pot, not a desk one.",
     ),
     BenchmarkCase(
         "med_cutlery", "a tray for my cutlery drawer, it measures 20cm by 14cm inside",

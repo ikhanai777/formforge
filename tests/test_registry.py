@@ -145,12 +145,35 @@ class TestMatching:
             ("keychain with my name on it", "keychain_text_tag"),
             ("bottle opener keyring", "keychain_bottle_opener"),
             ("a hook for my keys by the door", "hook_wall_j"),
+            ("a big rippled organic floor pot", "planter_wave_column"),
         ],
     )
     def test_finds_the_right_template(self, registry, query, expected):
         match = registry.best_match(query)
         assert match is not None
         assert match.template.id == expected, f"{query!r} matched {match.template.id}"
+
+    @pytest.mark.parametrize(
+        "query,expected",
+        [
+            ("a wall planter 130mm wide and 100mm tall with drainage",
+             "planter_halfmoon_wall"),
+            ("a hexagonal plant pot 110mm across and 90mm tall", "planter_hex_pot"),
+        ],
+    )
+    def test_a_broad_template_does_not_swallow_its_neighbours(
+        self, registry, query, expected
+    ):
+        """The failure mode a template with a generous vocabulary introduces.
+
+        This scorer ranks a template by how much of the query's weight its token
+        set covers, so every extra word in a template's searchable text wins it
+        queries it has no business answering. The rippled planter arrived
+        describing itself as "tall", with a "wall" in its prose, and took both of
+        these from the templates that actually fit. The fix was to take the
+        query-shaped words out of its search text; this is the test that says so.
+        """
+        assert registry.best_match(query).template.id == expected
 
     def test_a_literal_to_render_outranks_an_equally_similar_template(self, registry):
         """The tie the lexical scorer cannot break on its own.
