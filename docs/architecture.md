@@ -175,6 +175,29 @@ scaling down can never lift a weak match over a threshold it had not already
 cleared. Ties are then broken by template id, so the same query always routes
 the same way.
 
+### A template's vocabulary is a claim on every other template's queries
+
+The lexical scorer ranks a template by how much of the *query's* IDF weight its
+token set covers. Nothing normalises for how much the template says, so a
+template with a generous vocabulary quietly outranks a narrow one on queries
+that belong to the narrow one. Adding the rippled planter demonstrated it: the
+draft described itself as a "tall floor planter" whose "wall is even
+everywhere", and those two words took `a wall planter 130mm wide and 100mm tall`
+away from the wall planter and `something to keep pens and scissors on my desk,
+about 9cm tall` away from the pen cup. Neither template changed; both lost.
+
+The rule that falls out is that a template's searchable text may carry the words
+that identify *it* and not the words that merely describe the shape of a
+request. "Tall", "wide", "small", "desk" are query furniture; "rippled",
+"gridfinity", "keyhole" are identity. Dimension words belong in the parameter
+descriptions, which are not searched.
+
+This is a property of the lexical default, not of the product: an embedding
+matcher scores direction rather than coverage and does not have this failure in
+the same form. It is worth writing down anyway, because the offline path is what
+the benchmark and every test run against, so a template that behaves badly here
+behaves badly everywhere they can see.
+
 ### When two values conflict, the default yields
 
 A stated dimension and an untouched default can be individually valid and

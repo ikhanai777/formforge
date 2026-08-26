@@ -262,7 +262,7 @@ formforge/
   mcp/            the MCP server
   api/            the HTTP gateway
   eval/           the template harness and the benchmark
-  templates/      12 verified parametric definitions
+  templates/      13 verified parametric definitions
 ```
 
 `docs/architecture.md` covers the parts that need more than a paragraph:

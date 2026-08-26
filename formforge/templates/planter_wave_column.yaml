@@ -1,0 +1,352 @@
+id: planter_wave_column
+version: 1
+category: planter
+display_name: "Rippled Column Planter"
+description: >
+  Floor planter with a soft-lobed, undulating outline that flares toward the
+  rim and twists slowly as it rises, like the big concrete-printed pots. The
+  cavity follows the same wave, so the shell is an even thickness the whole way
+  round. Every surface stays within a few degrees of vertical, so it prints
+  upright with no supports and no bridging.
+tags: [planter, pot, floor, organic, wavy, rippled, lobed, sculptural, drainage, no-supports]
+embedding_text: >
+  wavy planter rippled pot organic planter lobed pot undulating vase sculptural
+  floor planter column planter curvy pot cloud shaped pot flowing planter
+  twisted pot big statement planter concrete printed look pot
+# Deliberately absent from every searchable field above: "tall", "wall" and
+# "desk". They are the shape of a query, not the identity of this template, and
+# the lexical matcher scores a template by how much of the query's weight its
+# token set covers -- so a template that also answers to "tall" quietly takes
+# "a wall planter 130mm wide and 100mm tall" away from the wall planter, and
+# "something for my desk, about 9cm tall" away from the pen cup. Both did,
+# before those three words came out.
+language: build123d
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    3.2 mm walls rather than the 2.4 mm the other planters use, because this
+    is a floor pot: it holds several kilos of wet soil, so the hoop stress at
+    the base is an order of magnitude above a 90 mm desk pot's. The number is
+    the wall perpendicular to the surface. Insetting the cavity radially by
+    WALL_MM would not have produced it -- on a lobed section that leaves 0.78
+    of it at the default depth and 0.62 at eight deep lobes -- so the script
+    divides the inset by that cosine and the parameter means what it says. The shape this is drawn from is a
+    concrete-printed pot several times the size an FDM plate holds, so the
+    range here is bounded by the printer rather than by the design, and the
+    horizontal banding that reads as its texture is the layer lines themselves
+    rather than modelled geometry -- print it at a 0.28 mm layer height with a
+    0.6 mm nozzle to make them read.
+
+expected_solids: 1
+
+dimension_map:
+  width_mm: width
+  height_mm: height
+
+param_schema:
+  type: object
+  required: [width_mm, height_mm]
+  properties:
+    width_mm:
+      type: number
+      minimum: 90
+      maximum: 210
+      default: 165
+      description: >
+        Overall width across the widest lobes. The script normalises the wave
+        so this is the bounding box, not a nominal radius the lobes then
+        overshoot.
+      ui: { widget: slider, step: 5, label: "Width" }
+    height_mm:
+      type: number
+      minimum: 90
+      maximum: 240
+      default: 200
+      description: "Overall height. Bounded by the plate, not by the design."
+      ui: { widget: slider, step: 10, label: "Height" }
+    lobes:
+      type: integer
+      minimum: 3
+      maximum: 8
+      default: 5
+      description: >
+        How many crests the outline has. Five reads as organic; eight starts to
+        read as fluting.
+      ui: { widget: slider, step: 1, label: "Lobes" }
+    lobe_depth:
+      type: number
+      minimum: 0.02
+      maximum: 0.16
+      default: 0.11
+      description: >
+        Wave amplitude as a fraction of the local radius. Deeper waves cost
+        wall thickness, because the wall is perpendicular to a surface that is
+        no longer radial.
+      ui: { widget: slider, step: 0.01, label: "Lobe depth" }
+    twist_deg:
+      type: number
+      minimum: 0
+      maximum: 40
+      default: 12
+      description: >
+        How far the crests rotate between the base and the rim. This is the
+        parameter that makes the creases sweep rather than run straight, and
+        it is also the one that adds overhang: the surface leans by
+        r * twist / height.
+      ui: { widget: slider, step: 2, label: "Twist" }
+    base_ratio:
+      type: number
+      minimum: 0.58
+      maximum: 1.0
+      default: 0.72
+      description: >
+        Base width as a fraction of the rim width. Below about 0.58 the pot is
+        a tipping hazard once it is planted and top-heavy.
+      ui: { widget: slider, step: 0.02, label: "Base width" }
+    flare_exp:
+      type: number
+      minimum: 0.7
+      maximum: 2.2
+      default: 1.4
+      description: >
+        Where the flare happens. Above 1 the walls stay near vertical low down
+        and open out near the rim; below 1 the pot flares straight off the base
+        like a cone.
+      ui: { widget: slider, step: 0.1, label: "Flare" }
+    wall_mm:
+      type: number
+      minimum: 2.6
+      maximum: 6.0
+      default: 3.2
+      description: "The wall measured perpendicular to the surface, not a radial offset."
+      ui: { widget: slider, step: 0.2, label: "Wall" }
+    floor_mm:
+      type: number
+      minimum: 4.0
+      maximum: 14.0
+      default: 6.0
+      description: "Thicker than a desk pot's: it carries the whole soil column."
+    rim_round_mm:
+      type: number
+      minimum: 0
+      maximum: 1.5
+      default: 1.2
+      description: >
+        Rounds the lip. Clamped in the script to under half the wall, so a thin
+        wall cannot be filleted away.
+      ui: { widget: slider, step: 0.1, label: "Rim round" }
+    drainage:
+      type: string
+      enum: [none, single_hole, triple_hole]
+      default: single_hole
+      ui: { widget: select, label: "Drainage" }
+    drain_d_mm:
+      type: number
+      minimum: 8
+      maximum: 24
+      default: 14
+      description: "A floor pot drains a lot of water at once; 14 mm is not oversized."
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "min_wall >= 2.0"
+  - "trapped_volumes == 0"
+  - "bbox.z <= height_mm * 1.005"
+  - "bbox.x <= width_mm * 1.02"
+  # A planted floor pot is top-heavy by the time it is in use, so the empty
+  # shell has to be stable with margin, not marginally.
+  - "com_inside_footprint"
+  - "plate_contact_fraction >= 0.2"
+  - "drainage != 'none' implies hole_count >= 1"
+
+preconditions:
+  - "floor_mm * 4 < height_mm"
+  - "wall_mm * 4 + 30 < width_mm * base_ratio"
+  - "drainage != 'none' implies drain_d_mm + wall_mm * 4 < width_mm * base_ratio"
+
+notes: >
+  The section is a closed periodic spline, not a polygon: an OCCT loft over
+  one spline edge per section is a handful of faces, where a loft over
+  sixty-vertex polylines is a few thousand and takes long enough to matter
+  inside a 45 second sandbox.
+
+source: |
+  from build123d import *
+
+  import math
+
+  WIDTH_MM = 165.0
+  HEIGHT_MM = 200.0
+  LOBES = 5
+  LOBE_DEPTH = 0.11
+  TWIST_DEG = 12.0
+  BASE_RATIO = 0.72
+  FLARE_EXP = 1.4
+  WALL_MM = 3.2
+  FLOOR_MM = 6.0
+  RIM_ROUND_MM = 1.2
+  DRAINAGE = "single_hole"
+  DRAIN_D_MM = 14.0
+
+  # Not user knobs. SECTIONS is how many horizontal sections the loft passes
+  # through: the twist is a helical surface and a ruled loft chords it, so too
+  # few sections make the crests read as facets. POINTS_PER_LOBE is the spline
+  # sampling; at 18 the interpolated curve overshoots its samples by under a
+  # hundredth of a millimetre, which is why the normalisation below can treat
+  # the sample extent as the bounding box.
+  SECTIONS = 18
+  POINTS_PER_LOBE = 18
+  # The creases are shallower where the pot meets the floor and deepest at the
+  # rim, which is what stops the base reading as a cookie cutter.
+  BASE_CREASE = 0.55
+  # A plain cosine gives crests and valleys the same width, which reads as
+  # fluting rather than as the folds this shape is about. Subtracting a little
+  # of the second harmonic broadens the crests and pinches the valleys, and
+  # adding it back as a constant returns the wave to exactly [-1, 1] so
+  # LOBE_DEPTH keeps meaning what it says. Above 0.25 the extremes leave 0 and
+  # pi and that normalisation stops holding.
+  #
+  # The first version shaped the wave with a fractional power instead. That
+  # put a cusp at the bottom of every valley, and a cusp is not something an
+  # interpolating spline can pass through: at eight lobes it overshot into a
+  # loop, and the loft came out self-intersecting and not watertight. This
+  # form is band-limited, so there is nothing for the spline to overshoot.
+  CREASE_HARMONIC = 0.2
+  # Triple drainage sits at this fraction of the inner base radius. Each of the
+  # three holes gets a radius of a third of the single hole's diameter, so the
+  # three together pass a little more water than the one they replace.
+  DRAIN_RING_FRACTION = 0.42
+  DRAIN_HOLES = 3
+
+  POINTS = LOBES * POINTS_PER_LOBE
+  RIM_R_MM = WIDTH_MM / 2
+
+
+  def wave_radius(height_fraction, angle, nominal_rim_r):
+      """Outer radius at one height and one angle, before normalisation."""
+      profile = BASE_RATIO + (1.0 - BASE_RATIO) * (height_fraction**FLARE_EXP)
+      amplitude = LOBE_DEPTH * (BASE_CREASE + (1.0 - BASE_CREASE) * height_fraction)
+      phase = math.radians(TWIST_DEG) * height_fraction
+      turns = LOBES * (angle - phase)
+      wave = (
+          math.cos(turns)
+          - CREASE_HARMONIC * math.cos(2 * turns)
+          + CREASE_HARMONIC
+      )
+      return nominal_rim_r * profile * (1.0 + amplitude * wave)
+
+
+  def section_points(height_fraction, nominal_rim_r, inset):
+      pts = []
+      for index in range(POINTS):
+          angle = 2 * math.pi * index / POINTS
+          radius = wave_radius(height_fraction, angle, nominal_rim_r) - inset
+          pts.append((radius * math.cos(angle), radius * math.sin(angle)))
+      return pts
+
+
+  # The lobes push past the nominal radius and the twist means the widest
+  # crest is not at a fixed angle, so WIDTH_MM cannot be the radius: solve for
+  # the rim radius that puts the bounding box exactly on the requested width.
+  # One pass is exact, because scaling the rim radius scales every sample.
+  xs = [
+      point[0]
+      for step in range(SECTIONS + 1)
+      for point in section_points(step / SECTIONS, RIM_R_MM, 0.0)
+  ]
+  RIM_FITTED_MM = RIM_R_MM * WIDTH_MM / (max(xs) - min(xs))
+
+  def radial_wall_cosine(height_fraction, nominal_rim_r):
+      """How much of a radial inset survives as perpendicular wall.
+
+      The cavity is inset radially; wall thickness is measured normal to the
+      surface, and on a wave the two directions differ by the cosine of the
+      surface's departure from radial. At the default lobe depth that is 0.78,
+      and at eight deep lobes it reaches 0.62 -- so a radial inset of WALL_MM
+      would leave a wall the user never asked for, and the schema would be
+      promising a thickness the geometry does not deliver. The section's worst
+      case is used for the whole section, so the wall is never thinner than
+      WALL_MM and is thicker where the surface runs closer to radial.
+      """
+      steepest = 0.0
+      step = math.pi / POINTS
+      for index in range(POINTS):
+          angle = 2 * math.pi * index / POINTS
+          here = wave_radius(height_fraction, angle, nominal_rim_r)
+          ahead = wave_radius(height_fraction, angle + step, nominal_rim_r)
+          behind = wave_radius(height_fraction, angle - step, nominal_rim_r)
+          steepest = max(steepest, abs(ahead - behind) / (2 * step * here))
+      return 1.0 / math.sqrt(1.0 + steepest * steepest)
+
+
+  def cavity_inset(height_fraction):
+      """The radial inset that leaves WALL_MM measured perpendicular."""
+      return WALL_MM / radial_wall_cosine(height_fraction, RIM_FITTED_MM)
+
+
+  # Filleting the lip cannot eat more than half the wall from either side.
+  # Under half rather than half: the flare and the twist both tilt the surface
+  # out of the plane the inset is measured in, which the cosine above does not
+  # see, and OCCT refuses a fillet wider than the material rather than
+  # guessing at one.
+  RIM_FILLET_MM = min(RIM_ROUND_MM, WALL_MM * 0.4)
+
+  with BuildPart() as pot:
+      for step in range(SECTIONS + 1):
+          fraction = step / SECTIONS
+          with BuildSketch(Plane.XY.offset(fraction * HEIGHT_MM)):
+              with BuildLine():
+                  Spline(*section_points(fraction, RIM_FITTED_MM, 0.0), periodic=True)
+              make_face()
+      loft(ruled=True)
+
+      # The cavity is the same wave, inset far enough that WALL_MM survives as
+      # perpendicular wall rather than as a radial offset the wave then eats
+      # into. It starts at the floor and stops at the rim: the top face is
+      # what the loft leaves open.
+      for step in range(SECTIONS + 1):
+          z = FLOOR_MM + (HEIGHT_MM - FLOOR_MM) * step / SECTIONS
+          fraction = z / HEIGHT_MM
+          with BuildSketch(Plane.XY.offset(z)):
+              with BuildLine():
+                  Spline(
+                      *section_points(
+                          fraction, RIM_FITTED_MM, cavity_inset(fraction)
+                      ),
+                      periodic=True,
+                  )
+              make_face()
+      loft(ruled=True, mode=Mode.SUBTRACT)
+
+      if DRAINAGE != "none":
+          with BuildSketch():
+              if DRAINAGE == "single_hole":
+                  Circle(DRAIN_D_MM / 2)
+              else:
+                  # Conservative: the crest radius scaled down by the wave,
+                  # which is under the true valley radius at the floor, so the
+                  # ring cannot walk out into the fillet at the wall.
+                  inner_base_r = (
+                      wave_radius(FLOOR_MM / HEIGHT_MM, 0.0, RIM_FITTED_MM)
+                      * (1.0 - LOBE_DEPTH * BASE_CREASE)
+                      - cavity_inset(FLOOR_MM / HEIGHT_MM)
+                  )
+                  ring_r = inner_base_r * DRAIN_RING_FRACTION
+                  hole_r = DRAIN_D_MM / DRAIN_HOLES
+                  for hole in range(DRAIN_HOLES):
+                      angle = hole * 2 * math.pi / DRAIN_HOLES
+                      with Locations(
+                          (ring_r * math.cos(angle), ring_r * math.sin(angle))
+                      ):
+                          Circle(hole_r)
+          extrude(amount=FLOOR_MM, mode=Mode.SUBTRACT)
+
+      if RIM_FILLET_MM > 0:
+          fillet(pot.edges().group_by(Axis.Z)[-1], radius=RIM_FILLET_MM)
+
+  result = pot.part
