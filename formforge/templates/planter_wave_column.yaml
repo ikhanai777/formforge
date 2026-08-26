@@ -28,13 +28,13 @@ print_test:
   target_printer: "Bambu P1S"
   target_material: PLA
   rationale: >
-    3.2 mm walls rather than the 2.4 mm the other planters use, for two
-    reasons. First, the wall is measured perpendicular to the surface and the
-    surface is not radial: on a lobed section the true wall is the radial
-    offset times the cosine of the wave's slope, which at the default lobe
-    depth costs about 15 percent. Second, this is a floor pot that holds
-    several kilos of wet soil, so the hoop stress at the base is an order of
-    magnitude above a 90 mm desk pot's. The shape this is drawn from is a
+    3.2 mm walls rather than the 2.4 mm the other planters use, because this
+    is a floor pot: it holds several kilos of wet soil, so the hoop stress at
+    the base is an order of magnitude above a 90 mm desk pot's. The number is
+    the wall perpendicular to the surface. Insetting the cavity radially by
+    WALL_MM would not have produced it -- on a lobed section that leaves 0.78
+    of it at the default depth and 0.62 at eight deep lobes -- so the script
+    divides the inset by that cosine and the parameter means what it says. The shape this is drawn from is a
     concrete-printed pot several times the size an FDM plate holds, so the
     range here is bounded by the printer rather than by the design, and the
     horizontal banding that reads as its texture is the layer lines themselves
@@ -122,7 +122,7 @@ param_schema:
       minimum: 2.6
       maximum: 6.0
       default: 3.2
-      description: "Radial wall. The measured perpendicular wall is a little less on a wave."
+      description: "The wall measured perpendicular to the surface, not a radial offset."
       ui: { widget: slider, step: 0.2, label: "Wall" }
     floor_mm:
       type: number
@@ -265,9 +265,13 @@ source: |
       """How much of a radial inset survives as perpendicular wall.
 
       The cavity is inset radially; wall thickness is measured normal to the
-      surface, and on a wave the two directions differ. The ratio is the
-      cosine of the surface's departure from radial, and it is why this
-      template's wall floor is 2.6 mm to clear a 2.0 mm rule.
+      surface, and on a wave the two directions differ by the cosine of the
+      surface's departure from radial. At the default lobe depth that is 0.78,
+      and at eight deep lobes it reaches 0.62 -- so a radial inset of WALL_MM
+      would leave a wall the user never asked for, and the schema would be
+      promising a thickness the geometry does not deliver. The section's worst
+      case is used for the whole section, so the wall is never thinner than
+      WALL_MM and is thicker where the surface runs closer to radial.
       """
       steepest = 0.0
       step = math.pi / POINTS
@@ -280,13 +284,17 @@ source: |
       return 1.0 / math.sqrt(1.0 + steepest * steepest)
 
 
-  # Filleting the lip cannot eat more than half the wall from either side, and
-  # the wall it has to fit inside is the perpendicular one, not the radial
-  # parameter -- clamping against WALL_MM alone asks OCCT for a fillet wider
-  # than the material at the rim, and it refuses rather than guessing.
-  RIM_FILLET_MM = min(
-      RIM_ROUND_MM, WALL_MM * radial_wall_cosine(1.0, RIM_FITTED_MM) * 0.45
-  )
+  def cavity_inset(height_fraction):
+      """The radial inset that leaves WALL_MM measured perpendicular."""
+      return WALL_MM / radial_wall_cosine(height_fraction, RIM_FITTED_MM)
+
+
+  # Filleting the lip cannot eat more than half the wall from either side.
+  # Under half rather than half: the flare and the twist both tilt the surface
+  # out of the plane the inset is measured in, which the cosine above does not
+  # see, and OCCT refuses a fillet wider than the material rather than
+  # guessing at one.
+  RIM_FILLET_MM = min(RIM_ROUND_MM, WALL_MM * 0.4)
 
   with BuildPart() as pot:
       for step in range(SECTIONS + 1):
@@ -297,16 +305,19 @@ source: |
               make_face()
       loft(ruled=True)
 
-      # The cavity is the same wave inset by the wall, so the wall is even all
-      # the way round instead of thick at the crests and thin in the valleys.
-      # It starts at the floor and stops at the rim: the top face is what the
-      # loft leaves open.
+      # The cavity is the same wave, inset far enough that WALL_MM survives as
+      # perpendicular wall rather than as a radial offset the wave then eats
+      # into. It starts at the floor and stops at the rim: the top face is
+      # what the loft leaves open.
       for step in range(SECTIONS + 1):
           z = FLOOR_MM + (HEIGHT_MM - FLOOR_MM) * step / SECTIONS
+          fraction = z / HEIGHT_MM
           with BuildSketch(Plane.XY.offset(z)):
               with BuildLine():
                   Spline(
-                      *section_points(z / HEIGHT_MM, RIM_FITTED_MM, WALL_MM),
+                      *section_points(
+                          fraction, RIM_FITTED_MM, cavity_inset(fraction)
+                      ),
                       periodic=True,
                   )
               make_face()
@@ -323,7 +334,7 @@ source: |
                   inner_base_r = (
                       wave_radius(FLOOR_MM / HEIGHT_MM, 0.0, RIM_FITTED_MM)
                       * (1.0 - LOBE_DEPTH * BASE_CREASE)
-                      - WALL_MM
+                      - cavity_inset(FLOOR_MM / HEIGHT_MM)
                   )
                   ring_r = inner_base_r * DRAIN_RING_FRACTION
                   hole_r = DRAIN_D_MM / DRAIN_HOLES
