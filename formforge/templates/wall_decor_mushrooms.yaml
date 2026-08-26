@@ -1,0 +1,256 @@
+id: wall_decor_mushrooms
+version: 1
+category: wall_decor
+display_name: "Mushroom Cluster Wall Art"
+description: >
+  Backing panel carrying a raised cluster of mushrooms -- domed caps on
+  rounded stems, spotted, standing on a common ground line, with a hanging
+  hole. Prints face up, so the visible surface is a top face rather than a
+  support-scarred underside.
+tags: [wall_decor, mushroom, toadstool, fungi, forest, woodland, botanical, cottagecore, relief, no-supports]
+embedding_text: >
+  mushroom wall art toadstool relief mushroom cluster forest wall decor
+  woodland art botanical cottagecore fungi wall hanging mushroom panel
+  mushroom silhouette toadstool art
+language: build123d
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    Every face is either the flat panel or a vertical relief wall, so the
+    measured overhang is 0 degrees and nothing needs support. The cap spots
+    are recessed rather than raised: a 3 mm raised island one layer thick
+    lifts off the cap with the nozzle, a dimple cannot. Relief defaults to
+    2.8 mm because 2 mm of relief on a 150 mm panel disappears at a distance
+    that a mushroom outline still needs to read at.
+
+expected_solids: 1
+
+dimension_map:
+  # Only width. plate_h_mm is the panel's Y extent, not the bounding box's Z,
+  # and the piece lies flat -- the same reason wall_decor_monogram maps only
+  # its plate diameter.
+  plate_w_mm: width
+
+param_schema:
+  type: object
+  required: [plate_w_mm]
+  properties:
+    plate_w_mm:
+      type: number
+      minimum: 90
+      maximum: 220
+      default: 150
+      description: >
+        Panel width; the cluster is laid out across it. Capped at 220 mm
+        because a wider panel does not fit the build volume the DFM profiles
+        assume, and a range the sweep cannot build is a promise the registry
+        does not keep.
+      ui: { widget: slider, step: 5, label: "Panel width" }
+    plate_h_mm:
+      type: number
+      minimum: 60
+      maximum: 200
+      default: 92
+      description: >
+        Panel height. Sized so the tallest mushroom fills most of it; a much
+        taller panel leaves dead space above the cluster.
+      ui: { widget: slider, step: 5, label: "Panel height" }
+    plate_t_mm:
+      type: number
+      minimum: 3
+      maximum: 8
+      default: 4.0
+      ui: { widget: slider, step: 0.5, label: "Panel thickness" }
+    count:
+      type: integer
+      minimum: 2
+      maximum: 5
+      default: 3
+      description: "Mushrooms in the cluster. Sizes alternate so it reads as a family, not a row of clones."
+      ui: { widget: slider, step: 1, label: "Mushrooms" }
+    cap_w_mm:
+      type: number
+      minimum: 25
+      maximum: 100
+      default: 57.0
+      description: >
+        Width of the largest cap; the rest are scaled from it. Clamped down
+        when the panel or the mushroom count cannot accommodate it, so this
+        is an upper bound rather than an exact size.
+      ui: { widget: slider, step: 1, label: "Cap width" }
+    relief_mm:
+      type: number
+      minimum: 1.5
+      maximum: 5.0
+      default: 2.8
+      description: "How far the cluster stands off the panel."
+      ui: { widget: slider, step: 0.2, label: "Relief" }
+    spot_d_mm:
+      type: number
+      minimum: 0
+      maximum: 12
+      default: 7.0
+      description: "Diameter of the cap spots on the largest cap. 0 leaves the caps plain."
+      ui: { widget: slider, step: 0.5, label: "Spot size" }
+    spot_depth_mm:
+      type: number
+      minimum: 0.4
+      maximum: 2.0
+      default: 0.9
+    ground_mm:
+      type: number
+      minimum: 0
+      maximum: 16
+      default: 7.0
+      description: "Thickness of the ground line the stems stand on. 0 removes it."
+    hang_d_mm:
+      type: number
+      minimum: 3
+      maximum: 10
+      default: 5.0
+    hang_inset_mm:
+      type: number
+      minimum: 5
+      maximum: 25
+      default: 9.0
+    corner_r_mm:
+      type: number
+      minimum: 0
+      maximum: 20
+      default: 8.0
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "hole_count >= 1"
+  - "mass_g <= 400"
+  - "bbox.z <= (plate_t_mm + relief_mm) * 1.02"
+  # Flat relief on a flat panel, so effectively nothing overhangs. Stated as
+  # a fraction rather than max_overhang_deg: the max is a single-facet
+  # statistic, and one tessellation sliver on a large corner radius reads 90
+  # degrees while the actual overhanging area stays zero.
+  - "overhang_fraction <= 0.01"
+
+preconditions:
+  - "relief_mm <= plate_t_mm"
+  - "spot_depth_mm < relief_mm"
+  - "hang_inset_mm - hang_d_mm / 2 >= 3.0"
+  - "hang_inset_mm < plate_h_mm / 3"
+  - "corner_r_mm < plate_h_mm / 3"
+  # The cluster's fit across the panel and under the hanging hole is not a
+  # precondition: cap width is clamped to whatever fits in the source, so
+  # every count and panel size in range builds instead of being rejected.
+  - "ground_mm < plate_h_mm / 3"
+
+source: |
+  from build123d import *
+
+  PLATE_W_MM = 150.0
+  PLATE_H_MM = 92.0
+  PLATE_T_MM = 4.0
+  COUNT = 3
+  CAP_W_MM = 57.0
+  RELIEF_MM = 2.8
+  SPOT_D_MM = 7.0
+  SPOT_DEPTH_MM = 0.9
+  GROUND_MM = 7.0
+  HANG_D_MM = 5.0
+  HANG_INSET_MM = 9.0
+  CORNER_R_MM = 8.0
+
+  # Relative cap widths and stem extensions, so the cluster reads as a family
+  # rather than a row of clones. Indexed cyclically by mushroom.
+  SIZES = (1.0, 0.62, 0.82, 0.52, 0.9)
+  LIFT = (0.0, 0.10, 0.04, 0.12, 0.0)
+  # Clamp the cap to what the panel can actually hold, across and up. Doing it
+  # here rather than in a precondition means a five-mushroom cluster on a small
+  # panel comes out as five small mushrooms instead of being refused.
+  FIT_W_MM = PLATE_W_MM * 0.96 / (0.8 * (COUNT - 1) + 1)
+  FIT_H_MM = (PLATE_H_MM * 0.78 - GROUND_MM) / 1.06
+  CAP_EFF_MM = min(CAP_W_MM, FIT_W_MM, FIT_H_MM)
+  PITCH_MM = CAP_EFF_MM * 0.8
+  BASE_Y_MM = -PLATE_H_MM / 2 + GROUND_MM
+  SPOTS = ((-0.24, 0.26), (0.20, 0.36), (0.00, 0.60))
+
+
+  def mushroom_sketch(cap_w, cap_h, stem_w, stem_h):
+      """A domed cap on a rounded stem, built as its own face.
+
+      The cap is an elliptical arc closed by its chord rather than a full
+      ellipse with the lower half subtracted. A subtraction would reach past
+      this mushroom and cut into whichever neighbours were already placed,
+      which turns the cluster into a row of crosses.
+      """
+      with BuildSketch() as sketch:
+          with BuildLine():
+              EllipticalCenterArc(
+                  (0, stem_h), cap_w / 2, cap_h, start_angle=0, arc_size=180
+              )
+              Line((-cap_w / 2, stem_h), (cap_w / 2, stem_h))
+          make_face()
+          with Locations((0, stem_h / 2)):
+              RectangleRounded(stem_w, stem_h, min(stem_w * 0.35, stem_h * 0.35))
+      return sketch.sketch
+
+
+  def geometry(i):
+      """Placement and proportions of mushroom i, all stems grounded alike."""
+      cap_w = CAP_EFF_MM * SIZES[i % len(SIZES)]
+      return (
+          -PITCH_MM * (COUNT - 1) / 2 + PITCH_MM * i,
+          cap_w,
+          cap_w * 0.44,
+          cap_w * 0.30,
+          # Variety comes from stem length, never from lifting a mushroom off
+          # the ground line and leaving it floating.
+          cap_w * 0.62 + PLATE_H_MM * LIFT[i % len(LIFT)],
+      )
+
+
+  with BuildPart() as art:
+      with BuildSketch() as plan:
+          if CORNER_R_MM > 0:
+              RectangleRounded(PLATE_W_MM, PLATE_H_MM, CORNER_R_MM)
+          else:
+              Rectangle(PLATE_W_MM, PLATE_H_MM)
+      extrude(amount=PLATE_T_MM)
+
+      with BuildSketch(Plane.XY) as hanger:
+          with Locations((0, PLATE_H_MM / 2 - HANG_INSET_MM)):
+              Circle(HANG_D_MM / 2)
+      extrude(amount=PLATE_T_MM, mode=Mode.SUBTRACT)
+
+      with BuildSketch(Plane.XY.offset(PLATE_T_MM)) as relief:
+          for i in range(int(COUNT)):
+              x, cap_w, cap_h, stem_w, stem_h = geometry(i)
+              add(
+                  mushroom_sketch(cap_w, cap_h, stem_w, stem_h).moved(
+                      Location((x, BASE_Y_MM))
+                  )
+              )
+          if GROUND_MM > 0:
+              with Locations((0, BASE_Y_MM - GROUND_MM / 2)):
+                  RectangleRounded(
+                      PLATE_W_MM * 0.80, GROUND_MM, GROUND_MM / 2.2
+                  )
+      extrude(amount=RELIEF_MM)
+
+      # Recessed, not raised: a dimple cannot peel off the cap the way a
+      # one-layer island can.
+      if SPOT_D_MM > 0:
+          with BuildSketch(Plane.XY.offset(PLATE_T_MM + RELIEF_MM)) as spots:
+              for i in range(int(COUNT)):
+                  x, cap_w, cap_h, stem_w, stem_h = geometry(i)
+                  scale = cap_w / CAP_EFF_MM
+                  for dx, dy in SPOTS:
+                      with Locations(
+                          (x + cap_w * dx, BASE_Y_MM + stem_h + cap_h * dy)
+                      ):
+                          Circle(SPOT_D_MM * scale / 2)
+          extrude(amount=-SPOT_DEPTH_MM, mode=Mode.SUBTRACT)
+
+  result = art.part
