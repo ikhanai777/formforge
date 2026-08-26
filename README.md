@@ -55,8 +55,13 @@ model.step      the exact CAD solid, openable in Fusion or FreeCAD
 source.py       the script that built it, with every dimension a named constant
 params.json     the values, plus the valid range for each
 report.json     the full manufacturability report
-previews/       six orthographic views, an isometric, and a section cut
+previews/       front, top, isometric, a section cut, and a contact sheet
 ```
+
+Those four views are the ones the critique step looks at, which is why they
+are the ones a bundle carries. `formforge render` will produce any of the
+eight — the six orthographic faces, the isometric and the section — from an
+STL afterwards.
 
 `source.py` is the point. It runs standalone:
 

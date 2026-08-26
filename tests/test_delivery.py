@@ -354,6 +354,12 @@ class TestHttpApi:
         The API executes model-authored Python. Shipping the development
         runtime belongs in a startup check, not in a runbook.
         """
+        # Every other test here is gated by the `client` fixture's skip. This
+        # one builds the app itself, so it needs its own: without FastAPI,
+        # create_app raises about the missing dependency before it ever
+        # reaches the sandbox check, and the assertion below is not the
+        # refusal this test exists to pin.
+        pytest.importorskip("fastapi")
         from formforge.api import create_app
 
         with pytest.raises(RuntimeError) as excinfo:
