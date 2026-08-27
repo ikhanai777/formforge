@@ -320,6 +320,16 @@ Stated plainly, so nothing here reads as more finished than it is.
   and mesh-generation detail booleaned onto a parametric base. Those infer
   geometry the image does not contain, which is the part this path has not
   earned yet.
+- **Reconstruction runs elsewhere, on purpose.** `formforge/reconstruct.py`
+  takes a mesh from a self-hosted image-to-3D model and makes it printable:
+  floaters dropped, lossy repair permitted, an explicit real dimension
+  required because the mesh has no units, then the usual three tiers. The
+  model is not bundled and not run here — no weights, no GPU, and an HTTP
+  contract instead, with `deploy/reconstruct_server.py` as the reference
+  backend. This is the one path where geometry is generated rather than
+  written, so it is also the one that ends without a STEP file or a
+  `source.py`; that is the cost, and it is stated at the point of use rather
+  than discovered later.
 - **OpenSCAD execution.** The adapter is written and reports cleanly when the
   binary is absent; it has not been exercised.
 - **Postgres.** The data model is in `docs/schema.sql` and `formforge/store.py`

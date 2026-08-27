@@ -67,6 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_build(subparsers)
     _add_templates(subparsers)
     _add_emboss(subparsers)
+    _add_reconstruct(subparsers)
     _add_check(subparsers)
     _add_render(subparsers)
     _add_slice(subparsers)
@@ -417,6 +418,140 @@ def _cmd_emboss(args) -> int:
 
     print()
     print(f"relief: {out_dir}")
+    if not report.passed:
+        print()
+        print(report.agent_feedback())
+    return 0 if report.passed else 1
+
+
+# ---------------------------------------------------------------------------
+# reconstruct
+# ---------------------------------------------------------------------------
+
+
+def _add_reconstruct(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "reconstruct",
+        help="image(s) to a 3D mesh via a locally hosted reconstruction model",
+    )
+    parser.add_argument("images", nargs="+")
+    parser.add_argument(
+        "--size",
+        type=float,
+        required=True,
+        help="the real size of the object in mm; a reconstructed mesh has no units",
+    )
+    parser.add_argument("--axis", choices=["x", "y", "z"], default="z")
+    parser.add_argument("--url", default="http://127.0.0.1:8300")
+    parser.add_argument("--out", default="out")
+    parser.add_argument("--timeout", type=float, default=900.0)
+    parser.add_argument("--max-triangles", type=int, default=200_000)
+    parser.add_argument("--format", default="glb", help="mesh format to ask the backend for")
+    parser.add_argument(
+        "--keep-floaters",
+        action="store_true",
+        help="keep disconnected pieces instead of treating them as noise",
+    )
+    parser.add_argument(
+        "--no-lossy-repair",
+        action="store_true",
+        help="only geometry-preserving repair; a torn mesh then stays torn",
+    )
+    parser.add_argument("--profile", default=DEFAULT_PROFILE_ID)
+    parser.add_argument("--material", default="PLA")
+    parser.add_argument("--json", action="store_true")
+    parser.set_defaults(handler=_cmd_reconstruct)
+
+
+def _cmd_reconstruct(args) -> int:
+    from .reconstruct import (  # noqa: PLC0415
+        ReconstructError,
+        ReconstructOptions,
+        is_local,
+        reconstruct,
+    )
+    from .validation import validate  # noqa: PLC0415
+
+    images = [Path(p) for p in args.images]
+    missing = [str(p) for p in images if not p.exists()]
+    if missing:
+        print(_bad(f"no such image(s): {', '.join(missing)}"), file=sys.stderr)
+        return 1
+
+    opts = ReconstructOptions(
+        url=args.url,
+        size_mm=args.size,
+        size_axis=args.axis,
+        timeout_s=args.timeout,
+        max_triangles=args.max_triangles,
+        allow_lossy_repair=not args.no_lossy_repair,
+        keep_floaters=args.keep_floaters,
+        output_format=args.format,
+    )
+
+    def say(phase: str, ok: bool, message: str) -> None:
+        if not args.json:
+            print(f"  [{_ok('ok') if ok else _bad('!!')}] {phase:<9} {message}")
+
+    if not is_local(args.url):
+        say("network", True, f"sending {len(images)} image(s) off this machine to {args.url}")
+
+    say("request", True, f"{len(images)} view(s) to {args.url}")
+    try:
+        result = reconstruct(images, opts)
+    except ReconstructError as exc:
+        print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    say("mesh", True, f"backend returned {result.raw_triangles} triangles")
+    for note in result.notes:
+        say("clean", True, note)
+
+    mesh = result.mesh
+    out_dir = Path(args.out) / images[0].stem
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stl = out_dir / "model.stl"
+    mesh.export(str(stl))
+    # 3MF is the better container, but trimesh needs lxml to write one and
+    # that is not worth a hard dependency on a path whose essential output is
+    # the mesh itself.
+    try:
+        mesh.export(str(out_dir / "model.3mf"))
+    except Exception as exc:  # noqa: BLE001 - any writer failure is non-fatal
+        say("export", True, f"STL only; no 3MF ({type(exc).__name__})")
+    (out_dir / "reconstruction.json").write_text(
+        json.dumps(
+            {
+                "backend": result.backend,
+                "views": [str(p) for p in images],
+                "size_mm": args.size,
+                "size_axis": args.axis,
+                "raw_triangles": result.raw_triangles,
+                "dropped_components": result.dropped_components,
+                "repair": result.repair,
+                "notes": result.notes,
+            },
+            indent=2,
+        )
+    )
+
+    report = validate(str(stl), profile_id=args.profile, material=args.material)
+    (out_dir / "report.json").write_text(report.to_json())
+    say("validate", report.passed, report.summary_line())
+
+    if args.json:
+        print(json.dumps({"out": str(out_dir), "passed": report.passed,
+                          "notes": result.notes}, indent=2))
+        return 0 if report.passed else 1
+
+    print()
+    print(f"mesh: {out_dir}")
+    # Said once, here, because it is the difference between this path and every
+    # other one in the system.
+    print(
+        "no STEP and no source.py: this came from a mesh, so there is no B-rep "
+        "to export and no script to re-run."
+    )
     if not report.passed:
         print()
         print(report.agent_feedback())

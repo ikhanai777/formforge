@@ -96,6 +96,7 @@ formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
 formforge check model.stl --profile bambu_p1s_0.4 --category planter
 formforge emboss logo.png --width 180              # an image, traced into relief
 formforge emboss photo.jpg --fill                  # outline only, no interior holes
+formforge reconstruct v1.png v2.png --size 200      # image to mesh, via your own model
 formforge render model.stl --out previews/
 formforge rules --profile prusa_mk4_0.4          # the DFM rules being applied
 formforge stats                                  # what the recorded runs say
@@ -125,6 +126,30 @@ a photograph wants and never what a line drawing does.
 What it will not do is give you the side of the object the image does not show.
 That is the difference between a relief and a figurine, and it is the honest
 boundary of this approach rather than a missing feature.
+
+`formforge reconstruct` is the other side of that boundary, and it is the one
+place in the system where geometry really is generated. It does not run a
+model: weights and a GPU belong on the machine that has them, so it POSTs the
+views to a backend you host and `deploy/reconstruct_server.py` is the twenty
+lines that sit between it and whatever model you installed. What FormForge
+contributes is everything after the mesh arrives — the largest component kept
+and floaters reported, the lossy repair rungs allowed to run because there is
+no STEP file here for a patched mesh to contradict, and the same three
+validation tiers as every template.
+
+It requires `--size`, and that is not a convenience. A generative mesh is
+unitless: nothing in it says millimetres, and a shape that looks like a chair
+at 1.0 units is not a model of anything until somebody says how big the real
+one is. Guessing that number is the single thing this system is least willing
+to do, so it asks. The output is a mesh, so there is no STEP file and no
+`source.py` to re-run — that is the trade the table at the top describes, and
+taking this path is choosing that side of it.
+
+Four studio views ninety degrees apart are not a photogrammetry input, whatever
+the count suggests. Structure-from-motion needs many overlapping, texture-rich
+frames; four clean shots on a white background give it nothing to match. A
+learned multi-view model is the route that works on images like those, and
+`deploy/reconstruct_server.py` names the ones worth trying.
 
 `formforge feedback` is the one that matters most and the one with no
 substitute. Every DFM constant in this system is a conventional maker value;
@@ -277,6 +302,7 @@ formforge/
   binding.py      parameters bound by rewriting constants, comments intact
   hints.py        OCCT errors mapped to causes a model can act on
   emboss.py       image to traced silhouette, raised on a parametric panel
+  reconstruct.py  image to mesh via a self-hosted model, cleaned and scaled
   policy.py       IP and safety screening, before any geometry
   registry.py     the template registry, matching and routing
   store.py        the tables that cannot be backfilled
