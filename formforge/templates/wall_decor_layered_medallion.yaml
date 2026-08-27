@@ -1,0 +1,311 @@
+id: wall_decor_layered_medallion
+version: 1
+category: wall_decor
+display_name: "Layered Medallion Plaque"
+description: >
+  Round plaque built as stacked concentric tiers: a raised outer rim, stepped
+  terraces climbing toward a central boss, recessed roundels for emblems, and a
+  banner plinth below. Every surface is supported by the tier under it, so it
+  prints face up with no supports and nothing bridging in mid air.
+tags: [wall_decor, plaque, medallion, roundel, tiered, layered, crest, emblem, banner, keyhole, no-supports]
+embedding_text: >
+  layered medallion plaque round wall plaque tiered roundel emblem plaque
+  crest plaque commemorative disc award plaque circular wall art banner plinth
+  concentric relief plaque display medallion
+language: build123d
+print_test:
+  # No model in this repository has been physically printed. The target
+  # machine and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    Tiers only ever step inward and upward, so each ring sits fully on the one
+    beneath it and no face overhangs. That is the whole reason the design is
+    terraced rather than sculpted: a centrepiece standing off the backer on
+    struts needs support, and a stack of discs never does. The keyhole pockets
+    are the one exception -- they are blind recesses in the back, so their
+    ceilings bridge, which is why the head diameter is capped at a span FDM
+    bridges without sagging.
+
+expected_solids: 1
+
+dimension_map:
+  # Only width. The banner plinth hangs below the disc, so the bounding box is
+  # taller than the diameter and mapping height would hold the template to a
+  # number it never claimed.
+  diameter_mm: width
+
+param_schema:
+  type: object
+  required: [diameter_mm]
+  properties:
+    diameter_mm:
+      type: number
+      minimum: 90
+      maximum: 200
+      default: 160
+      description: >
+        Diameter of the disc. Capped at 200 rather than the bed's 220 because
+        the plinth hangs below it and counts toward the bounding box.
+      ui: { widget: slider, step: 5, label: "Diameter" }
+    plate_t_mm:
+      type: number
+      minimum: 3
+      maximum: 10
+      default: 5.0
+      ui: { widget: slider, step: 0.5, label: "Backer thickness" }
+    rim_w_mm:
+      type: number
+      minimum: 3
+      maximum: 20
+      default: 7.0
+      description: "Width of the raised outer rim."
+      ui: { widget: slider, step: 1, label: "Rim width" }
+    rim_mm:
+      type: number
+      minimum: 0
+      maximum: 6
+      default: 2.5
+      description: "How far the rim stands proud. 0 leaves the edge flush."
+      ui: { widget: slider, step: 0.5, label: "Rim height" }
+    tiers:
+      type: integer
+      minimum: 1
+      maximum: 4
+      default: 2
+      description: "Concentric terraces between the rim and the centre boss."
+      ui: { widget: slider, step: 1, label: "Tiers" }
+    tier_mm:
+      type: number
+      minimum: 0.8
+      maximum: 4.0
+      default: 1.6
+      description: "Height of each terrace step."
+      ui: { widget: slider, step: 0.2, label: "Tier step" }
+    boss_d_mm:
+      type: number
+      minimum: 25
+      maximum: 140
+      default: 78.0
+      description: >
+        Diameter of the raised central platform. This is where a centrepiece
+        goes, whether embossed from an image or added afterwards.
+      ui: { widget: slider, step: 2, label: "Centre boss" }
+    boss_mm:
+      type: number
+      minimum: 1
+      maximum: 10
+      default: 4.0
+      ui: { widget: slider, step: 0.5, label: "Boss height" }
+    roundels:
+      type: integer
+      minimum: 0
+      maximum: 6
+      default: 4
+      description: "Recessed emblem pockets around the field. 0 leaves it plain."
+      ui: { widget: slider, step: 1, label: "Roundels" }
+    roundel_d_mm:
+      type: number
+      minimum: 8
+      maximum: 50
+      default: 26.0
+      description: "Clamped down when the field between rim and boss is too narrow."
+      ui: { widget: slider, step: 2, label: "Roundel size" }
+    roundel_depth_mm:
+      type: number
+      minimum: 0.6
+      maximum: 3.0
+      default: 1.4
+    banner_text:
+      type: string
+      maxLength: 24
+      default: "AD ASTRA"
+      description: "Text on the plinth. Empty leaves the plinth blank."
+      ui: { widget: text, label: "Banner" }
+    banner_w_mm:
+      type: number
+      minimum: 40
+      maximum: 180
+      default: 92.0
+    banner_h_mm:
+      type: number
+      minimum: 10
+      maximum: 40
+      default: 22.0
+    banner_text_mm:
+      type: number
+      minimum: 4
+      maximum: 16
+      default: 9.0
+    mount:
+      type: string
+      enum: [keyhole, hole, none]
+      default: keyhole
+      description: >
+        keyhole recesses two slots in the back and shows nothing from the
+        front; hole drills a plain through-hole near the top.
+      ui: { widget: select, label: "Mounting" }
+    mount_d_mm:
+      type: number
+      minimum: 4
+      maximum: 12
+      default: 9.0
+    mount_slot_mm:
+      type: number
+      minimum: 2.5
+      maximum: 7
+      default: 4.5
+    mount_depth_mm:
+      type: number
+      minimum: 1.5
+      maximum: 5
+      default: 2.5
+    edge_chamfer_mm:
+      type: number
+      minimum: 0
+      maximum: 2
+      default: 0.8
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "trapped_volumes == 0"
+  - "min_wall >= 2.0"
+  - "plate_contact_fraction >= 0.3"
+  - "mass_g <= 900"
+  - "bbox.z <= (plate_t_mm + tiers * tier_mm + boss_mm) * 1.02"
+
+preconditions:
+  # The boss and the roundels are clamped to the field they have to fit in
+  # rather than rejected, so every diameter in range builds. What cannot be
+  # clamped is depth: a pocket sunk into the backer leaves whatever is left,
+  # and below 2 mm that is no longer a wall.
+  - "roundels == 0 or roundel_depth_mm + 2.0 <= plate_t_mm"
+  - "mount != 'keyhole' or mount_depth_mm + 2.0 <= plate_t_mm"
+  - "mount_slot_mm < mount_d_mm"
+  - "edge_chamfer_mm * 2 < plate_t_mm"
+  - "banner_w_mm < diameter_mm"
+  # Same rule the monogram uses: a JSON Schema can constrain one number at a
+  # time, and "the text has to fit on the plinth" is a relationship.
+  - "len(banner_text) * banner_text_mm * 0.62 <= banner_w_mm * 0.9"
+  - "banner_text_mm * 1.8 <= banner_h_mm"
+
+source: |
+  from build123d import *
+  import math
+
+  DIAMETER_MM = 160.0
+  PLATE_T_MM = 5.0
+  RIM_W_MM = 7.0
+  RIM_MM = 2.5
+  TIERS = 2
+  TIER_MM = 1.6
+  BOSS_D_MM = 78.0
+  BOSS_MM = 4.0
+  ROUNDELS = 4
+  ROUNDEL_D_MM = 26.0
+  ROUNDEL_DEPTH_MM = 1.4
+  BANNER_TEXT = "AD ASTRA"
+  BANNER_W_MM = 92.0
+  BANNER_H_MM = 22.0
+  BANNER_TEXT_MM = 9.0
+  MOUNT = "keyhole"
+  MOUNT_D_MM = 9.0
+  MOUNT_SLOT_MM = 4.5
+  MOUNT_DEPTH_MM = 2.5
+  EDGE_CHAMFER_MM = 0.8
+
+  R_MM = DIAMETER_MM / 2
+  FIELD_R_MM = R_MM - RIM_W_MM
+  # Clamped to the field, so a big boss on a small disc comes out as a boss
+  # that fits rather than as a refusal.
+  BOSS_R_MM = min(BOSS_D_MM / 2, FIELD_R_MM - 14.0)
+  # Same for the roundels, with 4 mm of material either side of the pocket.
+  ROUNDEL_EFF_MM = min(ROUNDEL_D_MM, (FIELD_R_MM - BOSS_R_MM) - 8.0)
+  ROUNDEL_R_MM = (FIELD_R_MM + BOSS_R_MM) / 2
+  TOP_MM = PLATE_T_MM + TIERS * TIER_MM
+  # Mostly below the disc, but overlapping it, so the plinth and the disc are
+  # one solid rather than two bodies that happen to touch.
+  BANNER_Y_MM = -(R_MM + BANNER_H_MM * 0.30)
+
+  with BuildPart() as art:
+      with BuildSketch() as disc:
+          Circle(R_MM)
+      extrude(amount=PLATE_T_MM)
+
+      # Chamfer the disc while it is still just a disc. Where the plinth meets
+      # the circle the outline has two reflex corners, and chamfering across
+      # one runs the two chamfer faces through each other -- a self
+      # intersection, which is the same trap wall_decor_monogram avoids by
+      # refusing to chamfer a shape with corners.
+      if EDGE_CHAMFER_MM > 0:
+          chamfer(art.edges().group_by(Axis.Z)[0], length=EDGE_CHAMFER_MM)
+
+      # The plinth overlaps the disc, so the two are one solid rather than two
+      # bodies that happen to touch.
+      with BuildSketch() as plinth:
+          with Locations((0, BANNER_Y_MM)):
+              RectangleRounded(BANNER_W_MM, BANNER_H_MM, BANNER_H_MM * 0.22)
+      extrude(amount=PLATE_T_MM)
+
+      if RIM_MM > 0:
+          with BuildSketch(Plane.XY.offset(PLATE_T_MM)) as rim:
+              Circle(R_MM)
+              Circle(FIELD_R_MM, mode=Mode.SUBTRACT)
+          extrude(amount=RIM_MM)
+
+      # Terraces, each stepping inward as it steps up, so every ring rests on
+      # the full width of the one below and no face ever overhangs.
+      for index in range(int(TIERS)):
+          radius = FIELD_R_MM - (FIELD_R_MM - BOSS_R_MM) * (index + 1) / (TIERS + 1)
+          with BuildSketch(Plane.XY.offset(PLATE_T_MM + index * TIER_MM)) as tier:
+              Circle(radius)
+          extrude(amount=TIER_MM)
+
+      with BuildSketch(Plane.XY.offset(TOP_MM)) as boss:
+          Circle(BOSS_R_MM)
+      extrude(amount=BOSS_MM)
+
+      # Cut from the top down, so a roundel lands cleanly on whichever terrace
+      # happens to be under it rather than needing to know which one that is.
+      if ROUNDELS > 0 and ROUNDEL_EFF_MM >= 6.0:
+          with BuildSketch(Plane.XY.offset(TOP_MM)) as pockets:
+              for index in range(int(ROUNDELS)):
+                  angle = math.pi / 2 + 2 * math.pi * index / ROUNDELS
+                  with Locations(
+                      (
+                          ROUNDEL_R_MM * math.cos(angle),
+                          ROUNDEL_R_MM * math.sin(angle),
+                      )
+                  ):
+                      Circle(ROUNDEL_EFF_MM / 2)
+          extrude(
+              amount=-(TIERS * TIER_MM + ROUNDEL_DEPTH_MM), mode=Mode.SUBTRACT
+          )
+
+      if BANNER_TEXT:
+          with BuildSketch(Plane.XY.offset(PLATE_T_MM)) as label:
+              with Locations((0, BANNER_Y_MM)):
+                  Text(BANNER_TEXT, font_size=BANNER_TEXT_MM)
+          extrude(amount=TIER_MM)
+
+      # Wide hole low, slot above it: the plaque drops onto the screw, so in
+      # the plaque's own frame the screw travels upward into the narrow part.
+      if MOUNT == "keyhole":
+          with BuildSketch(Plane.XY) as mounts:
+              for side in (-1, 1):
+                  cx = side * DIAMETER_MM * 0.22
+                  cy = R_MM * 0.45
+                  with Locations((cx, cy)):
+                      Circle(MOUNT_D_MM / 2)
+                  with Locations((cx, cy + MOUNT_D_MM * 0.9)):
+                      Rectangle(MOUNT_SLOT_MM, MOUNT_D_MM * 1.8)
+          extrude(amount=MOUNT_DEPTH_MM, mode=Mode.SUBTRACT)
+      elif MOUNT == "hole":
+          with BuildSketch(Plane.XY) as through:
+              with Locations((0, R_MM - RIM_W_MM / 2)):
+                  Circle(MOUNT_SLOT_MM / 2)
+          extrude(amount=PLATE_T_MM + RIM_MM, mode=Mode.SUBTRACT)
+
+  result = art.part
