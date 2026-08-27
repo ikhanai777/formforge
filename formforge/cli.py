@@ -307,6 +307,12 @@ def _add_emboss(subparsers) -> None:
     parser.add_argument("--simplify", type=float, default=0.9, help="contour tolerance, pixels")
     parser.add_argument("--threshold", type=float, default=None)
     parser.add_argument("--invert", action="store_true")
+    parser.add_argument(
+        "--fill",
+        action="store_true",
+        help="outline only; discard interior holes, which on a photograph are "
+        "the subject's own trim and highlights rather than design",
+    )
     parser.add_argument("--profile", default=DEFAULT_PROFILE_ID)
     parser.add_argument("--material", default="PLA")
     parser.add_argument("--json", action="store_true")
@@ -333,6 +339,7 @@ def _cmd_emboss(args) -> int:
         simplify_px=args.simplify,
         threshold=args.threshold,
         invert=args.invert,
+        fill_holes=args.fill,
     )
 
     def say(phase: str, ok: bool, message: str) -> None:

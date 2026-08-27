@@ -50,6 +50,12 @@ class EmbossOptions:
     simplify_px: float = 0.9
     min_area_frac: float = 0.002
     max_points: int = 900
+    # Holes smaller than the smallest hole the nozzle can make are noise.
+    min_hole_mm: float = 1.6
+    # Outline only. On a photograph the interior contours are whatever the
+    # threshold made of the subject's own markings -- trim, highlights, a logo
+    # -- and they read as gashes rather than as design.
+    fill_holes: bool = False
     threshold: float | None = None
     invert: bool = False
 
@@ -222,35 +228,87 @@ def trace_polygons(mask: np.ndarray, opts: EmbossOptions) -> TraceResult:
         if poly.is_valid and poly.area > 0:
             rings.append(poly)
 
-    rings.sort(key=lambda p: p.area, reverse=True)
-    outers: list = []
-    holes: list[list] = []
-    for poly in rings:
-        for i, outer in enumerate(outers):
-            if outer.contains(poly.representative_point()):
-                holes[i].append(poly)
-                break
-        else:
-            outers.append(poly)
-            holes.append([])
-
-    built = []
-    for outer, hs in zip(outers, holes, strict=True):
-        shell = list(outer.exterior.coords)[:-1]
-        rings_in = [list(h.exterior.coords)[:-1] for h in hs]
-        built.append((shell, rings_in))
-
-    # Map pixels to millimetres: y flips because image rows run downward.
-    xs = [x for shell, hs in built for x, _ in shell] + [
-        x for _, hs in built for h in hs for x, _ in h
-    ]
-    ys = [y for shell, hs in built for _, y in shell] + [
-        y for _, hs in built for h in hs for _, y in h
-    ]
-    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    # Pixels to millimetres, needed before nesting so hole sizes can be judged
+    # in millimetres rather than in pixels of whatever resolution came in.
+    bounds = [p.bounds for p in rings]
+    x0 = min(b[0] for b in bounds)
+    y0 = min(b[1] for b in bounds)
+    x1 = max(b[2] for b in bounds)
+    y1 = max(b[3] for b in bounds)
     art_w = max(opts.width_mm - 2 * opts.margin_mm, 1.0)
     scale = art_w / max(x1 - x0, 1e-6)
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    min_hole_mm2 = np.pi * (opts.min_hole_mm / 2) ** 2
+
+    # Nest by containment depth, not by "is inside something". A ring inside a
+    # hole is an island and has to come back as solid: treating it as another
+    # hole of the same shape puts two overlapping holes in one face, and the
+    # face that comes out of that is open. Photographs hit this immediately --
+    # any highlight inside a dark region inside the subject is depth two.
+    rings.sort(key=lambda p: p.area, reverse=True)
+    count = len(rings)
+    reps = [p.representative_point() for p in rings]
+    # Containment needs the area guard. A representative point of a ring is
+    # only guaranteed to be inside that ring, and for a disc it lands in the
+    # middle -- which is inside the disc's own hole. Without "strictly larger"
+    # the hole reads as containing its parent, both come out odd, and nothing
+    # is left that counts as a shape.
+    inside = [
+        [
+            i != j and rings[i].area > rings[j].area and rings[i].contains(reps[j])
+            for j in range(count)
+        ]
+        for i in range(count)
+    ]
+    depth = [sum(1 for i in range(count) if inside[i][j]) for j in range(count)]
+
+    def enclosing(j: int) -> int | None:
+        """The tightest ring around j, which is the one it is a hole of."""
+        candidates = [i for i in range(count) if inside[i][j]]
+        return min(candidates, key=lambda i: rings[i].area) if candidates else None
+
+    if opts.fill_holes:
+        # Only the outermost rings, and nothing inside them: an island within a
+        # filled hole is already covered by the fill.
+        shapes: dict[int, list[int]] = {j: [] for j in range(count) if depth[j] == 0}
+    else:
+        shapes = {j: [] for j in range(count) if depth[j] % 2 == 0}
+        for j in range(count):
+            if depth[j] % 2 == 1:
+                parent = enclosing(j)
+                if parent is not None and parent in shapes:
+                    shapes[parent].append(j)
+
+    built = []
+    dropped_holes = 0
+    for outer_i, hole_is in shapes.items():
+        outer = rings[outer_i]
+        kept = []
+        for j in hole_is:
+            # A hole below the smallest printable one is photographic noise,
+            # not geometry, and every one of them costs contour points.
+            if rings[j].area * scale * scale < min_hole_mm2:
+                dropped_holes += 1
+                continue
+            kept.append(rings[j])
+        candidate = Polygon(
+            list(outer.exterior.coords), [list(h.exterior.coords) for h in kept]
+        )
+        if not candidate.is_valid:
+            candidate = make_valid(candidate)
+            if candidate.geom_type == "MultiPolygon":
+                candidate = max(candidate.geoms, key=lambda g: g.area)
+            if candidate.geom_type != "Polygon" or not candidate.is_valid:
+                continue
+        shell = list(candidate.exterior.coords)[:-1]
+        rings_in = [list(r.coords)[:-1] for r in candidate.interiors]
+        built.append((shell, rings_in))
+
+    if dropped_holes:
+        notes.append(
+            f"dropped {dropped_holes} hole(s) below {opts.min_hole_mm} mm across"
+        )
+
 
     def to_mm(ring):
         return [

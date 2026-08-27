@@ -95,6 +95,7 @@ formforge generate "a hex planter for a 4in pot"
 formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
 formforge check model.stl --profile bambu_p1s_0.4 --category planter
 formforge emboss logo.png --width 180              # an image, traced into relief
+formforge emboss photo.jpg --fill                  # outline only, no interior holes
 formforge render model.stl --out previews/
 formforge rules --profile prusa_mk4_0.4          # the DFM rules being applied
 formforge stats                                  # what the recorded runs say
@@ -115,6 +116,11 @@ the outline and the hanging hole -- the rule `docs/architecture.md` sets for
 anything generated. Nothing is inferred: the contour is measured from the
 pixels, it closes by construction, and a kernel extrudes it, so the result is
 watertight for the same reason every template is.
+
+On a photograph the interior contours are whatever the threshold made of the
+subject's own trim, highlights and logos, and they read as gashes rather than
+as design. `--fill` keeps the outline and discards them, which is usually what
+a photograph wants and never what a line drawing does.
 
 What it will not do is give you the side of the object the image does not show.
 That is the difference between a relief and a figurine, and it is the honest

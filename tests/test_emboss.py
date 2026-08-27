@@ -85,6 +85,50 @@ class TestTracing:
         assert not np.allclose(xs, np.round(xs))
 
 
+def _island_in_a_hole(tmp_path):
+    """Disc, hole, and a smaller disc sitting inside that hole."""
+    img = Image.new("RGB", (400, 400), "white")
+    draw = ImageDraw.Draw(img)
+    draw.ellipse([40, 40, 360, 360], fill="black")
+    draw.ellipse([120, 120, 280, 280], fill="white")
+    draw.ellipse([170, 170, 230, 230], fill="black")
+    path = tmp_path / "island.png"
+    img.save(path)
+    return path
+
+
+class TestNesting:
+    def test_an_island_inside_a_hole_comes_back_solid(self, tmp_path):
+        """Depth two is solid, not another hole.
+
+        Treating it as a second hole of the same shape puts two overlapping
+        holes in one face, and the face that comes out of that is open -- which
+        is how a photograph produced a mesh the validator rejected as not
+        watertight.
+        """
+        opts = EmbossOptions(width_mm=100.0, margin_mm=0.0)
+        trace = trace_polygons(load_mask(_island_in_a_hole(tmp_path), opts), opts)
+        assert len(trace.polygons) == 2, "the island should be its own shape"
+        assert trace.holes == 1, "only the ring's hole is a hole"
+
+    def test_containment_needs_the_area_guard(self, tmp_path):
+        """A disc's representative point lands inside its own hole.
+
+        Without requiring a container to be strictly larger, the hole reads as
+        containing its parent, both come out at odd depth, and nothing is left
+        that counts as a shape at all.
+        """
+        opts = EmbossOptions(width_mm=100.0, margin_mm=0.0)
+        trace = trace_polygons(load_mask(_disc_with_hole(tmp_path), opts), opts)
+        assert trace.polygons, "the disc vanished entirely"
+
+    def test_fill_discards_interior_holes(self, tmp_path):
+        opts = EmbossOptions(width_mm=100.0, margin_mm=0.0, fill_holes=True)
+        trace = trace_polygons(load_mask(_island_in_a_hole(tmp_path), opts), opts)
+        assert trace.holes == 0
+        assert len(trace.polygons) == 1
+
+
 class TestEmittedSource:
     def test_the_source_parses_and_keeps_printability_parametric(self, tmp_path):
         opts = EmbossOptions(width_mm=120.0)
