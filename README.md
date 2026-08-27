@@ -94,6 +94,7 @@ formforge templates planter_halfmoon_wall        # parameters, ranges, print tes
 formforge generate "a hex planter for a 4in pot"
 formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
 formforge check model.stl --profile bambu_p1s_0.4 --category planter
+formforge emboss logo.png --width 180              # an image, traced into relief
 formforge render model.stl --out previews/
 formforge rules --profile prusa_mk4_0.4          # the DFM rules being applied
 formforge stats                                  # what the recorded runs say
@@ -106,6 +107,18 @@ any refusal. `formforge stats` reads it back: which templates are quietly
 failing, which errors actually dominate, and whether anything printed. None of
 those three can be answered retroactively, which is why collection is on by
 default rather than behind a flag (`--no-store` opts out).
+
+`formforge emboss` is the image path, and it is a silhouette tracer rather
+than a mesh generator. It separates the subject from the background, traces the
+outline exactly, and raises it on a parametric panel that owns the thickness,
+the outline and the hanging hole -- the rule `docs/architecture.md` sets for
+anything generated. Nothing is inferred: the contour is measured from the
+pixels, it closes by construction, and a kernel extrudes it, so the result is
+watertight for the same reason every template is.
+
+What it will not do is give you the side of the object the image does not show.
+That is the difference between a relief and a figurine, and it is the honest
+boundary of this approach rather than a missing feature.
 
 `formforge feedback` is the one that matters most and the one with no
 substitute. Every DFM constant in this system is a conventional maker value;
@@ -257,6 +270,7 @@ formforge/
   security.py     the static AST gate
   binding.py      parameters bound by rewriting constants, comments intact
   hints.py        OCCT errors mapped to causes a model can act on
+  emboss.py       image to traced silhouette, raised on a parametric panel
   policy.py       IP and safety screening, before any geometry
   registry.py     the template registry, matching and routing
   store.py        the tables that cannot be backfilled

@@ -41,6 +41,8 @@ dependencies = [
 llm = ["anthropic>=0.40"]
 api = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "pydantic>=2.6"]
 mcp = ["mcp>=1.0"]
+# Only the emboss path reads images; the geometry sandbox image stays minimal.
+image = ["pillow>=10.0"]
 dev = ["pytest>=8.0", "pytest-cov>=4.1", "ruff>=0.4"]
 all = [
     "anthropic>=0.40",
@@ -48,6 +50,7 @@ all = [
     "uvicorn[standard]>=0.27",
     "pydantic>=2.6",
     "mcp>=1.0",
+    "pillow>=10.0",
 ]
 
 [project.scripts]

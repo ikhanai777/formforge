@@ -66,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_generate(subparsers)
     _add_build(subparsers)
     _add_templates(subparsers)
+    _add_emboss(subparsers)
     _add_check(subparsers)
     _add_render(subparsers)
     _add_slice(subparsers)
@@ -280,6 +281,139 @@ def _coerce(raw: str, spec: dict) -> Any:
         except ValueError:
             raise SystemExit(f"expected a number, got {raw!r}") from None
     return raw
+
+
+# ---------------------------------------------------------------------------
+# emboss
+# ---------------------------------------------------------------------------
+
+
+def _add_emboss(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "emboss", help="trace an image into a printable relief"
+    )
+    parser.add_argument("image")
+    parser.add_argument("--out", default="out")
+    parser.add_argument("--width", type=float, default=150.0, help="panel width in mm")
+    parser.add_argument("--relief", type=float, default=2.8)
+    parser.add_argument("--panel", type=float, default=4.0, help="panel thickness in mm")
+    parser.add_argument("--margin", type=float, default=10.0)
+    parser.add_argument(
+        "--standalone",
+        action="store_true",
+        help="cut the silhouette out on its own instead of raising it on a panel",
+    )
+    parser.add_argument("--smooth", type=float, default=1.8, help="mask blur, pixels")
+    parser.add_argument("--simplify", type=float, default=0.9, help="contour tolerance, pixels")
+    parser.add_argument("--threshold", type=float, default=None)
+    parser.add_argument("--invert", action="store_true")
+    parser.add_argument("--profile", default=DEFAULT_PROFILE_ID)
+    parser.add_argument("--material", default="PLA")
+    parser.add_argument("--json", action="store_true")
+    parser.set_defaults(handler=_cmd_emboss)
+
+
+def _cmd_emboss(args) -> int:
+    from .emboss import EmbossOptions, emboss_source, load_mask, trace_polygons  # noqa: PLC0415
+    from .sandbox import ExecuteRequest, GeometrySandbox  # noqa: PLC0415
+    from .validation import validate  # noqa: PLC0415
+
+    image = Path(args.image)
+    if not image.exists():
+        print(_bad(f"no such image: {image}"), file=sys.stderr)
+        return 1
+
+    opts = EmbossOptions(
+        width_mm=args.width,
+        relief_mm=args.relief,
+        panel_t_mm=args.panel,
+        margin_mm=args.margin,
+        standalone=args.standalone,
+        smooth_px=args.smooth,
+        simplify_px=args.simplify,
+        threshold=args.threshold,
+        invert=args.invert,
+    )
+
+    def say(phase: str, ok: bool, message: str) -> None:
+        if not args.json:
+            print(f"  [{_ok('ok') if ok else _bad('!!')}] {phase:<9} {message}")
+
+    mask = load_mask(image, opts)
+    coverage = float(mask.mean())
+    say("trace", True, f"subject covers {coverage:.0%} of the frame")
+    if coverage > 0.92:
+        print(
+            _bad(
+                "the silhouette is nearly the whole frame, which usually means the "
+                "background was not separated. Try --invert or --threshold."
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    trace = trace_polygons(mask, opts)
+    if not trace.polygons:
+        print(_bad("; ".join(trace.notes) or "nothing to trace"), file=sys.stderr)
+        return 1
+    say(
+        "contour",
+        True,
+        f"{len(trace.polygons)} shape(s), {trace.holes} hole(s), {trace.point_count} points",
+    )
+    for note in trace.notes:
+        say("note", True, note)
+
+    if args.standalone and len(trace.polygons) > 1:
+        print(
+            _bad(
+                f"--standalone needs one connected shape; this image traced "
+                f"{len(trace.polygons)}. Without a panel they would print as "
+                f"loose pieces."
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    source = emboss_source(trace, opts, image.name)
+    sandbox = GeometrySandbox(keep_workdir=True)
+    # The contour is data, not a model's magic numbers, so the named-constant
+    # rule does not apply to it. Everything that governs printability is
+    # already a named constant at the top of the emitted script.
+    result = sandbox.execute(ExecuteRequest(source=source, enforce_named_constants=False))
+    if not result.ok:
+        print(_bad(result.feedback()), file=sys.stderr)
+        return 1
+    stats = result.stats or {}
+    say("execute", True, f"solid built: {stats.get('bbox_mm')}, {stats.get('triangles')} triangles")
+
+    out_dir = Path(args.out) / image.stem
+    out_dir.mkdir(parents=True, exist_ok=True)
+    written = {}
+    for key, path in (result.artifacts or {}).items():
+        src = Path(path)
+        if src.exists():
+            dest = out_dir / f"model{src.suffix}"
+            dest.write_bytes(src.read_bytes())
+            written[key] = dest
+    (out_dir / "source.py").write_text(source)
+
+    mesh = written.get("stl") or next(iter(written.values()), None)
+    report = validate(str(mesh), profile_id=args.profile, material=args.material)
+    (out_dir / "report.json").write_text(report.to_json())
+    say("validate", report.passed, report.summary_line())
+
+    if args.json:
+        print(json.dumps({"out": str(out_dir), "notes": trace.notes,
+                          "passed": report.passed}, indent=2))
+        return 0 if report.passed else 1
+
+    print()
+    print(f"relief: {out_dir}")
+    if not report.passed:
+        print()
+        print(report.agent_feedback())
+    return 0 if report.passed else 1
 
 
 # ---------------------------------------------------------------------------

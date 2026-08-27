@@ -310,11 +310,16 @@ nothing there to take.
 
 Stated plainly, so nothing here reads as more finished than it is.
 
-- **The hybrid decorative path** (SDF fields, image-to-heightmap relief,
-  mesh-generation detail booleaned onto a parametric base). The rule it must
-  follow is settled — functional geometry is never generated, and the
-  post-boolean result is re-validated against the same DFM rules — but the path
-  itself is not implemented.
+- **The hybrid decorative path**, partly. The silhouette branch is built:
+  `formforge/emboss.py` traces an image outline and raises it on a parametric
+  panel, and `formforge emboss` runs it through the same sandbox and the same
+  three validation tiers. It follows the rule this section already set —
+  functional geometry is never generated, so the panel, its thickness and its
+  hanging hole stay parametric and only the silhouette comes from the image.
+  What is still absent is the rest: SDF fields, luminance-to-height bas-relief,
+  and mesh-generation detail booleaned onto a parametric base. Those infer
+  geometry the image does not contain, which is the part this path has not
+  earned yet.
 - **OpenSCAD execution.** The adapter is written and reports cleanly when the
   binary is absent; it has not been exercised.
 - **Postgres.** The data model is in `docs/schema.sql` and `formforge/store.py`
