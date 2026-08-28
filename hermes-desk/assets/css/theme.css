@@ -1,0 +1,318 @@
+/* ═══════════════════════════════════════════════════════════════
+   HERMES & CO. — phosphor themes and retro chrome primitives.
+   Everything visual that is not layout lives here.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* AMBER — the default terminal of the house */
+  --bg:        #140f08;
+  --bg-deep:   #0b0805;
+  --panel:     #221a0f;
+  --panel-hi:  #2e2414;
+  --bevel-lt:  #6b4d1f;
+  --bevel-dk:  #0a0704;
+  --ink:       #ffb642;
+  --ink-hi:    #ffe0a0;
+  --ink-dim:   #a3721f;
+  --ink-faint: #5e4415;
+  --rule:      #4a3410;
+
+  --ok:    #8fd14f;
+  --warn:  #ffcf3d;
+  --hot:   #ff5f3d;
+  --cool:  #56c2e0;
+  --idle:  #6b5a3a;
+
+  --glow: 0 0 6px rgba(255, 182, 66, .30);
+  --scan-opacity: .16;
+  --flicker: .015;
+
+  --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --cell: 1ch;
+  --r: 0px;
+}
+
+:root[data-theme="green"] {
+  --bg:        #060d07;
+  --bg-deep:   #030603;
+  --panel:     #0d1a0e;
+  --panel-hi:  #133019;
+  --bevel-lt:  #1f5c2a;
+  --bevel-dk:  #030804;
+  --ink:       #6bff87;
+  --ink-hi:    #ccffd6;
+  --ink-dim:   #2f9c46;
+  --ink-faint: #1b5b29;
+  --rule:      #17501f;
+  --idle:      #2c5433;
+  --glow: 0 0 6px rgba(107, 255, 135, .28);
+}
+
+:root[data-theme="ibm"] {
+  --bg:        #060a14;
+  --bg-deep:   #03050c;
+  --panel:     #101a2e;
+  --panel-hi:  #182842;
+  --bevel-lt:  #2c4a80;
+  --bevel-dk:  #03060e;
+  --ink:       #a8c8ff;
+  --ink-hi:    #e6f0ff;
+  --ink-dim:   #5b7fc0;
+  --ink-faint: #2f4471;
+  --rule:      #263c66;
+  --idle:      #364a70;
+  --ok:        #6fe0b0;
+  --glow: 0 0 6px rgba(168, 200, 255, .28);
+}
+
+/* ── base ─────────────────────────────────────────────────────── */
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg-deep);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.45;
+  letter-spacing: .02em;
+  overflow: hidden;
+  text-shadow: var(--glow);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── CRT overlay: scanlines, vignette, a lazy flicker ─────────── */
+
+.crt {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0,0,0,var(--scan-opacity)) 0px,
+      rgba(0,0,0,var(--scan-opacity)) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+  animation: flicker 5.5s infinite steps(60);
+}
+
+.crt::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 120% 100% at 50% 50%,
+    transparent 55%,
+    rgba(0,0,0,.55) 100%
+  );
+}
+
+@keyframes flicker {
+  0%, 96%, 100% { opacity: 1; }
+  97%           { opacity: calc(1 - var(--flicker) * 20); }
+  98%           { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crt { animation: none; }
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+  }
+}
+
+/* ── retro chrome primitives ──────────────────────────────────── */
+
+/* An outset bevel: the physical look of a plastic panel. */
+.bevel {
+  background: var(--panel);
+  border: 1px solid var(--bevel-dk);
+  box-shadow:
+    inset 1px 1px 0 var(--bevel-lt),
+    inset -1px -1px 0 var(--bevel-dk),
+    0 1px 0 rgba(0,0,0,.6);
+}
+
+/* An inset bevel: anything recessed — screens, wells, inputs. */
+.inset {
+  background: var(--bg);
+  border: 1px solid var(--bevel-dk);
+  box-shadow:
+    inset 1px 1px 0 var(--bevel-dk),
+    inset -1px -1px 0 var(--bevel-lt);
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  box-shadow: inset 1px 1px 0 rgba(255,255,255,.05);
+}
+
+.panel > .panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  background: var(--panel-hi);
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-hi);
+  font-size: 11px;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.panel > .panel-head .ph-rule {
+  flex: 1;
+  height: 0;
+  border-top: 1px dashed var(--ink-faint);
+}
+
+.panel > .panel-body { padding: 10px; }
+
+/* ── buttons ──────────────────────────────────────────────────── */
+
+button {
+  font: inherit;
+  letter-spacing: .1em;
+  color: var(--ink);
+  background: var(--panel-hi);
+  border: 1px solid var(--bevel-dk);
+  box-shadow: inset 1px 1px 0 var(--bevel-lt), inset -1px -1px 0 var(--bevel-dk);
+  padding: 3px 10px;
+  cursor: pointer;
+  text-transform: uppercase;
+  text-shadow: var(--glow);
+}
+
+button:hover:not(:disabled) { color: var(--ink-hi); background: var(--panel); }
+
+button:active:not(:disabled) {
+  box-shadow: inset 1px 1px 0 var(--bevel-dk), inset -1px -1px 0 var(--bevel-lt);
+  transform: translateY(1px);
+}
+
+button:disabled { color: var(--ink-faint); cursor: not-allowed; text-shadow: none; }
+
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 1px dashed var(--ink);
+  outline-offset: 1px;
+}
+
+button.primary { color: var(--bg); background: var(--ink); text-shadow: none; font-weight: 700; }
+button.primary:hover:not(:disabled) { background: var(--ink-hi); color: var(--bg); }
+button.danger  { color: var(--hot); }
+button.ghost   { background: transparent; box-shadow: none; border: 1px solid var(--rule); }
+
+.chip {
+  padding: 0 6px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--rule);
+  box-shadow: none;
+}
+
+/* ── form controls ────────────────────────────────────────────── */
+
+input[type="text"], input[type="password"], input[type="number"],
+select, textarea {
+  font: inherit;
+  color: var(--ink-hi);
+  background: var(--bg);
+  border: 1px solid var(--bevel-dk);
+  box-shadow: inset 1px 1px 0 var(--bevel-dk), inset -1px -1px 0 var(--bevel-lt);
+  padding: 4px 6px;
+  width: 100%;
+  text-shadow: var(--glow);
+}
+
+textarea { resize: vertical; line-height: 1.5; }
+
+input::placeholder, textarea::placeholder { color: var(--ink-faint); text-shadow: none; }
+
+label.field { display: block; margin-bottom: 10px; }
+
+label.field > span.lbl {
+  display: block;
+  font-size: 10px;
+  letter-spacing: .2em;
+  color: var(--ink-dim);
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+
+label.field > span.hint {
+  display: block;
+  font-size: 10px;
+  color: var(--ink-faint);
+  margin-top: 3px;
+  letter-spacing: .04em;
+}
+
+/* ── status lamps ─────────────────────────────────────────────── */
+
+.lamp {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--idle);
+  border: 1px solid var(--bevel-dk);
+  flex: none;
+}
+
+.lamp[data-state="on"],
+.lamp[data-state="running"] { background: var(--ok);   box-shadow: 0 0 6px var(--ok); animation: pulse 1.6s infinite; }
+.lamp[data-state="queued"]  { background: var(--cool); box-shadow: 0 0 6px var(--cool); }
+.lamp[data-state="blocked"],
+.lamp[data-state="waiting_for_approval"] { background: var(--warn); box-shadow: 0 0 6px var(--warn); animation: pulse .7s infinite; }
+.lamp[data-state="failed"]  { background: var(--hot);  box-shadow: 0 0 6px var(--hot); }
+.lamp[data-state="completed"] { background: var(--ok); opacity: .55; }
+.lamp[data-state="off"]     { background: var(--idle); }
+
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+
+/* ── typographic helpers ──────────────────────────────────────── */
+
+.dim   { color: var(--ink-dim); }
+.faint { color: var(--ink-faint); }
+.hi    { color: var(--ink-hi); }
+.ok    { color: var(--ok); }
+.warn  { color: var(--warn); }
+.hot   { color: var(--hot); }
+.cool  { color: var(--cool); }
+
+.tiny  { font-size: 10px; letter-spacing: .16em; text-transform: uppercase; }
+.rule  { border: 0; border-top: 1px dashed var(--ink-faint); margin: 10px 0; }
+.mono-wrap { white-space: pre-wrap; word-break: break-word; }
+
+.stamp {
+  border: 2px solid var(--hot);
+  color: var(--hot);
+  padding: 1px 8px;
+  font-size: 10px;
+  letter-spacing: .3em;
+  transform: rotate(-3deg);
+  opacity: .85;
+}
+
+.stamp[data-live="1"] { border-color: var(--ok); color: var(--ok); }
+
+/* ── scrollbars: chunky, mechanical ───────────────────────────── */
+
+* { scrollbar-width: thin; scrollbar-color: var(--bevel-lt) var(--bg); }
+*::-webkit-scrollbar { width: 12px; height: 12px; }
+*::-webkit-scrollbar-track { background: var(--bg); }
+*::-webkit-scrollbar-thumb {
+  background: var(--panel-hi);
+  border: 1px solid var(--bevel-dk);
+  box-shadow: inset 1px 1px 0 var(--bevel-lt);
+}
