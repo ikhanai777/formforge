@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="amber">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HERMES &amp; CO. — Agency Floor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Crect width='8' height='8' fill='%23140f08'/%3E%3Cpath d='M2 1h1v6H2zM5 1h1v6H5zM3 3h2v2H3z' fill='%23ffb642'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/css/theme.css">
+<link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+
+<div class="crt" aria-hidden="true"></div>
+
+<div class="cabinet">
+
+  <!-- ── letterhead ────────────────────────────────────────────── -->
+  <header class="letterhead">
+    <div class="lh-mark" id="lh-mark"></div>
+    <div class="lh-name">
+      <h1>HERMES &amp; CO.</h1>
+      <p>AUTONOMOUS LABOUR &amp; CORRESPONDENCE <span class="sep">//</span> EST. MMXXV <span class="sep">//</span> A NOUS RESEARCH CONCERN</p>
+    </div>
+    <div class="lh-meta">
+      <div class="stamp" id="mode-stamp">SIMULATION</div>
+      <div class="lh-clock"><span id="clock">--:--:--</span></div>
+    </div>
+  </header>
+
+  <!-- ── binder tabs ───────────────────────────────────────────── -->
+  <nav class="tabs" id="tabs" role="tablist"></nav>
+
+  <!-- ── view surface ──────────────────────────────────────────── -->
+  <main class="surface" id="surface" role="main"></main>
+
+  <!-- ── status line ───────────────────────────────────────────── -->
+  <footer class="statusline">
+    <span class="lamp" id="conn-lamp" data-state="off"></span>
+    <span id="conn-text">DISCONNECTED</span>
+    <span class="sl-sep">│</span>
+    <span id="sl-floor">FLOOR 0/0</span>
+    <span class="sl-sep">│</span>
+    <span id="sl-queue">QUEUE 0</span>
+    <span class="sl-grow"></span>
+    <button class="chip" id="sound-toggle" title="Console tones">♪ OFF</button>
+    <button class="chip" id="theme-toggle" title="Phosphor">AMBER</button>
+    <span class="sl-sep">│</span>
+    <span class="sl-hint">F1–F7 SWITCH DEPT</span>
+  </footer>
+
+</div>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script type="module" src="assets/js/app.js"></script>
+</body>
+</html>
