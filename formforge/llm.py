@@ -381,7 +381,83 @@ class OpenAICompatibleClient:
             Tier.ESCALATED: os.environ.get("FORMFORGE_LLM_MODEL_ESCALATED", fallback),
         }
         self.timeout_s = timeout_s or float(os.environ.get("FORMFORGE_LLM_TIMEOUT", "300"))
+        # OpenRouter asks for these to attribute traffic, and sends them to its
+        # public leaderboards. Optional everywhere and omitted when unset, so a
+        # local server never sees a header it did not ask for.
+        self.referer = os.environ.get("FORMFORGE_LLM_REFERER", "")
+        self.title = os.environ.get("FORMFORGE_LLM_TITLE", "")
         self.total = Usage()
+
+    def _headers(self) -> dict[str, str]:
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+        if self.referer:
+            headers["HTTP-Referer"] = self.referer
+        if self.title:
+            headers["X-Title"] = self.title
+        return headers
+
+    def list_models(self) -> list[dict]:
+        """What the endpoint actually offers, right now.
+
+        Hardcoding model IDs is how a working config rots: a free tier's
+        lineup changes without notice, and an ID that has been retired fails at
+        request time rather than at configuration time. This is the same reason
+        the Anthropic client resolves its own IDs rather than trusting them.
+
+        Normalised across the two shapes in the wild -- OpenAI's bare
+        `{"data": [{"id": ...}]}` and OpenRouter's, which adds pricing and
+        modalities -- because callers should not have to care which they hit.
+        """
+        import urllib.error
+        import urllib.request
+
+        request = urllib.request.Request(
+            f"{self.base_url}/models", headers=self._headers(), method="GET"
+        )
+        if request.type not in {"http", "https"}:
+            raise LLMError(f"{self.base_url!r} is not an http(s) URL")
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                payload = json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            raise LLMError(
+                f"could not list models: HTTP {exc.code} "
+                f"{exc.read()[:200].decode(errors='replace')}"
+            ) from exc
+        except OSError as exc:
+            raise LLMError(f"could not reach {self.base_url}: {exc}", retryable=True) from exc
+
+        out: list[dict] = []
+        for entry in payload.get("data") or []:
+            model_id = entry.get("id")
+            if not model_id:
+                continue
+            pricing = entry.get("pricing") or {}
+            # A model is free when the endpoint prices it at zero. Falling back
+            # to the `:free` suffix only when there is no pricing block at all,
+            # because the price is the fact and the suffix is a convention.
+            if pricing:
+                try:
+                    free = float(pricing.get("prompt", 1)) == 0.0 and (
+                        float(pricing.get("completion", 1)) == 0.0
+                    )
+                except (TypeError, ValueError):
+                    free = False
+            else:
+                free = model_id.endswith(":free")
+            modalities = (entry.get("architecture") or {}).get("input_modalities") or []
+            out.append(
+                {
+                    "id": model_id,
+                    "free": free,
+                    "vision": "image" in modalities,
+                    "context": entry.get("context_length"),
+                }
+            )
+        return sorted(out, key=lambda m: (not m["free"], m["id"]))
 
     @property
     def available(self) -> bool:
@@ -459,10 +535,7 @@ class OpenAICompatibleClient:
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            },
+            headers=self._headers(),
             method="POST",
         )
         if request.type not in {"http", "https"}:

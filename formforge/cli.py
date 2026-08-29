@@ -69,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_templates(subparsers)
     _add_emboss(subparsers)
     _add_reconstruct(subparsers)
+    _add_models(subparsers)
     _add_check(subparsers)
     _add_render(subparsers)
     _add_slice(subparsers)
@@ -557,6 +558,67 @@ def _cmd_reconstruct(args) -> int:
         print()
         print(report.agent_feedback())
     return 0 if report.passed else 1
+
+
+# ---------------------------------------------------------------------------
+# models
+# ---------------------------------------------------------------------------
+
+
+def _add_models(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "models", help="what the configured model endpoint actually offers"
+    )
+    parser.add_argument("--url", help="override FORMFORGE_LLM_BASE_URL")
+    parser.add_argument("--free", action="store_true", help="only models priced at zero")
+    parser.add_argument("--vision", action="store_true", help="only models that accept images")
+    parser.add_argument("--grep", help="substring filter on the model id")
+    parser.add_argument("--json", action="store_true")
+    parser.set_defaults(handler=_cmd_models)
+
+
+def _cmd_models(args) -> int:
+    from .llm import LLMError, OpenAICompatibleClient
+
+    client = OpenAICompatibleClient(base_url=args.url) if args.url else OpenAICompatibleClient()
+    try:
+        found = client.list_models()
+    except LLMError as exc:
+        print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    if args.free:
+        found = [m for m in found if m["free"]]
+    if args.vision:
+        found = [m for m in found if m["vision"]]
+    if args.grep:
+        needle = args.grep.lower()
+        found = [m for m in found if needle in m["id"].lower()]
+
+    if args.json:
+        print(json.dumps(found, indent=2))
+        return 0 if found else 1
+
+    if not found:
+        print(_warn(f"no models matched at {client.base_url}"))
+        return 1
+
+    print(f"{len(found)} model(s) at {client.base_url}")
+    print()
+    for model in found:
+        tags = []
+        if model["free"]:
+            tags.append(_ok("free"))
+        if model["vision"]:
+            tags.append("vision")
+        if model["context"]:
+            tags.append(f"{model['context']:,} ctx")
+        suffix = f"  [{', '.join(tags)}]" if tags else ""
+        print(f"  {model['id']}{suffix}")
+    print()
+    print("Set one with FORMFORGE_LLM_MODEL, or per tier with")
+    print("FORMFORGE_LLM_MODEL_FAST / _STANDARD / _ESCALATED.")
+    return 0
 
 
 # ---------------------------------------------------------------------------

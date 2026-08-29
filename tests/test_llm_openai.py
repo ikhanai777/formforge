@@ -36,6 +36,16 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    get_reply: ClassVar[dict] = {}
+
+    def do_GET(self):
+        body = json.dumps(self.get_reply).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def log_message(self, *args):
         return
 
@@ -163,3 +173,85 @@ class TestSelection:
         monkeypatch.setenv("FORMFORGE_LLM_BASE_URL", "http://ollama:11434/v1")
         monkeypatch.setenv("FORMFORGE_OFFLINE", "1")
         assert not isinstance(build_client(), OpenAICompatibleClient)
+
+
+class TestModelDiscovery:
+    """Hardcoding model IDs is how a working config rots.
+
+    A free tier's lineup changes without notice, and a retired ID fails at
+    request time rather than at configuration time -- which is the reason
+    llm.py resolves Anthropic's IDs rather than trusting them too.
+    """
+
+    def test_openrouter_pricing_marks_the_free_models(self, server):
+        _Handler.get_reply = {
+            "data": [
+                {
+                    "id": "vendor/big-model",
+                    "pricing": {"prompt": "0.000002", "completion": "0.000006"},
+                    "architecture": {"input_modalities": ["text"]},
+                    "context_length": 128000,
+                },
+                {
+                    "id": "vendor/small-model:free",
+                    "pricing": {"prompt": "0", "completion": "0"},
+                    "architecture": {"input_modalities": ["text", "image"]},
+                    "context_length": 64000,
+                },
+            ]
+        }
+        found = OpenAICompatibleClient(base_url=server).list_models()
+        by_id = {m["id"]: m for m in found}
+        assert by_id["vendor/small-model:free"]["free"] is True
+        assert by_id["vendor/big-model"]["free"] is False
+        # Free models sort first, because that is what the flag is for.
+        assert found[0]["id"] == "vendor/small-model:free"
+
+    def test_vision_is_read_from_the_modalities(self, server):
+        _Handler.get_reply = {
+            "data": [
+                {
+                    "id": "sees/things",
+                    "pricing": {"prompt": "0", "completion": "0"},
+                    "architecture": {"input_modalities": ["text", "image"]},
+                },
+                {
+                    "id": "reads/only",
+                    "pricing": {"prompt": "0", "completion": "0"},
+                    "architecture": {"input_modalities": ["text"]},
+                },
+            ]
+        }
+        by_id = {m["id"]: m for m in OpenAICompatibleClient(base_url=server).list_models()}
+        assert by_id["sees/things"]["vision"] is True
+        assert by_id["reads/only"]["vision"] is False
+
+    def test_a_bare_openai_listing_still_works(self, server):
+        """Ollama and llama.cpp return ids and nothing else. The `:free` suffix
+        is only consulted when there is no pricing to read, because the price
+        is the fact and the suffix is a convention."""
+        _Handler.get_reply = {
+            "data": [{"id": "qwen2.5-coder:7b", "object": "model"}]
+        }
+        found = OpenAICompatibleClient(base_url=server).list_models()
+        assert found == [
+            {"id": "qwen2.5-coder:7b", "free": False, "vision": False, "context": None}
+        ]
+
+    def test_a_priced_model_is_not_free_whatever_its_name_says(self, server):
+        _Handler.get_reply = {
+            "data": [{"id": "vendor/looks-free:free", "pricing": {"prompt": "0.001"}}]
+        }
+        assert OpenAICompatibleClient(base_url=server).list_models()[0]["free"] is False
+
+
+class TestAttribution:
+    def test_headers_are_sent_only_when_configured(self, server, monkeypatch):
+        """OpenRouter asks for these; a local server never asked for anything."""
+        plain = OpenAICompatibleClient(base_url=server)
+        assert "HTTP-Referer" not in plain._headers()
+        monkeypatch.setenv("FORMFORGE_LLM_REFERER", "https://example.test")
+        monkeypatch.setenv("FORMFORGE_LLM_TITLE", "FormForge")
+        tagged = OpenAICompatibleClient(base_url=server)
+        assert tagged._headers()["HTTP-Referer"] == "https://example.test"
+        assert tagged._headers()["X-Title"] == "FormForge"

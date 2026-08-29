@@ -99,6 +99,7 @@ formforge emboss photo.jpg --fill                  # outline only, no interior h
 formforge reconstruct v1.png v2.png --size 200      # image to mesh, via your own model
 formforge render model.stl --out previews/
 formforge rules --profile prusa_mk4_0.4          # the DFM rules being applied
+formforge models --free                          # what the model endpoint offers
 formforge stats                                  # what the recorded runs say
 formforge feedback <model-id> --failed --issue warping
 ```
@@ -175,6 +176,43 @@ somewhere else and nothing about FormForge changes.
 FORMFORGE_LLM_MODEL=llama3.1:8b docker compose up -d   # a different model
 formforge doctor                                       # says which one is wired up
 ```
+
+### A hosted free tier instead
+
+The same client drives OpenRouter, whose free models cost nothing to call. Copy
+`.env.example` to `.env` and point it there:
+
+```bash
+FORMFORGE_LLM_BASE_URL=https://openrouter.ai/api/v1
+FORMFORGE_LLM_API_KEY=sk-or-v1-...
+```
+
+A key is still needed for the free models -- free means unpriced, not unauthed.
+
+Which model to name is the part worth not guessing, so don't:
+
+```bash
+formforge models --free              # what is actually free, right now
+formforge models --free --vision     # ...and can see the critique renders
+```
+
+Free line-ups change without notice, and an id pasted from a blog post fails at
+request time rather than at configuration time. `formforge models` asks the
+endpoint and reads the answer: a model is free when its prompt and completion
+are priced at zero, which is the fact, rather than because its id ends in
+`:free`, which is a convention. It works against a local server too -- Ollama
+and llama.cpp return bare ids with no pricing, and that reads back as a plain
+list.
+
+Two things to expect on a free tier that you would not on a paid one. Rate
+limits are tight, both per minute and per day, and a 429 is marked retryable so
+the loop backs off rather than failing the generation. And the free models are
+generally the smaller ones, so the caveat above about more repair iterations on
+the freeform path applies more, not less.
+
+Set `FORMFORGE_LLM_REFERER` and `FORMFORGE_LLM_TITLE` if you want OpenRouter to
+attribute the traffic; both are omitted when empty, so a local server never
+sees a header it did not ask for.
 
 Two things are genuinely worse on a local model than on Claude, and both are
 worth knowing before you conclude something is broken. There is no prompt

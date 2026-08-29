@@ -18,10 +18,17 @@ services:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      # Point the orchestrator at the model next door. Setting a base URL is
-      # what selects the OpenAI-compatible client; nothing else needs changing.
-      FORMFORGE_LLM_BASE_URL: http://ollama:11434/v1
+      # Everything about which model runs is a .env change, not a compose edit.
+      # The defaults point next door at Ollama; set these to a hosted endpoint
+      # and the same client drives it. Setting a base URL is what selects the
+      # OpenAI-compatible client; nothing else needs changing.
+      FORMFORGE_LLM_BASE_URL: ${FORMFORGE_LLM_BASE_URL:-http://ollama:11434/v1}
+      FORMFORGE_LLM_API_KEY: ${FORMFORGE_LLM_API_KEY:-not-needed}
       FORMFORGE_LLM_MODEL: ${FORMFORGE_LLM_MODEL:-qwen2.5-coder:7b}
+      # OpenRouter attributes traffic with these; omitted when empty, so a
+      # local server never sees a header it did not ask for.
+      FORMFORGE_LLM_REFERER: ${FORMFORGE_LLM_REFERER:-}
+      FORMFORGE_LLM_TITLE: ${FORMFORGE_LLM_TITLE:-}
       FORMFORGE_LLM_TIMEOUT: "600"
       # The geometry sandbox runs as a subprocess inside this container rather
       # than under gVisor, so the API would refuse to start. That refusal is
@@ -43,9 +50,9 @@ services:
       - no-new-privileges:true
     pids_limit: 256
     mem_limit: 4g
-    depends_on:
-      ollama:
-        condition: service_started
+    # No depends_on: pointing FORMFORGE_LLM_BASE_URL at a hosted endpoint
+    # should not oblige you to run Ollama, and `docker compose up -d formforge`
+    # then starts the API on its own.
     restart: unless-stopped
 
   ollama:
