@@ -24,11 +24,12 @@ from typing import Any
 
 from . import __version__
 from .dfm import DEFAULT_PROFILE_ID, PROFILES, rules_block
-from .llm import build_client
+from .llm import Tier, build_client
 from .orchestrator import Orchestrator
 from .registry import TemplateRegistry
 from .render import STANDARD_VIEWS, render_views
-from .slicer import available as slicer_available, slice_model
+from .slicer import available as slicer_available
+from .slicer import slice_model
 from .validation import validate
 
 # Terminal colour, off when not a tty so piped output stays clean.
@@ -109,7 +110,7 @@ def _add_generate(subparsers) -> None:
 
 
 def _cmd_generate(args) -> int:
-    from .bundle import write_bundle  # noqa: PLC0415
+    from .bundle import write_bundle
 
     out_dir = Path(args.out)
     orchestrator = Orchestrator(
@@ -148,7 +149,7 @@ def _cmd_generate(args) -> int:
     # backfilled, and a run on someone's laptop is as much evidence as a run in
     # production -- more, early on, because that is where the runs are.
     if not args.no_store:
-        from .store import Store  # noqa: PLC0415
+        from .store import Store
 
         with Store() as database:
             database.record_generation(result)
@@ -198,7 +199,7 @@ def _add_build(subparsers) -> None:
 
 
 def _cmd_build(args) -> int:
-    from .bundle import write_bundle  # noqa: PLC0415
+    from .bundle import write_bundle
 
     registry = TemplateRegistry.load(strict=False)
     try:
@@ -321,9 +322,9 @@ def _add_emboss(subparsers) -> None:
 
 
 def _cmd_emboss(args) -> int:
-    from .emboss import EmbossOptions, emboss_source, load_mask, trace_polygons  # noqa: PLC0415
-    from .sandbox import ExecuteRequest, GeometrySandbox  # noqa: PLC0415
-    from .validation import validate  # noqa: PLC0415
+    from .emboss import EmbossOptions, emboss_source, load_mask, trace_polygons
+    from .sandbox import ExecuteRequest, GeometrySandbox
+    from .validation import validate
 
     image = Path(args.image)
     if not image.exists():
@@ -464,13 +465,13 @@ def _add_reconstruct(subparsers) -> None:
 
 
 def _cmd_reconstruct(args) -> int:
-    from .reconstruct import (  # noqa: PLC0415
+    from .reconstruct import (
         ReconstructError,
         ReconstructOptions,
         is_local,
         reconstruct,
     )
-    from .validation import validate  # noqa: PLC0415
+    from .validation import validate
 
     images = [Path(p) for p in args.images]
     missing = [str(p) for p in images if not p.exists()]
@@ -517,7 +518,7 @@ def _cmd_reconstruct(args) -> int:
     # the mesh itself.
     try:
         mesh.export(str(out_dir / "model.3mf"))
-    except Exception as exc:  # noqa: BLE001 - any writer failure is non-fatal
+    except Exception as exc:
         say("export", True, f"STL only; no 3MF ({type(exc).__name__})")
     (out_dir / "reconstruction.json").write_text(
         json.dumps(
@@ -789,7 +790,7 @@ def _cmd_stats(args) -> int:
     whether any of it prints. All three need history, and history has to have
     been collected at the time.
     """
-    from .store import Store  # noqa: PLC0415
+    from .store import Store
 
     with Store(args.db) as database:
         totals = database.totals()
@@ -883,7 +884,7 @@ def _add_feedback(subparsers) -> None:
 
 
 def _cmd_feedback(args) -> int:
-    from .store import PRINT_ISSUES, Store  # noqa: PLC0415
+    from .store import PRINT_ISSUES, Store
 
     unknown = sorted(set(args.issue) - PRINT_ISSUES)
     if unknown:
@@ -926,7 +927,7 @@ def _cmd_doctor(args) -> int:
     production means executing model-authored Python with no kernel isolation,
     and that is the single most consequential misconfiguration this system has.
     """
-    from .sandbox import GeometrySandbox  # noqa: PLC0415
+    from .sandbox import GeometrySandbox
 
     print(_c("FormForge", "1") + f" {__version__}")
     print()
@@ -946,17 +947,27 @@ def _cmd_doctor(args) -> int:
 
     client = build_client()
     if client.available:
-        print(f"  claude api     {_ok('configured')}")
+        # Name the backend rather than assuming Claude: a local model behind an
+        # OpenAI-compatible endpoint is now a first-class option, and reporting
+        # it as "claude api configured" would be wrong in the one line someone
+        # reads to find out what is actually wired up.
+        from .llm import OpenAICompatibleClient
+
+        if isinstance(client, OpenAICompatibleClient):
+            model = client.models.get(Tier.STANDARD, "?")
+            print(f"  model          {_ok('local')} -- {model} at {client.base_url}")
+        else:
+            print(f"  model          {_ok('claude api')}")
     else:
         print(
-            f"  claude api     {_warn('not configured')} -- template path only; "
+            f"  model          {_warn('not configured')} -- template path only; "
             "no intent parsing, freeform generation or visual critique"
         )
 
     print(f"  slicer         {_ok('found') if slicer_available() else _warn('not installed')}")
 
     try:
-        import rtree  # noqa: F401, PLC0415
+        import rtree  # noqa: F401
 
         print(f"  wall thickness {_ok('accelerated')}")
     except ImportError:
@@ -964,7 +975,7 @@ def _cmd_doctor(args) -> int:
 
     print(f"  profiles       {', '.join(sorted(PROFILES))}")
 
-    from .store import DEFAULT_PATH, Store  # noqa: PLC0415
+    from .store import DEFAULT_PATH, Store
 
     with Store() as database:
         totals = database.totals()

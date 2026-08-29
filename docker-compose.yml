@@ -1,0 +1,105 @@
+# FormForge with a free model, locally.
+#
+#   docker compose up -d                    # API on :8000, Ollama on :11434
+#   docker compose --profile setup run --rm pull-model   # fetch the model once
+#   curl localhost:8000/health
+#
+# The model runs in the ollama service on your own hardware, so nothing about
+# a generation leaves this machine. Swap it for a hosted OpenAI-compatible
+# endpoint by pointing FORMFORGE_LLM_BASE_URL somewhere else; the client is the
+# same either way.
+
+services:
+  formforge:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: formforge/app:0.1.0
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # Point the orchestrator at the model next door. Setting a base URL is
+      # what selects the OpenAI-compatible client; nothing else needs changing.
+      FORMFORGE_LLM_BASE_URL: http://ollama:11434/v1
+      FORMFORGE_LLM_MODEL: ${FORMFORGE_LLM_MODEL:-qwen2.5-coder:7b}
+      FORMFORGE_LLM_TIMEOUT: "600"
+      # The geometry sandbox runs as a subprocess inside this container rather
+      # than under gVisor, so the API would refuse to start. That refusal is
+      # correct and this is the acknowledgement it asks for: the container is
+      # the boundary here, it is bound to loopback, and it should not be put in
+      # front of untrusted traffic. For that, run gVisor and drop this.
+      FORMFORGE_ALLOW_UNSAFE_SANDBOX: "1"
+    volumes:
+      - formforge-data:/data
+      - ./out:/out
+    tmpfs:
+      # The sandbox writes a workdir per job. Keeping it on tmpfs means the
+      # rest of the filesystem can stay read-only, and nothing a generated
+      # script writes survives the container.
+      - /tmp:rw,size=1g,mode=1777
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 4g
+    depends_on:
+      ollama:
+        condition: service_started
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+    # Uncomment for an NVIDIA GPU. Without it Ollama runs on CPU, which works
+    # for a 7B model and is merely slow.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # One-shot: pulls the model into the ollama volume. Run it once after the
+  # first `up`, then forget about it.
+  pull-model:
+    image: ollama/ollama:latest
+    profiles: [setup]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'ollama pull "${FORMFORGE_LLM_MODEL:-qwen2.5-coder:7b}"'
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    depends_on:
+      ollama:
+        condition: service_started
+
+  # The image-to-3D backend from `formforge reconstruct`. Off by default: it
+  # needs a GPU and a model you install yourself, and the rest of the stack
+  # works without it.
+  #   docker compose --profile recon up -d
+  reconstruct:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: formforge/app:0.1.0
+    profiles: [recon]
+    ports:
+      - "127.0.0.1:8300:8300"
+    environment:
+      # Returns a placeholder, not a reconstruction. Enough to prove the
+      # plumbing; replace run_model() in deploy/reconstruct_server.py with a
+      # real model and drop this.
+      FORMFORGE_RECON_DEMO: "1"
+      PORT: "8300"
+    command: ["python", "deploy/reconstruct_server.py"]
+    restart: unless-stopped
+
+volumes:
+  formforge-data:
+  ollama-models:

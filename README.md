@@ -157,6 +157,46 @@ a print outcome recorded against a model is the only thing that can make one
 of them a measurement, and it lands next to what the validator measured at the
 time.
 
+### With Docker, and a free model
+
+```bash
+docker compose up -d                                  # API on :8000, Ollama on :11434
+docker compose --profile setup run --rm pull-model    # fetch the model, once
+curl localhost:8000/healthz
+```
+
+The model runs in the `ollama` service on your own hardware, so nothing about a
+generation leaves the machine. `FORMFORGE_LLM_BASE_URL` is what selects it:
+anything that speaks OpenAI's chat-completions API works, which is Ollama, LM
+Studio, llama.cpp's server, vLLM, and the hosted endpoints too. Point it
+somewhere else and nothing about FormForge changes.
+
+```bash
+FORMFORGE_LLM_MODEL=llama3.1:8b docker compose up -d   # a different model
+formforge doctor                                       # says which one is wired up
+```
+
+Two things are genuinely worse on a local model than on Claude, and both are
+worth knowing before you conclude something is broken. There is no prompt
+caching, so the ~10k-token DFM prefix is re-sent every call -- on your own
+hardware that costs latency rather than money, which is the better side to be
+on, but it is why each step feels slower. And a small model writes worse
+build123d, so expect more repair iterations on the freeform path; the template
+path does not go near a model and is unaffected.
+
+Vision is the other consideration. The critique step sends the preview renders
+back to the model, so it needs a vision-capable one -- a code-only model will
+skip that step rather than fail. Images are translated to OpenAI's `image_url`
+form, so any vision model behind the endpoint gets them.
+
+`FORMFORGE_ALLOW_UNSAFE_SANDBOX=1` is set in the compose file, and it is an
+acknowledgement rather than a workaround. The geometry sandbox runs as a
+subprocess inside the container rather than under gVisor, so the API would
+otherwise refuse to start -- correctly. The compose service is bound to
+loopback, runs read-only with dropped capabilities and a tmpfs workdir, and
+should not be put in front of untrusted traffic. For that, run gVisor and
+delete the variable.
+
 ### From Claude, over MCP
 
 ```bash

@@ -78,7 +78,7 @@ class Usage:
     cost_usd: float = 0.0
     models_used: list[str] = field(default_factory=list)
 
-    def add(self, other: "Usage") -> "Usage":
+    def add(self, other: Usage) -> Usage:
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
         self.cache_read_tokens += other.cache_read_tokens
@@ -114,7 +114,7 @@ class Usage:
         }
 
 
-def price(model: str, usage: "Usage") -> float:
+def price(model: str, usage: Usage) -> float:
     """Estimate the USD cost of one call."""
     rates = PRICING.get(model)
     if rates is None:
@@ -242,7 +242,7 @@ class AnthropicClient:
         api_key: str | None = None,
         verify_models: bool = True,
     ):
-        import anthropic  # noqa: PLC0415 -- optional dependency
+        import anthropic
 
         self._anthropic = anthropic
         self.client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
@@ -338,6 +338,176 @@ class AnthropicClient:
         return usage
 
 
+class OpenAICompatibleClient:
+    """Any endpoint that speaks OpenAI's chat-completions API.
+
+    Which is nearly all of them: Ollama, LM Studio, llama.cpp's server, vLLM,
+    OpenRouter, Groq, Together. That makes this the free-model path -- point it
+    at a model running on your own machine and nothing leaves it.
+
+    Written against urllib rather than the openai package on purpose. The
+    geometry image is deliberately minimal, and one more dependency for a
+    handful of JSON POSTs is not a trade worth making.
+
+    Two things are genuinely lost against the Anthropic path, and both are
+    reported rather than papered over:
+
+    * **Prompt caching.** The ~10k-token DFM prefix is re-sent every call. On a
+      local model that costs latency instead of money, which is the better side
+      to be on, but it is why a local run feels slower per step.
+    * **Refusal signalling.** There is no `stop_reason == "refusal"`, so a
+      model that declines simply returns prose. `policy.py` screens before any
+      of this runs, so the safety gate does not depend on it.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        models: dict[Tier, str] | None = None,
+        timeout_s: float | None = None,
+    ) -> None:
+        self.base_url = (
+            base_url or os.environ.get("FORMFORGE_LLM_BASE_URL", "http://127.0.0.1:11434/v1")
+        ).rstrip("/")
+        # Local servers ignore the key but many reject a missing header, so a
+        # placeholder is friendlier than a 401 nobody expects.
+        self.api_key = api_key or os.environ.get("FORMFORGE_LLM_API_KEY", "not-needed")
+        fallback = os.environ.get("FORMFORGE_LLM_MODEL", "qwen2.5-coder:7b")
+        self.models = models or {
+            Tier.FAST: os.environ.get("FORMFORGE_LLM_MODEL_FAST", fallback),
+            Tier.STANDARD: os.environ.get("FORMFORGE_LLM_MODEL_STANDARD", fallback),
+            Tier.ESCALATED: os.environ.get("FORMFORGE_LLM_MODEL_ESCALATED", fallback),
+        }
+        self.timeout_s = timeout_s or float(os.environ.get("FORMFORGE_LLM_TIMEOUT", "300"))
+        self.total = Usage()
+
+    @property
+    def available(self) -> bool:
+        return True
+
+    # -- translation ----------------------------------------------------
+    @staticmethod
+    def _flatten_system(system: list[dict] | str) -> str:
+        """Anthropic's cached system blocks collapse to one string.
+
+        The cache_control markers go with them; there is nothing on the far
+        side that would honour them.
+        """
+        if isinstance(system, str):
+            return system
+        return "\n\n".join(
+            block.get("text", "") for block in system if block.get("type") == "text"
+        )
+
+    @staticmethod
+    def _content(raw: Any) -> Any:
+        """Anthropic content blocks to OpenAI ones, images included."""
+        if isinstance(raw, str):
+            return raw
+        parts: list[dict] = []
+        for block in raw:
+            kind = block.get("type")
+            if kind == "text":
+                parts.append({"type": "text", "text": block.get("text", "")})
+            elif kind == "image":
+                source = block.get("source") or {}
+                if source.get("type") == "base64":
+                    media = source.get("media_type", "image/png")
+                    parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{media};base64,{source.get('data', '')}"
+                            },
+                        }
+                    )
+        if len(parts) == 1 and parts[0]["type"] == "text":
+            return parts[0]["text"]
+        return parts
+
+    def complete(
+        self,
+        *,
+        system: list[dict] | str,
+        messages: list[dict],
+        tier: Tier = Tier.STANDARD,
+        max_tokens: int = 8000,
+        effort: str = "high",
+        purpose: str = "",
+    ) -> Completion:
+        import urllib.error
+        import urllib.request
+
+        model = self.models[tier]
+        payload: list[dict] = []
+        prompt = self._flatten_system(system)
+        if prompt:
+            payload.append({"role": "system", "content": prompt})
+        for message in messages:
+            payload.append(
+                {
+                    "role": message.get("role", "user"),
+                    "content": self._content(message.get("content", "")),
+                }
+            )
+
+        body = json.dumps(
+            {"model": model, "messages": payload, "max_tokens": max_tokens, "stream": False}
+        ).encode()
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+            method="POST",
+        )
+        if request.type not in {"http", "https"}:
+            raise LLMError(f"{self.base_url!r} is not an http(s) URL")
+
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_s) as response:
+                data = json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            detail = exc.read()[:400].decode(errors="replace")
+            raise LLMError(
+                f"{purpose or 'request'} failed on {model}: HTTP {exc.code} {detail}",
+                retryable=exc.code >= 500 or exc.code == 429,
+            ) from exc
+        except OSError as exc:
+            raise LLMError(
+                f"could not reach a model server at {self.base_url}: {exc}. "
+                f"Start one, or set FORMFORGE_LLM_BASE_URL to where yours is.",
+                retryable=True,
+            ) from exc
+
+        choices = data.get("choices") or []
+        if not choices:
+            raise LLMError(f"{model} returned no choices", retryable=True)
+        text = (choices[0].get("message") or {}).get("content") or ""
+
+        raw = data.get("usage") or {}
+        usage = Usage(
+            input_tokens=int(raw.get("prompt_tokens") or 0),
+            output_tokens=int(raw.get("completion_tokens") or 0),
+            calls=1,
+            models_used=[model],
+        )
+        # Zero rather than unknown: a model on your own hardware has no per
+        # token price, and the stats table should not imply one.
+        usage.cost_usd = 0.0
+        self.total.add(usage)
+        return Completion(
+            text=text,
+            usage=usage,
+            model=model,
+            stop_reason=choices[0].get("finish_reason"),
+        )
+
+
 class LLMError(Exception):
     """A model call failed in a way the caller may want to retry."""
 
@@ -396,8 +566,20 @@ def build_client(
     """
     if prefer_offline or os.environ.get("FORMFORGE_OFFLINE") == "1":
         return OfflineClient()
+
+    # An explicit backend wins; otherwise a configured base URL is taken as the
+    # user having pointed us at their own model, which is the only reason to
+    # set it.
+    backend = os.environ.get("FORMFORGE_LLM_BACKEND", "").strip().lower()
+    if not backend and os.environ.get("FORMFORGE_LLM_BASE_URL"):
+        backend = "openai"
+    if backend in {"openai", "openai-compatible", "ollama", "local"}:
+        return OpenAICompatibleClient(models=models)
+    if backend == "offline":
+        return OfflineClient()
+
     try:
-        import anthropic  # noqa: F401, PLC0415
+        import anthropic  # noqa: F401
     except ImportError:
         log.info("the anthropic package is not installed; running offline")
         return OfflineClient()
