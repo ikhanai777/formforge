@@ -1006,6 +1006,15 @@ def _cmd_doctor(args) -> int:
         print(f"  sandbox        {_ok(described['runtime'])} (kernel isolated)")
     else:
         print(f"  sandbox        {_warn(described['runtime'])} -- {described['warning']}")
+    if not described.get("rlimits", True):
+        # Windows has no `resource` module, so nothing caps CPU or memory on
+        # the subprocess path there. Worth its own line: the wall-clock
+        # timeout still fires, but a runaway allocation is bounded by the host
+        # and nothing else.
+        print(
+            f"  rlimits        {_warn('unavailable')} -- no CPU or memory ceiling "
+            "on this platform; only the wall-clock timeout bounds a run"
+        )
 
     client = build_client()
     if client.available:

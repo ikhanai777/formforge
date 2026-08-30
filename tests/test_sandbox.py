@@ -7,6 +7,9 @@ model-authored Python actually runs.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+
 import pytest
 
 from formforge.sandbox import ExecuteRequest, Limits
@@ -212,3 +215,70 @@ class TestParameterBinding:
         result = sandbox.execute(ExecuteRequest(source=source))
         assert result.ok, result.feedback()
         assert result.stats["bbox_mm"][:2] == pytest.approx([90.0, 30.0])
+
+
+class TestPortability:
+    """The CLI must import on a platform with no `resource` module.
+
+    `resource` is POSIX-only. executor.py imports the result markers from
+    runner.py, so an unguarded `import resource` there takes down the whole
+    import chain on Windows -- including `formforge doctor`, which never goes
+    near the sandbox. Found by someone trying to install this on Windows and
+    getting a traceback instead of a version banner.
+    """
+
+    BLOCKER = (
+        "import sys\n"
+        "class _Block:\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name == 'resource':\n"
+        "            raise ImportError(\"No module named 'resource'\")\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, _Block())\n"
+    )
+
+    def _run(self, body: str):
+        return subprocess.run(
+            [sys.executable, "-c", self.BLOCKER + body],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+
+    def test_the_cli_imports_without_resource(self):
+        done = self._run("import formforge.cli\nprint('ok')\n")
+        assert done.returncode == 0, done.stderr
+        assert "ok" in done.stdout
+
+    def test_limits_report_themselves_as_not_applied(self):
+        """Silently skipping them would let a materially weaker run pass for a
+        normal one."""
+        done = self._run(
+            "from formforge.sandbox.runner import apply_limits\n"
+            "print('applied', apply_limits({}))\n"
+        )
+        assert done.returncode == 0, done.stderr
+        assert "applied False" in done.stdout
+
+    def test_limits_are_applied_where_the_module_exists(self):
+        """In a subprocess, never in this one.
+
+        `apply_limits` sets RLIMIT_CPU on whatever process calls it. Calling it
+        here caps the test runner's own CPU time, and pytest is killed by
+        SIGXCPU several files later -- which looks like an unrelated crash in
+        whichever test happens to cross the threshold.
+        """
+        pytest.importorskip("resource")
+        done = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from formforge.sandbox.runner import apply_limits\n"
+                "print('applied', apply_limits({'cpu_s': 30, 'mem_mb': 2048}))\n",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        assert done.returncode == 0, done.stderr
+        assert "applied True" in done.stdout

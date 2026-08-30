@@ -23,10 +23,19 @@ import contextlib
 import io
 import json
 import os
-import resource
 import sys
 import traceback
 from pathlib import Path
+
+# POSIX only, and absent on Windows. Imported defensively rather than at the
+# top because executor.py imports the result markers below from this module,
+# so an unguarded import here takes down the entire CLI -- `formforge doctor`
+# included, which does not go near the sandbox -- on a platform where the
+# module simply does not exist.
+try:
+    import resource
+except ImportError:  # pragma: no cover - exercised on Windows, not in CI
+    resource = None
 
 RESULT_BEGIN = "<<<FORMFORGE_RESULT_BEGIN>>>"
 RESULT_END = "<<<FORMFORGE_RESULT_END>>>"
@@ -82,8 +91,18 @@ STRIPPED_BUILTINS = (
 FIXED_TIMESTAMP = "2026-01-01T00:00:00"
 
 
-def apply_limits(limits: dict) -> None:
-    """Apply POSIX resource limits to this process before running anything."""
+def apply_limits(limits: dict) -> bool:
+    """Apply POSIX resource limits to this process before running anything.
+
+    Returns whether they were actually applied. False means this platform has
+    no rlimits, and the caller is expected to say so rather than let the
+    absence pass for success: without them the only things still bounding a
+    generated script are the wall-clock timeout and the static gate, and the
+    gate is explicitly not a containment boundary.
+    """
+    if resource is None:
+        return False
+
     cpu_s = int(limits.get("cpu_s", 30))
     mem_mb = int(limits.get("mem_mb", 2048))
     nproc = int(limits.get("nproc", 64))
@@ -100,6 +119,7 @@ def apply_limits(limits: dict) -> None:
     _set(resource.RLIMIT_FSIZE, fsize_mb * 1024 * 1024)
     _set(resource.RLIMIT_NPROC, nproc)
     _set(resource.RLIMIT_CORE, 0)
+    return True
 
 
 def strip_environment() -> None:
@@ -534,7 +554,7 @@ def main() -> int:
     workdir.mkdir(parents=True, exist_ok=True)
 
     strip_environment()
-    apply_limits(job.get("limits") or {})
+    limits_applied = apply_limits(job.get("limits") or {})
 
     language = job.get("language", "build123d")
     phase = "execute"
@@ -544,6 +564,9 @@ def main() -> int:
         else:
             payload = run_python(job, workdir)
         payload["status"] = "ok"
+        # Reported, not assumed. A run with no rlimits is a materially weaker
+        # run and the tier above should be able to tell the difference.
+        payload.setdefault("stats", {})["rlimits_applied"] = limits_applied
         _emit(payload)
         return 0
     except Exception as exc:

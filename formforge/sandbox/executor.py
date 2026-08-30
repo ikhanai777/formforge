@@ -206,16 +206,23 @@ class GeometrySandbox:
         return self.runtime in ISOLATED_RUNTIMES
 
     def describe(self) -> dict:
+        # Windows has no `resource` module, so the subprocess runtime gets no
+        # CPU, memory or file-size ceiling there at all. Surfaced rather than
+        # discovered: the wall-clock timeout still fires, but a runaway
+        # allocation is bounded by the host and nothing else.
+        rlimits = self.runtime != "subprocess" or sys.platform != "win32"
         return {
             "runtime": self.runtime,
             "image": self.image if self.runtime != "subprocess" else None,
             "kernel_isolated": self.production_ready(),
+            "rlimits": rlimits,
             "warning": (
                 None
                 if self.production_ready()
                 else "no kernel or filesystem isolation: generated code can write "
                 "anywhere the host user can, and reach the network. Development "
                 "use only."
+                + ("" if rlimits else " No CPU or memory limits on this platform either.")
             ),
         }
 
