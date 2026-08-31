@@ -133,6 +133,16 @@ was a vertical prism until the feather edge it left came out at 0.09 mm across
 3% of the surface, and the cap underside is a normal offset rather than a
 vertical one because a vertical offset thins to nothing on a steep skirt.
 
+It also settled where the sliders stop. Sweeping the whole declared range
+(`python -m formforge.eval.check_templates --id nature_mushroom --extremes`)
+found two combinations that build cleanly and then fall over: a 62 mm cap on a
+6 mm stem, and a 15 mm lean on a stem whose bulb is too narrow to sit under it.
+Neither is a geometry bug, so neither is fixed in the geometry — the template
+states the relationship as a precondition (`stem_lean_mm * 0.75 <
+stem_d_mm / 2 * (1 + stem_bulb)`) and refuses the combination up front, and the
+generator widens the bulb before it shortens the lean, because the lean is most
+of what makes a specimen look grown.
+
 Nothing in this repository has been physically printed. The template records
 that as `print_test: untested`, and every claim above is a measurement of the
 model, not of a print.

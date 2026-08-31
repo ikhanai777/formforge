@@ -288,6 +288,11 @@ preconditions:
   - "ring_style != 'none' implies stem_h_mm - cap_h_mm + cap_flesh_mm * 0.7 > ring_w_mm + 4"
   # The stem must fit under the cap it carries.
   - "stem_d_mm < cap_d_mm * 0.62"
+  # A leaning cap has to stay over the base, or the piece topples the moment
+  # the supports come off -- which the `com_inside_footprint` invariant catches
+  # after the build, and this catches before it. The basal bulb is the whole
+  # footprint, so how far the stem may lean is set by how wide the bulb is.
+  - "stem_lean_mm * 0.75 < stem_d_mm / 2 * (1 + stem_bulb)"
 
 source: |
   from build123d import *

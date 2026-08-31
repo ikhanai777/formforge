@@ -288,6 +288,16 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
         out["stem_d_mm"] = min(out["stem_d_mm"], (room - 7.0 - 1.5) / 0.625)
     if out["underside"] == "gills":
         out["gill_depth_mm"] = min(out["gill_depth_mm"], out["cap_flesh_mm"] + 2.5)
+    # A leaning cap has to stay over the base or the piece topples once the
+    # supports come off. The bulb is the footprint, so the lean it can carry is
+    # set by how wide the bulb is -- widening the bulb is the cheaper move,
+    # since the lean is most of what makes a specimen look grown.
+    footprint = out["stem_d_mm"] / 2 * (1.0 + out["stem_bulb"])
+    if out["stem_lean_mm"] * 0.75 >= footprint:
+        wanted = out["stem_lean_mm"] * 0.75 * 1.1 / max(out["stem_d_mm"] / 2, 1e-6) - 1.0
+        out["stem_bulb"] = min(1.2, max(out["stem_bulb"], wanted))
+        footprint = out["stem_d_mm"] / 2 * (1.0 + out["stem_bulb"])
+        out["stem_lean_mm"] = min(out["stem_lean_mm"], footprint / 0.75 * 0.92)
     # The ring is clamped below the cap, so there has to be stem below the cap.
     if out["ring_style"] != "none":
         needed = out["cap_h_mm"] - out["cap_flesh_mm"] * 0.7 + out["ring_w_mm"] + 6.0
