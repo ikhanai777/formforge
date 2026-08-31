@@ -430,6 +430,41 @@ CATEGORY_INVARIANTS: dict[str, tuple[CategoryInvariant, ...]] = {
             severity=Severity.WARN,
         ),
     ),
+    "nature": (
+        CategoryInvariant(
+            "nature.single_piece",
+            "solids == 1",
+            "One piece",
+            "The model came out as separate lumps, so a feature is floating "
+            "rather than joined to the body.",
+            "Overlap every appendage into the body before the union rather "
+            "than leaving it touching.",
+        ),
+        CategoryInvariant(
+            "nature.watertight",
+            "is_watertight",
+            "Closed surface",
+            "An organic form that is not a closed solid will not slice.",
+            "Rebuild the surface so the whole model is one closed shell.",
+        ),
+        CategoryInvariant(
+            "nature.stands",
+            "com_inside_footprint",
+            "Stands up",
+            "The centre of mass falls outside the footprint, so the piece "
+            "topples once the supports come off.",
+            "Widen the base, or reduce the lean of whatever overhangs it.",
+        ),
+        CategoryInvariant(
+            "nature.footprint",
+            "plate_contact_fraction >= 0.02",
+            "Something to stick down",
+            "Almost nothing touches the plate, so this will come loose during "
+            "the print.",
+            "Flatten or widen the base, or print it with a brim.",
+            severity=Severity.WARN,
+        ),
+    ),
     "box": (
         CategoryInvariant(
             "box.no_trapped_volume",

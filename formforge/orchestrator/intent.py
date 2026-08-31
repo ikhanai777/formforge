@@ -59,6 +59,10 @@ _CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
         "hook", "coat hook", "key hook", "towel hook", "peg", "hanger",
         "french cleat", "wall mount", "bracket",
     ),
+    "nature": (
+        "mushroom", "toadstool", "fungus", "fungi", "amanita", "figurine",
+        "ornament", "sculpture", "statuette", "miniature", "leaf", "shell",
+    ),
     "box": (
         "box", "case", "container", "lid", "bin", "storage", "gridfinity",
         "stash", "enclosure",

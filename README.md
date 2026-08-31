@@ -88,6 +88,7 @@ formforge templates                              # what is available
 formforge templates planter_halfmoon_wall        # parameters, ranges, print test
 formforge generate "a hex planter for a 4in pot"
 formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
+formforge mushroom --count 8 --seed 42 --species mixed   # a population of STLs
 formforge check model.stl --profile bambu_p1s_0.4 --category planter
 formforge render model.stl --out previews/
 formforge rules --profile prusa_mk4_0.4          # the DFM rules being applied
@@ -107,6 +108,32 @@ substitute. Every DFM constant in this system is a conventional maker value;
 a print outcome recorded against a model is the only thing that can make one
 of them a measurement, and it lands next to what the validator measured at the
 time.
+
+### Generators
+
+A template is one model with sliders. A **generator** is the thing that decides
+where the sliders go, so one definition covers a population rather than a
+specimen:
+
+```bash
+formforge mushroom --count 8 --seed 42 --species mixed --out out/mushrooms
+formforge mushroom --explain                    # the definition, as a graph
+formforge mushroom --params-only --count 12     # the sliders, no geometry
+formforge mushroom --species parasol --set cap_d_mm=90 --render
+```
+
+Each run writes an STL per specimen plus a `variations.json` with the
+parameters, bounding box and DFM verdict of each, so a population is
+reproducible from its manifest. The same seed gives the same mushrooms on any
+machine, and member three of a population is member three whether you asked for
+four or forty.
+
+The definition follows Grasshopper's rules rather than its interface: sliders
+are the only free values, components are pure functions of their inputs wired
+into a DAG, and a solve is a deterministic walk of it. What that buys is a
+generator you can read a variation out of -- "why did this one come out squat"
+is answered by the node that decided it. `docs/mushroom-generator.md` maps each
+idea to where it lives.
 
 ### From Claude, over MCP
 
@@ -262,7 +289,8 @@ formforge/
   mcp/            the MCP server
   api/            the HTTP gateway
   eval/           the template harness and the benchmark
-  templates/      12 verified parametric definitions
+  generators/     dataflow definitions that decide where the sliders go
+  templates/      13 verified parametric definitions
 ```
 
 `docs/architecture.md` covers the parts that need more than a paragraph:

@@ -2,6 +2,7 @@
 
     formforge generate "a hex planter for a 4 inch pot"
     formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
+    formforge mushroom --count 6 --seed 42 --species mixed --out out/mushrooms
     formforge templates --category planter
     formforge check model.stl --profile bambu_p1s_0.4 --category planter
     formforge render model.stl --out previews/
@@ -65,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _add_generate(subparsers)
     _add_build(subparsers)
+    _add_mushroom(subparsers)
     _add_templates(subparsers)
     _add_check(subparsers)
     _add_render(subparsers)
@@ -280,6 +282,215 @@ def _coerce(raw: str, spec: dict) -> Any:
         except ValueError:
             raise SystemExit(f"expected a number, got {raw!r}") from None
     return raw
+
+
+# ---------------------------------------------------------------------------
+# mushroom (the generator path: one definition, a population of models)
+# ---------------------------------------------------------------------------
+
+
+def _add_mushroom(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "mushroom",
+        help="generate variations of a detailed mushroom and export them as STL",
+    )
+    parser.add_argument("--count", type=int, default=6, help="how many specimens")
+    parser.add_argument("--seed", type=int, default=7, help="the population's seed")
+    parser.add_argument(
+        "--species",
+        default="mixed",
+        help="one of the definition's species, or 'mixed' to draw one per specimen",
+    )
+    parser.add_argument(
+        "--variation",
+        type=float,
+        default=0.55,
+        help="0 rebuilds the species exactly; 1 lets every slider wander its full range",
+    )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="pin a parameter across the whole population; repeatable",
+    )
+    parser.add_argument("--out", default="out/mushrooms", help="directory for the STL files")
+    parser.add_argument("--profile", default=DEFAULT_PROFILE_ID)
+    parser.add_argument("--material", default="PLA")
+    parser.add_argument(
+        "--params-only",
+        action="store_true",
+        help="print the parameter sets without building anything",
+    )
+    parser.add_argument("--render", action="store_true", help="also write a preview PNG each")
+    parser.add_argument(
+        "--explain", action="store_true", help="print the definition graph and exit"
+    )
+    parser.add_argument("--json", action="store_true")
+    parser.set_defaults(handler=_cmd_mushroom)
+
+
+def _cmd_mushroom(args) -> int:
+    from .generators import mushroom as definition  # noqa: PLC0415
+
+    if args.explain:
+        print(definition.DEFINITION.explain())
+        return 0
+
+    registry = TemplateRegistry.load(strict=False)
+    try:
+        template = registry.get(definition.TEMPLATE_ID)
+    except KeyError as exc:
+        print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    try:
+        pins = _parse_settings(args.set, template)
+    except SystemExit as exc:
+        print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    try:
+        solutions = [
+            definition.solve(
+                definition.member_seed(args.seed, index),
+                species=args.species,
+                variation=args.variation,
+                overrides=pins,
+            )
+            for index in range(max(0, args.count))
+        ]
+    except ValueError as exc:
+        print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    specimens = [
+        {
+            "index": index,
+            "species": solution["preset"]["species"],
+            "seed": solution["params"]["seed"],
+            "params": solution["params"],
+        }
+        for index, solution in enumerate(solutions)
+    ]
+
+    if args.params_only:
+        if args.json:
+            print(json.dumps(specimens, indent=2))
+            return 0
+        for specimen in specimens:
+            print(f"  {specimen['index']:>2}  {specimen['species']:<12} "
+                  f"seed {specimen['seed']:<5} {definition.describe(specimen['params'])}")
+        return 0
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    built = _build_specimens(specimens, template, out_dir, args)
+
+    manifest = out_dir / "variations.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "template": template.id,
+                "definition": definition.DEFINITION.name,
+                "seed": args.seed,
+                "species": args.species,
+                "variation": args.variation,
+                "pinned": pins,
+                "specimens": built,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    if args.json:
+        print(json.dumps(built, indent=2))
+    else:
+        ok = sum(1 for b in built if b["status"] == "ok")
+        print()
+        print(f"{ok}/{len(built)} built into {out_dir}")
+        print(_dim(f"parameters and verdicts: {manifest}"))
+    return 0 if all(b["status"] == "ok" for b in built) else 1
+
+
+def _build_specimens(specimens: list[dict], template, out_dir: Path, args) -> list[dict]:
+    """Build each specimen in the sandbox and validate what came out."""
+    import shutil  # noqa: PLC0415
+
+    from .sandbox import ExecuteRequest, GeometrySandbox  # noqa: PLC0415
+
+    sandbox = GeometrySandbox()
+    built: list[dict] = []
+    for specimen in specimens:
+        params = specimen["params"]
+        name = f"{specimen['index']:02d}-{specimen['species']}-{specimen['seed']}"
+        record = {**{k: v for k, v in specimen.items() if k != "params"}, "params": params}
+
+        problems = template.validate_params(params)
+        if problems:
+            record.update(status="rejected", detail="; ".join(problems))
+            built.append(record)
+            if not args.json:
+                print(f"  [{_bad('!!')}] {name}: {problems[0]}")
+            continue
+
+        execution = sandbox.execute(
+            ExecuteRequest(
+                source=template.render_source(params),
+                language=template.language,
+                params=params,
+                # Hand-authored templates are human-reviewed; the magic-number
+                # style rule does not apply to them.
+                enforce_named_constants=False,
+            )
+        )
+        if not execution.ok:
+            record.update(
+                status="failed", detail=f"{execution.error_class}: {execution.message}"
+            )
+            built.append(record)
+            if not args.json:
+                print(f"  [{_bad('!!')}] {name}: {execution.message}")
+            continue
+
+        stl = out_dir / f"{name}.stl"
+        shutil.copyfile(execution.artifacts["stl"], stl)
+
+        report = validate(
+            str(stl),
+            profile_id=args.profile,
+            material=args.material,
+            category=template.category,
+            params=params,
+            template_invariants=template.invariants,
+            expected_solids=template.expected_solids,
+            brep_features=execution.stats.get("brep_features"),
+        )
+        record.update(
+            status="ok" if report.passed else "unprintable",
+            stl=str(stl),
+            bbox_mm=execution.stats.get("bbox_mm"),
+            triangles=execution.stats.get("triangles"),
+            failures=[c.id for c in report.hard_failures],
+            warnings=[c.id for c in report.warnings],
+        )
+
+        if args.render:
+            from .render import render_views  # noqa: PLC0415
+
+            preview = render_views(str(stl), out_dir / name, views=("iso",))
+            record["preview"] = preview.views.get("iso")
+
+        built.append(record)
+        if not args.json:
+            marker = _ok("ok") if report.passed else _warn("??")
+            from .generators import mushroom as definition  # noqa: PLC0415
+
+            print(f"  [{marker}] {name}: {definition.describe(params)}")
+            for failure in record["failures"]:
+                print(_warn(f"        {failure}"))
+    return built
 
 
 # ---------------------------------------------------------------------------
