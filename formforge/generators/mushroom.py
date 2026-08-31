@@ -181,7 +181,7 @@ def _draws(seed: int) -> dict[str, float]:
     Keyed by name rather than by position, so adding a slider later does not
     reshuffle every mushroom that came before it.
     """
-    keys = (*JITTER, *DERIVED, "species", "wobble")
+    keys = (*JITTER, *DERIVED, "species")
     return {key: unit(seed, key) for key in keys}
 
 
@@ -200,8 +200,11 @@ def _jittered(
         if name in pinned or not isinstance(value, (int, float)):
             continue
         swing = (draws[name] * 2.0 - 1.0) * variation
-        moved = value * (1.0 + amount * swing) if mode == "rel" else value + amount * swing
-        out[name] = max(0.0, moved)
+        # No floor at zero here: stem_taper is legitimately negative on a
+        # bolete, whose stem widens upward, and clamping it would quietly turn
+        # every bolete into a cylinder. The schema clamp in `params` is what
+        # keeps values inside what the geometry accepts.
+        out[name] = value * (1.0 + amount * swing) if mode == "rel" else value + amount * swing
     out["cap_lobes"] = round(out["cap_lobes"])
     return out
 
@@ -339,11 +342,9 @@ def unit(seed: int, key: str) -> float:
     return int.from_bytes(digest, "big") / 2**64
 
 
-def schema_bounds(template: Any = None) -> dict[str, dict[str, Any]]:
+def schema_bounds() -> dict[str, dict[str, Any]]:
     """The template's parameter schema, loaded once."""
     global _BOUNDS
-    if template is not None:
-        return dict(template.properties)
     if _BOUNDS is None:
         from ..registry import TemplateRegistry  # noqa: PLC0415
 

@@ -12,7 +12,10 @@ formforge mushroom --species parasol --set cap_d_mm=90 --render
 
 Every run writes the STL files plus a `variations.json` carrying the parameter
 set, the bounding box and the DFM verdict for each specimen, so a population is
-reproducible from its manifest alone.
+reproducible from its manifest alone. For a single specimen with the full
+bundle -- 3MF with its units declared, STEP, the standalone `source.py`, the
+report and the previews -- hand any of those parameter sets to `formforge build
+nature_mushroom --set cap_d_mm=70 --set seed=42`.
 
 ## Where Grasshopper's ideas land
 

@@ -418,6 +418,7 @@ def _build_specimens(specimens: list[dict], template, out_dir: Path, args) -> li
     """Build each specimen in the sandbox and validate what came out."""
     import shutil  # noqa: PLC0415
 
+    from .generators import mushroom as definition  # noqa: PLC0415
     from .sandbox import ExecuteRequest, GeometrySandbox  # noqa: PLC0415
 
     sandbox = GeometrySandbox()
@@ -485,8 +486,6 @@ def _build_specimens(specimens: list[dict], template, out_dir: Path, args) -> li
         built.append(record)
         if not args.json:
             marker = _ok("ok") if report.passed else _warn("??")
-            from .generators import mushroom as definition  # noqa: PLC0415
-
             print(f"  [{marker}] {name}: {definition.describe(params)}")
             for failure in record["failures"]:
                 print(_warn(f"        {failure}"))

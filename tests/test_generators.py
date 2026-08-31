@@ -113,6 +113,16 @@ class TestMushroomParameters:
             assert params["ring_style"] == "none"
             assert params["wart_count"] == 0
 
+    def test_a_negative_slider_survives_the_jitter(self):
+        """A bolete's stem widens upward, which is a negative taper.
+
+        Anything that floors the jitter at zero turns every bolete into a
+        cylinder, and the parameter set still validates -- so nothing downstream
+        would catch it.
+        """
+        for seed in (1, 2, 3, 4, 5, 6):
+            assert mush.specimen(seed, species="bolete", variation=1.0)["stem_taper"] < 0
+
     def test_parts_stay_in_proportion(self):
         """The dependent sliders follow the cap rather than wander on their own."""
         for seed in (0, 17, 555, 8123):

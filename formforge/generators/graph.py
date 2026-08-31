@@ -28,7 +28,7 @@ mushrooms; `formforge.generators.mushroom` is the definition built on it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -164,9 +164,6 @@ class Definition:
         """Evaluation order: the sliders, then the components as wired."""
         return tuple(self._sliders) + tuple(self._order)
 
-    def defaults(self) -> dict[str, Any]:
-        return {name: slider.default for name, slider in self._sliders.items()}
-
     def explain(self) -> str:
         """The definition as text, in the order it solves.
 
@@ -228,10 +225,3 @@ def _number(value: Any) -> str:
     if isinstance(value, float):
         return f"{value:g}"
     return str(value)
-
-
-def as_sequence(value: Any) -> Sequence[Any]:
-    """One value or many, always iterable. Grasshopper's list-or-item rule."""
-    if isinstance(value, (list, tuple)):
-        return value
-    return (value,)
