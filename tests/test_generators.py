@@ -129,7 +129,7 @@ class TestMushroomParameters:
             params = mush.specimen(seed, species="mixed", variation=1.0)
             assert params["stem_d_mm"] < params["cap_d_mm"] * 0.62
             if params["underside"] == "gills":
-                assert 10 <= params["gill_count"] <= 26
+                assert 10 <= params["gill_count"] <= 18
                 assert params["gill_depth_mm"] <= params["cap_flesh_mm"] + 3
 
     def test_a_pin_is_carried_through_the_whole_population(self, template):
