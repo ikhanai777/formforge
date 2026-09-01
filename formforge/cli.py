@@ -314,7 +314,9 @@ def _add_mushroom(subparsers) -> None:
         metavar="KEY=VALUE",
         help="pin a parameter across the whole population; repeatable",
     )
-    parser.add_argument("--out", default="out/mushrooms", help="directory for the exported files")
+    parser.add_argument(
+        "--out", default="out/mushrooms", help="directory for the exported files"
+    )
     parser.add_argument(
         "--formats",
         default="stl,step,3mf",
