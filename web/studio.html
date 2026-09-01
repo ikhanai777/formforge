@@ -370,6 +370,31 @@ input[type="range"]::-moz-range-thumb {
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
 
+/* export formats */
+.formats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+@media (max-width: 420px) { .formats { grid-template-columns: 1fr; } }
+.format {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px 10px;
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.format h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.format p { margin: 0 0 4px; font-size: 11.5px; color: var(--muted); }
+.format .btn { width: 100%; margin-top: auto; }
+
 /* command block */
 .command {
   font-family: var(--font-mono);
@@ -453,13 +478,24 @@ input[type="range"]::-moz-range-thumb {
 
       <section class="panel">
         <h2>Take it away</h2>
+        <div class="formats">
+          <div class="format">
+            <h3>Print it</h3>
+            <p>A mesh, ready to drop into a slicer.</p>
+            <button class="btn btn-primary" id="export-stl" type="button">Download STL</button>
+          </div>
+          <div class="format">
+            <h3>Edit it</h3>
+            <p>One solid with real faces and edges &mdash; SolidWorks, Fusion, FreeCAD.</p>
+            <button class="btn btn-primary" id="export-step" type="button">STEP script</button>
+          </div>
+        </div>
+        <p class="footnote" id="export-note"></p>
         <pre class="command" id="command"></pre>
         <div class="btnrow">
-          <button class="btn btn-primary" id="export-stl" type="button">Export STL</button>
           <button class="btn" id="copy-cmd" type="button">Copy command</button>
           <button class="btn" id="export-json" type="button">Parameters .json</button>
         </div>
-        <p class="footnote" id="export-note"></p>
       </section>
     </aside>
   </div>
@@ -905,6 +941,237 @@ function buildMesh(p, quality) {
 }
 
 /* =================================================================
+   2b. The template's own build123d source, verbatim and base64'd so the
+       page can hand you a script that builds the real thing. A test in
+       the repo asserts this is byte-for-byte the template's source, so
+       the two cannot drift.
+   ================================================================= */
+const TEMPLATE_SOURCE_B64 = [
+  "ZnJvbSBidWlsZDEyM2QgaW1wb3J0ICoKCmltcG9ydCBtYXRoCgojIC0tLSBzbGlkZXJzIC0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCkNBUF9EX01NID0gNjIuMApDQVBfSF9NTSA9IDI2",
+  "LjAKQ0FQX0ZVTExORVNTID0gMi4yCkNBUF9TSE9VTERFUiA9IDAuNjIKQ0FQX0RJU0hfTU0gPSAwLjAKQ0FQX1VNQk9fTU0g",
+  "PSAyLjUKQ0FQX0ZMRVNIX01NID0gNi4wCkNBUF9NQVJHSU5fTU0gPSAxLjYKQ0FQX0xPQkVTID0gNQpDQVBfV0FWRV9NTSA9",
+  "IDIuMApDQVBfVElMVF9ERUcgPSA0LjAKVU5ERVJTSURFID0gImdpbGxzIgpHSUxMX0NPVU5UID0gMTYKR0lMTF9UX01NID0g",
+  "MS4zCkdJTExfREVQVEhfTU0gPSA1LjAKU1RFTV9IX01NID0gNTguMApTVEVNX0RfTU0gPSAxNC4wClNURU1fVEFQRVIgPSAw",
+  "LjIwClNURU1fQlVMQiA9IDAuNTAKU1RFTV9MRUFOX01NID0gNi4wClNURU1fRkxBUkUgPSAwLjI1ClJJTkdfU1RZTEUgPSAi",
+  "c2tpcnQiClJJTkdfUE9TID0gMC43MgpSSU5HX1dfTU0gPSA1LjAKV0FSVF9DT1VOVCA9IDIwCldBUlRfRF9NTSA9IDQuNApX",
+  "QVJUX0ZMQVRURU4gPSAwLjQ1ClNFRUQgPSA3CgpUQVUgPSA2LjI4MzE4NTMwNzE3OTU4NgpDQVBfUiA9IENBUF9EX01NIC8g",
+  "MgpTVEVNX1IgPSBTVEVNX0RfTU0gLyAyClNURVBTID0gMTgKCgpkZWYgaGFzaDAxKGluZGV4LCBzYWx0KToKICAgICIiIkRl",
+  "dGVybWluaXN0aWMgcHNldWRvLXJhbmRvbSBpbiBbMCwxKTogdGhlIHNlZWQgaXMgYSBzbGlkZXIsIHNvIHRoZSBzYW1lCiAg",
+  "ICBzZWVkIHJlYnVpbGRzIHRoZSBzYW1lIG11c2hyb29tIG9uIGFueSBtYWNoaW5lLiIiIgogICAgeCA9IG1hdGguc2luKChp",
+  "bmRleCArIDEpICogMTIuOTg5OCArIChTRUVEICsgMSkgKiA3OC4yMzMgKyBzYWx0ICogMzcuNzE5KSAqIDQzNzU4LjU0NTMK",
+  "ICAgIHJldHVybiB4IC0gbWF0aC5mbG9vcih4KQoKCmRlZiBkb21lX3oocyk6CiAgICAiIiJDYXAgc3VyZmFjZSBhdCBub3Jt",
+  "YWxpc2VkIHJhZGl1cyBzLCBiZWZvcmUgdGhlIHVtYm8gaXMgYWRkZWQuCgogICAgKDEgLSBzXmZ1bGxuZXNzKV5zaG91bGRl",
+  "ciBjb3ZlcnMgdGhlIHdob2xlIGZhbWlseSBpbiB0d28gc2xpZGVyczogMi8wLjUgaXMKICAgIGEgaGVtaXNwaGVyZSwgMS8x",
+  "IGEgY29uZSwgNC8wLjQgYSBmbGF0IGNhcCB3aXRoIGEgc3RlZXAgc2tpcnQuIFRoZSBkaXNoCiAgICB0ZXJtIGRyb3BzIHRo",
+  "ZSBjZW50cmUgYmVsb3cgdGhlIHJpbSwgd2hpY2ggaXMgd2hhdCBtYWtlcyBhIGZ1bm5lbC4KICAgICIiIgogICAgcmV0dXJu",
+  "IENBUF9IX01NICogKDEuMCAtIHMqKkNBUF9GVUxMTkVTUykgKiogQ0FQX1NIT1VMREVSIC0gQ0FQX0RJU0hfTU0gKiAoMS4w",
+  "IC0gcyAqIHMpCgoKZGVmIGNyb3duX3oocyk6CiAgICByZXR1cm4gZG9tZV96KHMpICsgQ0FQX1VNQk9fTU0gKiBtYXRoLmV4",
+  "cCgtKChzIC8gMC4yNCkgKiogMikpCgoKZGVmIGZsZXNoX2F0KHMpOgogICAgcmV0dXJuIENBUF9GTEVTSF9NTSAqICgxLjAg",
+  "LSBzKSAqKiAwLjcgKyBDQVBfTUFSR0lOX01NCgoKZGVmIHJlc2FtcGxlKHBvaW50cywgY291bnQpOgogICAgIiIiRXF1YWwg",
+  "YXJjLWxlbmd0aCByZXNhbXBsaW5nLiBBIHNwbGluZSB0aHJvdWdoIGV2ZW5seSBzcGFjZWQgcG9pbnRzCiAgICBvdmVyc2hv",
+  "b3RzIHdoZXJldmVyIHRoZSBjdXJ2ZSBpcyBzdGVlcCwgYW5kIHRoZSBjYXAgbWFyZ2luIGlzIGEgY2xpZmYuIiIiCiAgICBy",
+  "dW4gPSBbMC4wXQogICAgZm9yICh4MCwgejApLCAoeDEsIHoxKSBpbiB6aXAocG9pbnRzLCBwb2ludHNbMTpdKToKICAgICAg",
+  "ICBydW4uYXBwZW5kKHJ1blstMV0gKyBtYXRoLmh5cG90KHgxIC0geDAsIHoxIC0gejApKQogICAgdG90YWwgPSBydW5bLTFd",
+  "CiAgICBvdXQgPSBbXQogICAgaiA9IDAKICAgIGZvciBrIGluIHJhbmdlKGNvdW50ICsgMSk6CiAgICAgICAgdGFyZ2V0ID0g",
+  "dG90YWwgKiBrIC8gY291bnQKICAgICAgICAjIEJvdW5kZWQgd2FsayByYXRoZXIgdGhhbiBhIHdoaWxlIGxvb3A6IHRoZSBz",
+  "YW5kYm94J3Mgc3RhdGljIGdhdGUKICAgICAgICAjIHJlamVjdHMgYW55IGxvb3AgaXQgY2Fubm90IHByb3ZlIHRlcm1pbmF0",
+  "ZXMsIGFuZCBpdCBpcyByaWdodCB0by4KICAgICAgICBmb3IgXyBpbiByYW5nZShsZW4ocnVuKSk6CiAgICAgICAgICAgIGlm",
+  "IGogPj0gbGVuKHJ1bikgLSAyIG9yIHJ1bltqICsgMV0gPj0gdGFyZ2V0OgogICAgICAgICAgICAgICAgYnJlYWsKICAgICAg",
+  "ICAgICAgaiArPSAxCiAgICAgICAgc3BhbiA9IHJ1bltqICsgMV0gLSBydW5bal0KICAgICAgICBmID0gMC4wIGlmIHNwYW4g",
+  "PD0gMCBlbHNlICh0YXJnZXQgLSBydW5bal0pIC8gc3BhbgogICAgICAgIG91dC5hcHBlbmQoCiAgICAgICAgICAgICgKICAg",
+  "ICAgICAgICAgICAgIHBvaW50c1tqXVswXSArIChwb2ludHNbaiArIDFdWzBdIC0gcG9pbnRzW2pdWzBdKSAqIGYsCiAgICAg",
+  "ICAgICAgICAgICBwb2ludHNbal1bMV0gKyAocG9pbnRzW2ogKyAxXVsxXSAtIHBvaW50c1tqXVsxXSkgKiBmLAogICAgICAg",
+  "ICAgICApCiAgICAgICAgKQogICAgcmV0dXJuIG91dAoKCmRlZiBpbnRlcnBfeihwb2ludHMsIHgpOgogICAgIiIiSGVpZ2h0",
+  "IG9mIGEgc2FtcGxlZCBjdXJ2ZSBhdCByYWRpdXMgeC4iIiIKICAgIGZvciAoeDAsIHowKSwgKHgxLCB6MSkgaW4gemlwKHBv",
+  "aW50cywgcG9pbnRzWzE6XSk6CiAgICAgICAgaWYgeDAgPD0geCA8PSB4MSBhbmQgeDEgPiB4MDoKICAgICAgICAgICAgcmV0",
+  "dXJuIHowICsgKHoxIC0gejApICogKHggLSB4MCkgLyAoeDEgLSB4MCkKICAgIHJldHVybiBwb2ludHNbLTFdWzFdIGlmIHgg",
+  "PiBwb2ludHNbLTFdWzBdIGVsc2UgcG9pbnRzWzBdWzFdCgoKZGVmIG1lcmlkaWFuKHVwcGVyLCBsb3dlciwgY3VydmVkPVRy",
+  "dWUpOgogICAgIiIiQ2xvc2UgYW4gdXBwZXIgYW5kIGEgbG93ZXIgc2FtcGxlZCBjdXJ2ZSBpbnRvIG9uZSBtZXJpZGlhbiBm",
+  "YWNlLiIiIgogICAgbG93ZXIgPSBsaXN0KHJldmVyc2VkKGxvd2VyKSkKICAgIHdpdGggQnVpbGRMaW5lKFBsYW5lLlhaKSBh",
+  "cyBvdXRsaW5lOgogICAgICAgIChTcGxpbmUgaWYgY3VydmVkIGVsc2UgUG9seWxpbmUpKCp1cHBlcikKICAgICAgICBMaW5l",
+  "KHVwcGVyWy0xXSwgbG93ZXJbMF0pCiAgICAgICAgKFNwbGluZSBpZiBjdXJ2ZWQgZWxzZSBQb2x5bGluZSkoKmxvd2VyKQog",
+  "ICAgICAgIExpbmUobG93ZXJbLTFdLCB1cHBlclswXSkKICAgIHJldHVybiBtYWtlX2ZhY2Uob3V0bGluZS5saW5lKQoKCiMg",
+  "LS0tIDEuIGNhcCBwcm9maWxlOiBjcm93biBjdXJ2ZSArIG5vcm1hbC1vZmZzZXQgdW5kZXJzaWRlIC0tLS0tLS0tLS0tLS0t",
+  "LS0tLQpERU5TRSA9IDQwMApkb21lX3B0cyA9IFsoQ0FQX1IgKiBpIC8gREVOU0UsIGRvbWVfeihpIC8gREVOU0UpKSBmb3Ig",
+  "aSBpbiByYW5nZShERU5TRSArIDEpXQpjcm93bl9wdHMgPSBbKHgsIGNyb3duX3ooeCAvIENBUF9SKSkgZm9yIHgsIF8gaW4g",
+  "ZG9tZV9wdHNdCgp0b3BfY3VydmUgPSByZXNhbXBsZShjcm93bl9wdHMsIFNURVBTKQp0b3BfY3VydmVbMF0gPSAoMC4wLCBj",
+  "cm93bl9wdHNbMF1bMV0pCnRvcF9jdXJ2ZVstMV0gPSBjcm93bl9wdHNbLTFdCgpvZmZzZXRzID0gW10KZm9yIHgsIHogaW4g",
+  "cmVzYW1wbGUoZG9tZV9wdHMsIFNURVBTKToKICAgIGVwcyA9IENBUF9SICogMWUtMwogICAgZHogPSBkb21lX3oobWluKDEu",
+  "MCwgKHggKyBlcHMpIC8gQ0FQX1IpKSAtIGRvbWVfeihtYXgoMC4wLCAoeCAtIGVwcykgLyBDQVBfUikpCiAgICBsZW5ndGgg",
+  "PSBtYXRoLmh5cG90KDIgKiBlcHMsIGR6KSBvciAxLjAKICAgIHRoaWNrbmVzcyA9IGZsZXNoX2F0KG1pbigxLjAsIHggLyBD",
+  "QVBfUikpCiAgICBvZmZzZXRzLmFwcGVuZCgoeCArIGR6IC8gbGVuZ3RoICogdGhpY2tuZXNzLCB6IC0gMiAqIGVwcyAvIGxl",
+  "bmd0aCAqIHRoaWNrbmVzcykpCgojIEEgbm9ybWFsIG9mZnNldCBmb2xkcyBvdmVyIHdoZXJldmVyIHRoZSBjYXAgdHVybnMg",
+  "dGlnaHRlciB0aGFuIHRoZSBmbGVzaCBpcwojIHRoaWNrIC0tIGEgcG9pbnRlZCBjYXAgaXMgdGhlIGNhc2UgdGhhdCBkb2Vz",
+  "IGl0LiBEcm9wcGluZyB0aGUgZm9sZGVkIHBvaW50cwojIGFuZCBleHRyYXBvbGF0aW5nIGJhY2sgdG8gdGhlIGF4aXMga2Vl",
+  "cHMgdGhlIHByb2ZpbGUgY2xvc2VkLCBhdCB0aGUgY29zdCBvZgojIGEgc2xpZ2h0bHkgdGhpY2tlciBhcGV4Lgppbm5lcl9j",
+  "dXJ2ZSA9IFtdCmZvciB4LCB6IGluIG9mZnNldHM6CiAgICBpZiB4IDw9IDAuMCBvciAoaW5uZXJfY3VydmUgYW5kIHggPD0g",
+  "aW5uZXJfY3VydmVbLTFdWzBdICsgQ0FQX1IgKiAxZS0zKToKICAgICAgICBjb250aW51ZQogICAgaW5uZXJfY3VydmUuYXBw",
+  "ZW5kKCh4LCB6KSkKKHgwLCB6MCksICh4MSwgejEpID0gaW5uZXJfY3VydmVbMF0sIGlubmVyX2N1cnZlWzFdCmF4aXNfeiA9",
+  "IHowIC0gKHoxIC0gejApICogeDAgLyBtYXgoeDEgLSB4MCwgMWUtNikKaW5uZXJfY3VydmUuaW5zZXJ0KDAsICgwLjAsIG1p",
+  "bihheGlzX3osIGRvbWVfeigwLjApIC0gbWF4KDAuNSwgZmxlc2hfYXQoMC4wKSAqIDAuMzUpKSkpCgojIC0tLSAyLiBnaWxs",
+  "IHpvbmU6IGZsYXR0ZW4gdGhlIHVuZGVyc2lkZSB3aGVyZSB0aGUgYmxhZGVzIGF0dGFjaCAtLS0tLS0tLS0tLS0KR0lMTF9S",
+  "X0lOID0gU1RFTV9SICogMS4yNSArIDEuNQpHSUxMX1JfT1VUID0gbWluKENBUF9SIC0gQ0FQX01BUkdJTl9NTSAqIDEuNSAt",
+  "IENBUF9XQVZFX01NLCBpbm5lcl9jdXJ2ZVstMV1bMF0gLSAxLjApCkhBU19HSUxMUyA9IFVOREVSU0lERSA9PSAiZ2lsbHMi",
+  "IGFuZCBHSUxMX1JfT1VUID4gR0lMTF9SX0lOICsgNC4wClJPT0ZfSU4gPSBpbnRlcnBfeihpbm5lcl9jdXJ2ZSwgR0lMTF9S",
+  "X0lOKQpST09GX09VVCA9IGludGVycF96KGlubmVyX2N1cnZlLCBHSUxMX1JfT1VUKQoKCmRlZiByb29mX3oocik6CiAgICAi",
+  "IiJUaGUgY29uZSB0aGUgZ2lsbHMgaGFuZyBmcm9tLiBTdHJhaWdodCwgbm90IGN1cnZlZDogYSBibGFkZSBtZWV0aW5nIGEK",
+  "ICAgIGNvbmUgaXMgYSBjaGVhcCBib29sZWFuLCBhIGJsYWRlIG1lZXRpbmcgYSByZXZvbHZlZCBzcGxpbmUgaXMgbm90LiIi",
+  "IgogICAgc3BhbiA9IG1heChHSUxMX1JfT1VUIC0gR0lMTF9SX0lOLCAxZS02KQogICAgcmV0dXJuIFJPT0ZfSU4gKyAoUk9P",
+  "Rl9PVVQgLSBST09GX0lOKSAqIChyIC0gR0lMTF9SX0lOKSAvIHNwYW4KCgojIFRoZSBjb25lIHJ1bnMgd2lkZXIgdGhhbiB0",
+  "aGUgYmxhZGVzIGRvLCBzbyBldmVyeSBibGFkZSBtZWV0cyBpdCB3ZWxsIGluc2lkZQojIGl0cyBlZGdlczogYSBibGFkZSB3",
+  "aG9zZSBlbmQgbGFuZHMgZXhhY3RseSB3aGVyZSB0aGUgdW5kZXJzaWRlIGNoYW5nZXMgZnJvbQojIGNvbmUgdG8gc3BsaW5l",
+  "IGlzIGEgdGFuZ2VuY3ksIGFuZCBhIHRhbmdlbmN5IGlzIHRoZSBleHBlbnNpdmUgY2FzZSBmb3IgdGhlCiMga2VybmVsLiBU",
+  "aGUgc3RyYWlnaHQgcnVuIGlzIGEgTGluZSByYXRoZXIgdGhhbiB0d28gcG9pbnRzIG9uIGEgc3BsaW5lLCB3aGljaAojIGlz",
+  "IHdoYXQgbWFrZXMgaXQgYW4gYW5hbHl0aWMgY29uZSAtLSBhbmQgdGFrZXMgYSB0aGlyZCBvZmYgdGhlIHVuaW9uLgpQQURf",
+  "TU0gPSAyLjAKT1VURVJfUFRTID0gW3AgZm9yIHAgaW4gaW5uZXJfY3VydmUgaWYgcFswXSA+IEdJTExfUl9PVVQgKyBQQURf",
+  "TU0gKyAwLjVdCklOTkVSX1BUUyA9IFtwIGZvciBwIGluIGlubmVyX2N1cnZlIGlmIHBbMF0gPCBHSUxMX1JfSU4gLSBQQURf",
+  "TU0gLSAwLjVdCmlmIEhBU19HSUxMUyBhbmQgKGxlbihPVVRFUl9QVFMpIDwgMiBvciBsZW4oSU5ORVJfUFRTKSA8IDIpOgog",
+  "ICAgUEFEX01NID0gMC41CiAgICBPVVRFUl9QVFMgPSBbcCBmb3IgcCBpbiBpbm5lcl9jdXJ2ZSBpZiBwWzBdID4gR0lMTF9S",
+  "X09VVCArIFBBRF9NTSArIDAuM10KICAgIElOTkVSX1BUUyA9IFtwIGZvciBwIGluIGlubmVyX2N1cnZlIGlmIHBbMF0gPCBH",
+  "SUxMX1JfSU4gLSBQQURfTU0gLSAwLjNdCkhBU19HSUxMUyA9IEhBU19HSUxMUyBhbmQgbGVuKE9VVEVSX1BUUykgPj0gMiBh",
+  "bmQgbGVuKElOTkVSX1BUUykgPj0gMgoKaWYgSEFTX0dJTExTOgogICAgY29uZV9vdXQgPSAoR0lMTF9SX09VVCArIFBBRF9N",
+  "TSwgcm9vZl96KEdJTExfUl9PVVQgKyBQQURfTU0pKQogICAgY29uZV9pbiA9IChHSUxMX1JfSU4gLSBQQURfTU0sIHJvb2Zf",
+  "eihHSUxMX1JfSU4gLSBQQURfTU0pKQogICAgdW5kZXJzaWRlID0gWwogICAgICAgICgic3BsaW5lIiwgWypyZXZlcnNlZChP",
+  "VVRFUl9QVFMpLCBjb25lX291dF0pLAogICAgICAgICgibGluZSIsIFtjb25lX291dCwgY29uZV9pbl0pLAogICAgICAgICgi",
+  "c3BsaW5lIiwgW2NvbmVfaW4sICpyZXZlcnNlZChJTk5FUl9QVFMpXSksCiAgICBdCmVsc2U6CiAgICB1bmRlcnNpZGUgPSBb",
+  "KCJzcGxpbmUiLCBsaXN0KHJldmVyc2VkKGlubmVyX2N1cnZlKSkpXQoKd2l0aCBCdWlsZExpbmUoUGxhbmUuWFopIGFzIGNh",
+  "cF9vdXRsaW5lOgogICAgU3BsaW5lKCp0b3BfY3VydmUpCiAgICBMaW5lKHRvcF9jdXJ2ZVstMV0sIHVuZGVyc2lkZVswXVsx",
+  "XVswXSkKICAgIGZvciBraW5kLCBwb2ludHMgaW4gdW5kZXJzaWRlOgogICAgICAgIChMaW5lIGlmIGtpbmQgPT0gImxpbmUi",
+  "IGVsc2UgU3BsaW5lKSgqcG9pbnRzKQogICAgTGluZSh1bmRlcnNpZGVbLTFdWzFdWy0xXSwgdG9wX2N1cnZlWzBdKQpjYXAg",
+  "PSByZXZvbHZlKG1ha2VfZmFjZShjYXBfb3V0bGluZS5saW5lKSwgYXhpcz1BeGlzLlopCgojIC0tLSAzLiBsb2JlZCBtYXJn",
+  "aW46IHRyaW0gdGhlIGNhcCB3aXRoIGEgd2F2eSwgYmV2ZWxsZWQgY29uZSAtLS0tLS0tLS0tLS0tLS0KaWYgQ0FQX1dBVkVf",
+  "TU0gPiAwIGFuZCBDQVBfTE9CRVMgPiAwOgogICAgc2FtcGxlcyA9IG1heCg3MiwgQ0FQX0xPQkVTICogMTgpCiAgICBUUklN",
+  "X01NID0gbWF4KDAuNiwgQ0FQX01BUkdJTl9NTSAqIDAuNCkKCiAgICBkZWYgcGxhbl9yaW5nKHosIGluc2V0KToKICAgICAg",
+  "ICAiIiJPbmUgY2xvc2VkIHdhdnkgc2VjdGlvbiBvZiB0aGUgdHJpbSBzb2xpZCBhdCBoZWlnaHQgei4iIiIKICAgICAgICBw",
+  "b2ludHMgPSBbXQogICAgICAgIGZvciBpIGluIHJhbmdlKHNhbXBsZXMpOgogICAgICAgICAgICBhbmdsZSA9IFRBVSAqIGkg",
+  "LyBzYW1wbGVzCiAgICAgICAgICAgIGxvYmUgPSAwLjUgLSAwLjUgKiBtYXRoLmNvcyhDQVBfTE9CRVMgKiBhbmdsZSkKICAg",
+  "ICAgICAgICAgIyBFYWNoIGxvYmUgZ2V0cyBpdHMgb3duIGRlcHRoIGZyb20gdGhlIHNlZWQsIHNvIHRoZSBtYXJnaW4gcmVh",
+  "ZHMgYXMKICAgICAgICAgICAgIyBncm93biByYXRoZXIgdGhhbiBtYWNoaW5lZC4KICAgICAgICAgICAgZGVwdGggPSBDQVBf",
+  "V0FWRV9NTSAqICgwLjcgKyAwLjYgKiBoYXNoMDEoaW50KGkgKiBDQVBfTE9CRVMgLyBzYW1wbGVzKSwgMy4wKSkKICAgICAg",
+  "ICAgICAgcmFkaXVzID0gbWF4KDEuMCwgQ0FQX1IgLSBUUklNX01NIC0gZGVwdGggKiBsb2JlIC0gaW5zZXQpCiAgICAgICAg",
+  "ICAgIHBvaW50cy5hcHBlbmQoKHJhZGl1cyAqIG1hdGguY29zKGFuZ2xlKSwgcmFkaXVzICogbWF0aC5zaW4oYW5nbGUpKSkK",
+  "ICAgICAgICB3aXRoIEJ1aWxkTGluZShQbGFuZS5YWS5vZmZzZXQoeikpIGFzIHJpbmc6CiAgICAgICAgICAgIFNwbGluZSgq",
+  "cG9pbnRzLCBwb2ludHNbMF0pCiAgICAgICAgcmV0dXJuIG1ha2VfZmFjZShyaW5nLmxpbmUpCgogICAgIyBUaGUgdHJpbSBp",
+  "cyBhIGNvbmUsIG5vdCBhIHByaXNtLiBBIHZlcnRpY2FsIGN1dCBtZWV0cyB0aGUgY2FwJ3MgdW5kZXJzaWRlCiAgICAjIGF0",
+  "IGFib3V0IDMwIGRlZ3JlZXMgYW5kIGxlYXZlcyBhIGZlYXRoZXIgZWRnZSBhbGwgdGhlIHdheSByb3VuZCB0aGUKICAgICMg",
+  "bWFyZ2luIC0tIDMlIG9mIHRoZSBzdXJmYWNlIHVuZGVyIHRoZSAwLjggbW0gdGhlIG5venpsZSBjYW4gZXh0cnVkZS4gQQog",
+  "ICAgIyBjb25lIHRoYXQgb3BlbnMgdXB3YXJkIGF0IEJFVkVMX0RFRyBtZWV0cyBpdCBzcXVhcmUgaW5zdGVhZCwgYW5kIHRo",
+  "ZQogICAgIyBiZXZlbCBpdCBsZWF2ZXMgb24gdGhlIG5vdGNoZXMgaXMgd2hhdCBhIHRvcm4gbWFyZ2luIGxvb2tzIGxpa2Ug",
+  "YW55d2F5LgogICAgQkVWRUxfREVHID0gMzIuMAogICAgUklTRSA9IDEuMCAvIG1hdGgudGFuKG1hdGgucmFkaWFucyhCRVZF",
+  "TF9ERUcpKQogICAgS05FRV9aID0gLUNBUF9NQVJHSU5fTU0gLSAyLjAKICAgIEZMT09SX1ogPSBtaW4oS05FRV9aLCBtaW4o",
+  "eiBmb3IgXywgeiBpbiBpbm5lcl9jdXJ2ZSkpIC0gMi4wCiAgICBST09GX1ogPSBDQVBfSF9NTSArIENBUF9VTUJPX01NICsg",
+  "NS4wCiAgICAjIFRoZSBjb25lIHBhc3NlcyB0aHJvdWdoIHRoZSB3YXZlIHJhZGl1cyBhdCB0aGUgcmltICh6ID0gMCkgYW5k",
+  "IG9wZW5zCiAgICAjIHVwd2FyZCBmcm9tIHRoZXJlOyBiZWxvdyB0aGUga25lZSBpdCBnb2VzIHN0cmFpZ2h0IGRvd24sIHdo",
+  "ZXJlIHRoZXJlIGlzCiAgICAjIG5vdGhpbmcgbGVmdCB0byBjdXQuCiAgICB0cmltID0gbG9mdCgKICAgICAgICBbCiAgICAg",
+  "ICAgICAgIHBsYW5fcmluZyhGTE9PUl9aLCAtUklTRSAqIEtORUVfWiksCiAgICAgICAgICAgIHBsYW5fcmluZyhLTkVFX1os",
+  "IC1SSVNFICogS05FRV9aKSwKICAgICAgICAgICAgcGxhbl9yaW5nKFJPT0ZfWiwgLVJJU0UgKiBST09GX1opLAogICAgICAg",
+  "IF0sCiAgICAgICAgcnVsZWQ9VHJ1ZSwKICAgICkKICAgIGNhcCA9IGNhcCAmIHRyaW0KCiMgLS0tIDQuIHVuZGVyc2lkZTog",
+  "Z2lsbCBibGFkZXMgaW4gYSBwb2xhciBhcnJheSwgb3IgcG9yZSByaW5ncyAtLS0tLS0tLS0tLS0tLQpibGFkZXMgPSBbXQpp",
+  "ZiBIQVNfR0lMTFM6CgogICAgZGVmIGJsYWRlKHIwKToKICAgICAgICB1cHBlciA9IFsocjAsIHJvb2ZfeihyMCkgKyAwLjgp",
+  "LCAoR0lMTF9SX09VVCwgcm9vZl96KEdJTExfUl9PVVQpICsgMC44KV0KICAgICAgICBsb3dlciA9IFsKICAgICAgICAgICAg",
+  "KHIwLCByb29mX3oocjApIC0gR0lMTF9ERVBUSF9NTSAqIDAuMyksCiAgICAgICAgICAgICgocjAgKyBHSUxMX1JfT1VUKSAv",
+  "IDIsIHJvb2ZfeigocjAgKyBHSUxMX1JfT1VUKSAvIDIpIC0gR0lMTF9ERVBUSF9NTSksCiAgICAgICAgICAgIChHSUxMX1Jf",
+  "T1VULCByb29mX3ooR0lMTF9SX09VVCkgLSBHSUxMX0RFUFRIX01NICogMC4xNSksCiAgICAgICAgXQogICAgICAgIHJldHVy",
+  "biBleHRydWRlKG1lcmlkaWFuKHVwcGVyLCBsb3dlciwgY3VydmVkPUZhbHNlKSwgYW1vdW50PUdJTExfVF9NTSAvIDIsIGJv",
+  "dGg9VHJ1ZSkKCiAgICAjIEZ1bGwtbGVuZ3RoIGdpbGxzIGFsdGVybmF0aW5nIHdpdGggbGFtZWxsdWxhZSwgdGhlIHNob3J0",
+  "IGdpbGxzIHRoYXQgc3RhcnQKICAgICMgaGFsZndheSBvdXQuIERvdWJsaW5nIHRoZSBibGFkZSBjb3VudCBuZWFyIHRoZSBt",
+  "YXJnaW4gaXMgd2hhdCBhIHJlYWwKICAgICMgdW5kZXJzaWRlIGRvZXMsIGFuZCBpdCBjb3N0cyBvbmUgZXh0cmEgc29saWQg",
+  "cmF0aGVyIHRoYW4gb25lIHBlciBnaWxsLgogICAgbG9uZ19ibGFkZSA9IGJsYWRlKEdJTExfUl9JTikKICAgIHNob3J0X2Js",
+  "YWRlID0gYmxhZGUoKEdJTExfUl9JTiArIEdJTExfUl9PVVQpIC8gMikKICAgIGZvciBrIGluIHJhbmdlKEdJTExfQ09VTlQp",
+  "OgogICAgICAgIGJsYWRlcy5hcHBlbmQoUm90KDAsIDAsIDM2MC4wICogayAvIEdJTExfQ09VTlQpICogbG9uZ19ibGFkZSkK",
+  "ICAgICAgICBibGFkZXMuYXBwZW5kKFJvdCgwLCAwLCAzNjAuMCAqIChrICsgMC41KSAvIEdJTExfQ09VTlQpICogc2hvcnRf",
+  "YmxhZGUpCgplbGlmIFVOREVSU0lERSA9PSAicG9yZXMiOgogICAgIyBCb2xldGVzIGhhdmUgdHViZXMsIG5vdCBnaWxscy4g",
+  "QXQgYSAwLjQgbW0gbm96emxlIGEgcmVhbCBwb3JlIGxheWVyIGlzCiAgICAjIGJlbG93IHRoZSByZXNvbHV0aW9uIG9mIHRo",
+  "ZSBwcmludGVyLCBzbyB0aGlzIGlzIGNvbmNlbnRyaWMgZ3Jvb3ZpbmcgdGhhdAogICAgIyByZWFkcyBhcyBvbmUgZnJvbSBh",
+  "cm0ncyBsZW5ndGguCiAgICBncm9vdmVzID0gW10KICAgIHJpbmdzID0gbWF4KDIsIGludCgoR0lMTF9SX09VVCAtIEdJTExf",
+  "Ul9JTikgLyAzLjApKQogICAgZGVwdGggPSBtaW4oR0lMTF9ERVBUSF9NTSAqIDAuNSwgMi41KQogICAgZm9yIGsgaW4gcmFu",
+  "Z2UocmluZ3MpOgogICAgICAgIHJhZGl1cyA9IEdJTExfUl9JTiArIChHSUxMX1JfT1VUIC0gR0lMTF9SX0lOKSAqIChrICsg",
+  "MC41KSAvIHJpbmdzCiAgICAgICAgeiA9IGludGVycF96KGlubmVyX2N1cnZlLCByYWRpdXMpCiAgICAgICAgd2l0aCBCdWls",
+  "ZExpbmUoUGxhbmUuWFopIGFzIGdyb292ZToKICAgICAgICAgICAgUG9seWxpbmUoCiAgICAgICAgICAgICAgICAocmFkaXVz",
+  "IC0gMC44NSwgeiArIDAuNSksIChyYWRpdXMsIHogLSBkZXB0aCksIChyYWRpdXMgKyAwLjg1LCB6ICsgMC41KSwgY2xvc2U9",
+  "VHJ1ZQogICAgICAgICAgICApCiAgICAgICAgZ3Jvb3Zlcy5hcHBlbmQocmV2b2x2ZShtYWtlX2ZhY2UoZ3Jvb3ZlLmxpbmUp",
+  "LCBheGlzPUF4aXMuWikpCiAgICBjYXAgPSBjYXAuY3V0KCpncm9vdmVzKQoKIyAtLS0gNS4gc3RlbTogY2lyY2xlcyBsb2Z0",
+  "ZWQgYWxvbmcgYSBsZWFuaW5nIGF4aXMgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tClNFQ1RJT05TID0gMTIKc2VjdGlv",
+  "bnMgPSBbXQpmb3IgaSBpbiByYW5nZShTRUNUSU9OUyArIDEpOgogICAgdCA9IGkgLyBTRUNUSU9OUwogICAgcmFkaXVzID0g",
+  "KAogICAgICAgIFNURU1fUgogICAgICAgICogKDEuMCAtIFNURU1fVEFQRVIgKiB0KQogICAgICAgICogKDEuMCArIFNURU1f",
+  "QlVMQiAqIG1hdGguZXhwKC0oKHQgLyAwLjE4KSAqKiAyKSkpCiAgICAgICAgKiAoMS4wICsgU1RFTV9GTEFSRSAqIHQqKjYp",
+  "CiAgICApCiAgICBzZWN0aW9ucy5hcHBlbmQoUGxhbmUob3JpZ2luPShTVEVNX0xFQU5fTU0gKiB0KioxLjcsIDAsIFNURU1f",
+  "SF9NTSAqIHQpKSAqIENpcmNsZShyYWRpdXMpKQpzdGVtID0gbG9mdChzZWN0aW9ucykKCiMgLS0tIDYuIHJpbmcgLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQpDQVBfWiA9IFNURU1f",
+  "SF9NTSAtIENBUF9IX01NICsgQ0FQX0ZMRVNIX01NICogMC43CmV4dHJhcyA9IFtdCmlmIFJJTkdfU1RZTEUgIT0gIm5vbmUi",
+  "OgogICAgIyBDbGFtcGVkIGJlbG93IHRoZSBjYXA6IGEgcmluZyBwbGFjZWQgaW5zaWRlIHRoZSBjYXAgaXMgYSByaW5nIG5v",
+  "Ym9keSBzZWVzLgogICAgdCA9IG1heCgwLjEyLCBtaW4oUklOR19QT1MsIChDQVBfWiAtIFJJTkdfV19NTSAqIDAuNikgLyBT",
+  "VEVNX0hfTU0pKQogICAgeiA9IFNURU1fSF9NTSAqIHQKICAgIHIwID0gU1RFTV9SICogKDEuMCAtIFNURU1fVEFQRVIgKiB0",
+  "KSAqIDAuODUKICAgICMgQSBwYXJhbGxlbG9ncmFtIHN3ZXB0IGFsb25nIHRoZSBkcm9vcCBkaXJlY3Rpb24sIG5vdCBhIHNw",
+  "bGluZSB0aHJvdWdoCiAgICAjIHRocmVlIHBvaW50czogYSBzcGxpbmUgcGluY2hlcyBzb21ld2hlcmUgYmV0d2VlbiB0aGVt",
+  "LCBhbmQgInNvbWV3aGVyZSIKICAgICMgdHVybmVkIG91dCB0byBiZSAwLjM1IG1tIC0tIHVuZGVyIGhhbGYgb2Ygd2hhdCB0",
+  "aGUgbm96emxlIGNhbiBleHRydWRlLgogICAgZHJvb3AgPSAwLjQ1IGlmIFJJTkdfU1RZTEUgPT0gInNraXJ0IiBlbHNlIDAu",
+  "MDgKICAgIGxlbmd0aCA9IG1hdGguaHlwb3QoMS4wLCBkcm9vcCkKICAgIGRyLCBkeiA9IDEuMCAvIGxlbmd0aCwgLWRyb29w",
+  "IC8gbGVuZ3RoCiAgICB0aGljayA9IG1heCgxLjQsIFJJTkdfV19NTSAqIDAuMjgpCiAgICBuciwgbnogPSAtZHogKiB0aGlj",
+  "ayAvIDIsIGRyICogdGhpY2sgLyAyCiAgICB0aXBfciwgdGlwX3ogPSByMCArIGRyICogUklOR19XX01NLCB6ICsgZHogKiBS",
+  "SU5HX1dfTU0KICAgIHVwcGVyID0gWyhyMCArIG5yLCB6ICsgbnopLCAodGlwX3IgKyBuciwgdGlwX3ogKyBueildCiAgICBs",
+  "b3dlciA9IFsocjAgLSBuciwgeiAtIG56KSwgKHRpcF9yIC0gbnIsIHRpcF96IC0gbnopXQogICAgZXh0cmFzLmFwcGVuZCgK",
+  "ICAgICAgICBQb3MoU1RFTV9MRUFOX01NICogdCoqMS43LCAwLCAwKQogICAgICAgICogcmV2b2x2ZShtZXJpZGlhbih1cHBl",
+  "ciwgbG93ZXIsIGN1cnZlZD1GYWxzZSksIGF4aXM9QXhpcy5aKQogICAgKQoKIyAtLS0gNy4gd2FydHM6IGZsYXR0ZW5lZCBz",
+  "cGhlcmVzIHNjYXR0ZXJlZCBvdmVyIHRoZSBjcm93biAtLS0tLS0tLS0tLS0tLS0tLS0tCndhcnRzID0gW10KZm9yIGsgaW4g",
+  "cmFuZ2UoV0FSVF9DT1VOVCk6CiAgICAjIHNxcnQgb2YgYSB1bmlmb3JtIGRyYXcgc3ByZWFkcyB0aGUgc2NhdHRlciBldmVu",
+  "bHkgcGVyIHVuaXQgYXJlYSByYXRoZXIKICAgICMgdGhhbiBjcm93ZGluZyB0aGUgYXBleC4KICAgIHMgPSBtYXRoLnNxcnQo",
+  "aGFzaDAxKGssIDEuMCkpICogMC44NQogICAgYW5nbGUgPSBUQVUgKiBoYXNoMDEoaywgMi4wKQogICAgciA9IG1heCgwLjcs",
+  "IFdBUlRfRF9NTSAvIDIgKiAoMC42ICsgMC44ICogaGFzaDAxKGssIDUuMCkpKQogICAgIyBBIHdhcnQgc3VuayBkZWVwZXIg",
+  "dGhhbiB0aGUgZmxlc2ggaXMgdGhpY2sgY29tZXMgb3V0IHRoZSBvdGhlciBzaWRlIGFzIGEKICAgICMgcGltcGxlIG9uIHRo",
+  "ZSBnaWxscy4gU2hyaW5rIGl0IGluc3RlYWQuCiAgICBpZiByICogKDEuMCAtIFdBUlRfRkxBVFRFTikgPiBmbGVzaF9hdChz",
+  "KSAqIDAuNToKICAgICAgICByID0gZmxlc2hfYXQocykgKiAwLjUgLyBtYXgoMS4wIC0gV0FSVF9GTEFUVEVOLCAwLjA1KQog",
+  "ICAgIyBTdW5rIHNwaGVyZXMgcmF0aGVyIHRoYW4gc2NhbGVkIG9uZXM6IGEgbm9uLXVuaWZvcm0gc2NhbGUgdHVybnMgYW4K",
+  "ICAgICMgYW5hbHl0aWMgc3BoZXJlIGludG8gYSBzcGxpbmUgc3VyZmFjZSBhbmQgcm91Z2hseSB0cmlwbGVzIHdoYXQgdGhl",
+  "IHVuaW9uCiAgICAjIGNvc3RzLCBmb3IgYSBidW1wIHRoYXQgcmVhZHMgdGhlIHNhbWUgb25jZSBpdCBpcyBoYWxmIGJ1cmll",
+  "ZC4KICAgIHdhcnRzLmFwcGVuZCgKICAgICAgICBQb3MoCiAgICAgICAgICAgIENBUF9SICogcyAqIG1hdGguY29zKGFuZ2xl",
+  "KSwKICAgICAgICAgICAgQ0FQX1IgKiBzICogbWF0aC5zaW4oYW5nbGUpLAogICAgICAgICAgICBjcm93bl96KHMpIC0gciAq",
+  "ICgxLjAgLSBXQVJUX0ZMQVRURU4pLAogICAgICAgICkKICAgICAgICAqIFNwaGVyZShyKQogICAgKQoKIyAtLS0gOC4gc2Vh",
+  "dCB0aGUgY2FwIG9uIHRoZSBzdGVtIGFuZCB1bmlvbiBpbiBvbmUgYm9vbGVhbiAtLS0tLS0tLS0tLS0tLS0tLS0tClBMQUNF",
+  "ID0gUG9zKFNURU1fTEVBTl9NTSwgMCwgQ0FQX1opICogUm90KDAsIENBUF9USUxUX0RFRywgMCkKcmVzdWx0ID0gc3RlbS5m",
+  "dXNlKCpbUExBQ0UgKiBwYXJ0IGZvciBwYXJ0IGluIFtjYXAsICpibGFkZXMsICp3YXJ0c11dLCAqZXh0cmFzKS5jbGVhbigp",
+  "Cg=="
+].join("");
+function templateSource() {
+  return atob(TEMPLATE_SOURCE_B64);
+}
+/* Bind the sliders into the script the same way the CLI does: rewrite the
+   module-level constant, leave every comment in place. */
+function boundScript(p) {
+  let out = templateSource();
+  const values = paramsOnly();
+  for (const key of Object.keys(values)) {
+    const name = key.toUpperCase();
+    const value = typeof values[key] === "string" ? JSON.stringify(values[key]) : values[key];
+    const pattern = new RegExp("^" + name + " = .*$", "m");
+    if (!pattern.test(out)) continue;
+    out = out.replace(pattern, name + " = " + value);
+  }
+  return [
+    "# " + SPECIES_LABEL[species] + ", seed " + p.seed + " -- built in Mushroom Studio.",
+    "#",
+    "# This is the nature_mushroom template with your slider positions bound in.",
+    "# It needs no repository and no server, only the CAD kernel:",
+    "#",
+    "#     pip install build123d",
+    "#     python mushroom.py",
+    "#",
+    "# It writes mushroom.step -- one solid with analytic faces, which opens in",
+    "# SolidWorks, Fusion or FreeCAD with its edges and faces intact -- and",
+    "# mushroom.stl beside it. Every dimension below is still a named constant:",
+    "# change one, run it again, and you have a different mushroom.",
+    "",
+    out.trimEnd(),
+    "",
+    'export_step(result, "mushroom.step")',
+    'export_stl(result, "mushroom.stl", tolerance=0.05, angular_tolerance=0.2)',
+    'print("wrote mushroom.step and mushroom.stl")',
+    ""
+  ].join("\n");
+}
+
+/* =================================================================
    3. The rules the template states as preconditions. Same numbers,
       checked here so you find out before the kernel does.
    ================================================================= */
@@ -1241,9 +1508,19 @@ if (window.claude && typeof window.claude.use === "function") {
 }
 function hosted() { return !!(window.claude && typeof window.claude.use === "function"); }
 function setExportNote() {
+  const stepLine =
+    "STEP is a solid model, not a mesh, and a browser has no CAD kernel to make one. " +
+    "So the STEP button hands you the script instead: the template with your slider " +
+    "positions bound in, which needs nothing but <code>pip install build123d</code> and " +
+    "writes a <code>.step</code> whose cap is a surface of revolution, whose warts are " +
+    "spheres and whose gills are planes &mdash; editable, not faceted.";
   document.getElementById("export-note").innerHTML = hosted()
-    ? "This page can only hand over file types the viewer allows, and <code>.stl</code> is not one of them &mdash; the mesh saves as <code>.txt</code>, so rename it to <code>.stl</code>. Opened from the repo (<code>web/studio.html</code>) the same button saves a binary <code>.stl</code> directly."
-    : "The exported mesh is this preview, triangulated. For the printable model &mdash; watertight, DFM-checked, with STEP and 3MF beside it &mdash; run the command above.";
+    ? stepLine + " Saves here as <code>.txt</code> (rename to <code>.py</code>), because a " +
+      "hosted page may only hand over the file types the viewer allows &mdash; the same " +
+      "reason the mesh saves as <code>.txt</code> rather than <code>.stl</code>. Opened " +
+      "from the repo (<code>web/studio.html</code>), both save under their own extensions."
+    : stepLine + " The STL is this preview triangulated; the command below builds the same " +
+      "model in the repo and validates it, with 3MF alongside.";
 }
 setExportNote();
 
@@ -1319,6 +1596,21 @@ document.getElementById("export-stl").addEventListener("click", async () => {
   }
   localSave(`${stamp()}.stl`, stlBinary(pos));
   toast(`${stamp()}.stl saved — ${(pos.length / 9).toLocaleString()} triangles, millimetres.`);
+});
+document.getElementById("export-step").addEventListener("click", async () => {
+  const script = boundScript(P);
+  if (downloads) {
+    try {
+      await downloads.save({filename: `${stamp()}-mushroom-py.txt`, data: script});
+      toast("Saved. Rename it to .py, then: pip install build123d && python mushroom.py");
+    } catch (err) {
+      toast((err && err.code) === "declined" ? "Save cancelled."
+        : "Saving is not available in this view. Use the command below instead.");
+    }
+    return;
+  }
+  localSave("mushroom.py", script);
+  toast("mushroom.py saved. Run it with build123d installed and it writes mushroom.step.");
 });
 document.getElementById("export-json").addEventListener("click", async () => {
   const payload = JSON.stringify({template: "nature_mushroom", species, params: paramsOnly()}, null, 2);

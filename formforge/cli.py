@@ -314,7 +314,13 @@ def _add_mushroom(subparsers) -> None:
         metavar="KEY=VALUE",
         help="pin a parameter across the whole population; repeatable",
     )
-    parser.add_argument("--out", default="out/mushrooms", help="directory for the STL files")
+    parser.add_argument("--out", default="out/mushrooms", help="directory for the exported files")
+    parser.add_argument(
+        "--formats",
+        default="stl,step,3mf",
+        help="which exports to keep per specimen: stl (print), step (edit in CAD), "
+        "3mf (print, declares its units). Default keeps all three.",
+    )
     parser.add_argument("--profile", default=DEFAULT_PROFILE_ID)
     parser.add_argument("--material", default="PLA")
     parser.add_argument(
@@ -385,7 +391,17 @@ def _cmd_mushroom(args) -> int:
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    built = _build_specimens(specimens, template, out_dir, args)
+    formats = [f.strip().lower() for f in args.formats.split(",") if f.strip()]
+    unknown = [f for f in formats if f not in {"stl", "step", "3mf"}]
+    if unknown:
+        print(_bad(f"unknown format(s): {', '.join(unknown)}. Known: stl, step, 3mf."),
+              file=sys.stderr)
+        return 1
+    if "stl" not in formats:
+        # The DFM verdict is measured on the mesh, so the STL is written either
+        # way; --formats decides what is kept beside it.
+        formats.insert(0, "stl")
+    built = _build_specimens(specimens, template, out_dir, args, formats)
 
     manifest = out_dir / "variations.json"
     manifest.write_text(
@@ -397,6 +413,7 @@ def _cmd_mushroom(args) -> int:
                 "species": args.species,
                 "variation": args.variation,
                 "pinned": pins,
+                "formats": formats,
                 "specimens": built,
             },
             indent=2,
@@ -409,12 +426,14 @@ def _cmd_mushroom(args) -> int:
     else:
         ok = sum(1 for b in built if b["status"] == "ok")
         print()
-        print(f"{ok}/{len(built)} built into {out_dir}")
+        print(f"{ok}/{len(built)} built into {out_dir} as {', '.join(formats)}")
         print(_dim(f"parameters and verdicts: {manifest}"))
     return 0 if all(b["status"] == "ok" for b in built) else 1
 
 
-def _build_specimens(specimens: list[dict], template, out_dir: Path, args) -> list[dict]:
+def _build_specimens(
+    specimens: list[dict], template, out_dir: Path, args, wanted_formats: list[str]
+) -> list[dict]:
     """Build each specimen in the sandbox and validate what came out."""
     import shutil  # noqa: PLC0415
 
@@ -455,8 +474,21 @@ def _build_specimens(specimens: list[dict], template, out_dir: Path, args) -> li
                 print(f"  [{_bad('!!')}] {name}: {execution.message}")
             continue
 
+        # The kernel exports STL, STEP and 3MF on every build; which of them
+        # survive is the caller's choice. STEP is the one that opens in CAD
+        # with its faces and edges intact, so it is kept by default.
         stl = out_dir / f"{name}.stl"
         shutil.copyfile(execution.artifacts["stl"], stl)
+        for fmt in wanted_formats:
+            source = execution.artifacts.get(fmt)
+            if fmt == "stl" or not source:
+                continue
+            copy = out_dir / f"{name}.{fmt}"
+            shutil.copyfile(source, copy)
+            record[fmt] = str(copy)
+        missing = [f for f in wanted_formats if f != "stl" and not execution.artifacts.get(f)]
+        for fmt in missing:
+            record[f"{fmt}_error"] = execution.artifacts.get(f"{fmt}_error", "not exported")
 
         report = validate(
             str(stl),

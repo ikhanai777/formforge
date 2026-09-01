@@ -277,3 +277,19 @@ class TestStudioPage:
             for key in ("minimum", "maximum", "default"):
                 assert page[key] == pytest.approx(float(spec[key])), f"{name}.{key}"
 
+    def test_the_page_carries_the_template_source_verbatim(self, template):
+        """The page hands out a runnable script, so it embeds the real source.
+
+        A stale copy would export a `.py` that builds last month's mushroom
+        while the viewport shows this month's -- and the STEP that came out of
+        it would not be the model anyone looked at.
+        """
+        import base64
+        import re
+
+        html = (Path(__file__).resolve().parents[1] / "web" / "studio.html").read_text()
+        block = re.search(r"const TEMPLATE_SOURCE_B64 = \[(.*?)\n\]\.join\(\"\"\);", html, re.S)
+        assert block, "the page no longer embeds the template source"
+        encoded = "".join(re.findall(r'"([A-Za-z0-9+/=]*)"', block.group(1)))
+        assert base64.b64decode(encoded).decode() == template.source
+

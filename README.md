@@ -122,19 +122,21 @@ formforge mushroom --params-only --count 12     # the sliders, no geometry
 formforge mushroom --species parasol --set cap_d_mm=90 --render
 ```
 
-Each run writes an STL per specimen plus a `variations.json` with the
-parameters, bounding box and DFM verdict of each, so a population is
-reproducible from its manifest. The same seed gives the same mushrooms on any
+Each run writes an STL, a STEP and a 3MF per specimen plus a `variations.json`
+with the parameters, bounding box and DFM verdict of each, so a population is
+reproducible from its manifest. The STEP is a real B-rep -- one solid whose cap
+is a surface of revolution and whose warts are spheres -- so it opens in
+SolidWorks or Fusion with its faces and edges intact. The same seed gives the same mushrooms on any
 machine, and member three of a population is member three whether you asked for
 four or forty.
 
 `web/studio.html` is the same definition with a face on it: open the file in a
 browser -- no server, no build step -- and every slider in the template is
 there, with the model rebuilding live, the printability rules checked as you
-move them, and a button that exports the mesh as STL. It also writes the exact
-`formforge build` command for whatever is on screen, which is how a shape you
-liked in the browser becomes the validated, watertight model with STEP and 3MF
-beside it.
+move them, and buttons that export the mesh as STL or hand you a script that builds the
+STEP. It also writes the exact `formforge build` command for whatever is on
+screen, which is how a shape you liked in the browser becomes the validated,
+watertight model with STEP and 3MF beside it.
 
 The definition follows Grasshopper's rules rather than its interface: sliders
 are the only free values, components are pure functions of their inputs wired

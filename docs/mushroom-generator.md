@@ -8,11 +8,20 @@ formforge mushroom --count 8 --seed 42 --species mixed --out out/mushrooms
 formforge mushroom --explain                       # print the definition graph
 formforge mushroom --params-only --count 12        # the sliders, no geometry
 formforge mushroom --species parasol --set cap_d_mm=90 --render
+formforge mushroom --count 4 --formats step        # CAD only, no meshes kept
 ```
 
-Every run writes the STL files plus a `variations.json` carrying the parameter
-set, the bounding box and the DFM verdict for each specimen, so a population is
-reproducible from its manifest alone. For a single specimen with the full
+Every run writes three files per specimen -- `.stl` to print, `.step` to edit,
+`.3mf` because it declares its own units -- plus a `variations.json` carrying
+the parameter set, the bounding box and the DFM verdict for each, so a
+population is reproducible from its manifest alone. `--formats` narrows that;
+the STL is always written because the DFM verdict is measured on the mesh.
+
+The STEP is the one that matters if the model is going anywhere near CAD. It is
+a B-rep, not a mesh: a default toadstool arrives in SolidWorks as **one solid
+with 198 faces** -- 169 planes for the gill blades, 15 spheres for the warts, 8
+cones, 3 surfaces of revolution and 3 B-splines for the cap and stem. You can
+select an edge and fillet it. For a single specimen with the full
 bundle -- 3MF with its units declared, STEP, the standalone `source.py`, the
 report and the previews -- hand any of those parameter sets to `formforge build
 nature_mushroom --set cap_d_mm=70 --set seed=42`.
@@ -30,8 +39,13 @@ a browser and you have the definition with a face on it.
   the Python generator applies
 * the template's preconditions checked as you move -- "it topples: the cap leans
   past its own footprint", with the fix, before the kernel ever sees it
-* **Export STL** for the preview mesh, and the exact `formforge build` command
+* **Download STL** for the preview mesh, and the exact `formforge build` command
   for the model on screen
+* **STEP script** -- a `.py` carrying the template's own source with your slider
+  positions bound in. `pip install build123d && python mushroom.py` writes a
+  `mushroom.step` with the same analytic faces the CLI produces. STEP is a solid
+  model and a browser has no kernel to make one, so the page hands over the
+  thing that does rather than a faceted mesh with a `.step` extension
 
 The page carries a port of the geometry, not a call to it: `hash01` is the same
 expression, so the wart scatter and the lobe irregularity you see are the ones
@@ -40,9 +54,11 @@ union, so the export is a set of closed shells that a slicer unions at slice
 time rather than one B-rep solid, and there is no STEP, no 3MF and no DFM
 report. That is what the command is for.
 
-A test (`tests/test_generators.py::TestStudioPage`) parses the page and asserts
-its parameters, ranges and defaults are the template's own, so the two cannot
-drift apart quietly.
+Two tests in `tests/test_generators.py::TestStudioPage` keep the page honest:
+one asserts its parameters, ranges and defaults are the template's own, the
+other that the source it embeds is the template's source byte for byte -- a
+stale copy would export a script that builds a different mushroom from the one
+on screen.
 
 ## Where Grasshopper's ideas land
 
