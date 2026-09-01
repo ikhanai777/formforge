@@ -128,6 +128,14 @@ reproducible from its manifest. The same seed gives the same mushrooms on any
 machine, and member three of a population is member three whether you asked for
 four or forty.
 
+`web/studio.html` is the same definition with a face on it: open the file in a
+browser -- no server, no build step -- and every slider in the template is
+there, with the model rebuilding live, the printability rules checked as you
+move them, and a button that exports the mesh as STL. It also writes the exact
+`formforge build` command for whatever is on screen, which is how a shape you
+liked in the browser becomes the validated, watertight model with STEP and 3MF
+beside it.
+
 The definition follows Grasshopper's rules rather than its interface: sliders
 are the only free values, components are pure functions of their inputs wired
 into a DAG, and a solve is a deterministic walk of it. What that buys is a
@@ -291,6 +299,8 @@ formforge/
   eval/           the template harness and the benchmark
   generators/     dataflow definitions that decide where the sliders go
   templates/      13 verified parametric definitions
+web/
+  studio.html     the mushroom definition as a browser front end, no build step
 ```
 
 `docs/architecture.md` covers the parts that need more than a paragraph:

@@ -17,6 +17,33 @@ bundle -- 3MF with its units declared, STEP, the standalone `source.py`, the
 report and the previews -- hand any of those parameter sets to `formforge build
 nature_mushroom --set cap_d_mm=70 --set seed=42`.
 
+## The front end
+
+`web/studio.html` is a single file with no build step and no server: open it in
+a browser and you have the definition with a face on it.
+
+* every parameter in the template, grouped by the part of the mushroom it
+  belongs to, stopping exactly where the schema stops
+* the model rebuilt live as you drag, in about 15,000 triangles
+* the seven species as chips, each drawn from its own preset's silhouette, and
+  a **Shuffle** that applies the same jitter, proportion and feasibility rules
+  the Python generator applies
+* the template's preconditions checked as you move -- "it topples: the cap leans
+  past its own footprint", with the fix, before the kernel ever sees it
+* **Export STL** for the preview mesh, and the exact `formforge build` command
+  for the model on screen
+
+The page carries a port of the geometry, not a call to it: `hash01` is the same
+expression, so the wart scatter and the lobe irregularity you see are the ones
+the kernel will build for that seed. What the browser cannot do is the boolean
+union, so the export is a set of closed shells that a slicer unions at slice
+time rather than one B-rep solid, and there is no STEP, no 3MF and no DFM
+report. That is what the command is for.
+
+A test (`tests/test_generators.py::TestStudioPage`) parses the page and asserts
+its parameters, ranges and defaults are the template's own, so the two cannot
+drift apart quietly.
+
 ## Where Grasshopper's ideas land
 
 Grasshopper is not a scripting language with a picture on top. What makes a

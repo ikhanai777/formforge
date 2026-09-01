@@ -1,0 +1,1370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mushroom Studio</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* ---------------------------------------------------------------
+   Mushroom Studio -- front end for the nature_mushroom definition.
+   Palette: humus and spore print. Chestnut is the only accent; moss
+   carries "this will build", rust carries "this will not".
+   --------------------------------------------------------------- */
+:root {
+  --paper:    #EBEDE6;
+  --surface:  #F7F8F4;
+  --sunken:   #E1E4DA;
+  --line:     #D2D7C9;
+  --ink:      #171D18;
+  --muted:    #667062;
+  --accent:   #8A5326;
+  --accent-soft: #F0E3D5;
+  --moss:     #4E7040;
+  --moss-soft: #E2EBDC;
+  --rust:     #A8402C;
+  --rust-soft: #F5E0DB;
+  --stage-a:  #E6E9E0;
+  --stage-b:  #D6DBCC;
+  --shadow:   0 1px 2px rgba(23, 29, 24, .06), 0 8px 24px rgba(23, 29, 24, .05);
+  --radius:   10px;
+  --mesh-light: #C9C6BE;
+  --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:   #14170F;
+    --surface: #1C201A;
+    --sunken:  #101309;
+    --line:    #2F3629;
+    --ink:     #E8EBE1;
+    --muted:   #96A08F;
+    --accent:  #CE9155;
+    --accent-soft: #33251A;
+    --moss:    #8FB679;
+    --moss-soft: #202B1C;
+    --rust:    #E08267;
+    --rust-soft: #33201B;
+    --stage-a: #1E2219;
+    --stage-b: #10130C;
+    --shadow:  0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+    --mesh-light: #B9B4A8;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper:   #14170F;
+  --surface: #1C201A;
+  --sunken:  #101309;
+  --line:    #2F3629;
+  --ink:     #E8EBE1;
+  --muted:   #96A08F;
+  --accent:  #CE9155;
+  --accent-soft: #33251A;
+  --moss:    #8FB679;
+  --moss-soft: #202B1C;
+  --rust:    #E08267;
+  --rust-soft: #33201B;
+  --stage-a: #1E2219;
+  --stage-b: #10130C;
+  --shadow:  0 1px 2px rgba(0,0,0,.4), 0 10px 30px rgba(0,0,0,.35);
+  --mesh-light: #B9B4A8;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* ---- shell ---------------------------------------------------- */
+.shell {
+  min-height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  max-width: 1500px;
+  margin: 0 auto;
+  padding: 20px clamp(14px, 3vw, 28px) 24px;
+  gap: 16px;
+}
+.masthead {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+}
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(26px, 3.4vw, 38px);
+  letter-spacing: -0.015em;
+  margin: 0;
+  text-wrap: balance;
+}
+.wordmark span { color: var(--accent); }
+.tagline {
+  margin: 4px 0 0;
+  color: var(--muted);
+  max-width: 62ch;
+}
+.pipeline {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: .04em;
+  color: var(--muted);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.pipeline b { color: var(--accent); font-weight: 500; }
+.pipeline i { font-style: normal; opacity: .5; }
+
+/* ---- layout --------------------------------------------------- */
+.studio {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 372px;
+  gap: 16px;
+  align-items: start;
+}
+@media (max-width: 980px) {
+  .studio { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ---- stage ---------------------------------------------------- */
+.stage {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(120% 90% at 50% 8%, var(--stage-a) 0%, var(--stage-b) 100%);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  min-height: 460px;
+  height: min(78vh, 760px);
+  display: grid;
+}
+@media (max-width: 980px) { .stage { height: 56vh; min-height: 380px; } }
+#view { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+#view.dragging { cursor: grabbing; }
+
+.readout {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 11px;
+  backdrop-filter: blur(6px);
+  font-variant-numeric: tabular-nums;
+}
+.readout b { color: var(--ink); font-weight: 500; }
+.hint {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: .02em;
+}
+
+/* ---- status --------------------------------------------------- */
+.status {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 12px 14px;
+  display: grid;
+  gap: 8px;
+  box-shadow: var(--shadow);
+}
+.status-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--moss); flex: none; }
+.status[data-state="blocked"] .dot { background: var(--rust); }
+.status-note { color: var(--muted); font-size: 13px; margin: 0; }
+.status ul { margin: 0; padding-left: 18px; display: grid; gap: 5px; }
+.status li { color: var(--rust); font-size: 13px; }
+.status li em { font-style: normal; color: var(--muted); }
+
+/* ---- controls ------------------------------------------------- */
+.controls {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+@media (min-width: 981px) {
+  .controls { max-height: min(78vh, 760px); overflow-y: auto; padding-right: 4px; }
+}
+.panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 13px 14px 15px;
+}
+.panel > h2 {
+  margin: 0 0 10px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.panel > h2 span { text-transform: none; letter-spacing: 0; font-size: 11px; }
+
+/* species chips */
+.species {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 7px;
+}
+.chip {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: 8px;
+  padding: 7px 6px 6px;
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease, transform .12s ease;
+}
+.chip:hover { border-color: var(--accent); transform: translateY(-1px); }
+.chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.chip svg { display: block; }
+.chip svg path { fill: var(--muted); }
+.chip[aria-pressed="true"] svg path { fill: var(--accent); }
+.chip small {
+  font-size: 10.5px;
+  letter-spacing: .02em;
+  color: var(--muted);
+  text-align: center;
+}
+.chip[aria-pressed="true"] small { color: var(--accent); font-weight: 600; }
+
+/* sliders */
+.field { display: grid; gap: 3px; padding: 6px 0; border-top: 1px solid var(--line); }
+.field:first-of-type { border-top: 0; }
+.field-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+.field label { font-size: 12.5px; }
+.field output {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.field p { margin: 1px 0 3px; font-size: 11.5px; color: var(--muted); }
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  background: transparent;
+  margin: 0;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px; border-radius: 2px; background: var(--line);
+}
+input[type="range"]::-moz-range-track {
+  height: 3px; border-radius: 2px; background: var(--line);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--surface);
+  margin-top: -5.5px; cursor: grab;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--accent); border: 2px solid var(--surface); cursor: grab;
+}
+.segmented { display: flex; gap: 5px; }
+.segmented button {
+  flex: 1;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--muted);
+  border-radius: 7px;
+  padding: 5px 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color .12s ease, color .12s ease, background .12s ease;
+}
+.segmented button:hover { border-color: var(--accent); }
+.segmented button[aria-pressed="true"] {
+  border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600;
+}
+
+/* seed row */
+.seedrow { display: flex; gap: 8px; align-items: center; }
+.seedrow input[type="number"] {
+  width: 92px;
+  font-family: var(--font-mono);
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+}
+.btn {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: border-color .12s ease, background .12s ease;
+}
+.btn:hover { border-color: var(--accent); }
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #FFF8F0;
+  font-weight: 600;
+}
+:root[data-theme="dark"] .btn-primary { color: #1B1206; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .btn-primary { color: #1B1206; }
+}
+.btn-primary:hover { filter: brightness(1.06); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* command block */
+.command {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 10px;
+  color: var(--ink);
+  overflow-x: auto;
+  white-space: pre;
+  margin: 0 0 9px;
+}
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--ink);
+  color: var(--paper);
+  padding: 9px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .18s ease, transform .18s ease;
+  z-index: 20;
+  max-width: min(90vw, 520px);
+  text-align: center;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.footnote { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+.footnote code { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink); }
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="masthead">
+    <div>
+      <h1 class="wordmark">Mushroom <span>Studio</span></h1>
+      <p class="tagline">Every slider below is a parameter of the <code>nature_mushroom</code> template. Move them, watch the model rebuild, then take the exact command that builds it for real &mdash; validated, watertight, with STEP and 3MF alongside.</p>
+    </div>
+    <div class="pipeline" id="pipeline"></div>
+  </header>
+
+  <div class="studio">
+    <div style="display:grid; gap:14px; min-width:0;">
+      <section class="stage">
+        <canvas id="view"></canvas>
+        <div class="readout" id="readout"></div>
+        <div class="hint">drag to orbit &middot; scroll to zoom</div>
+      </section>
+      <section class="status" id="status" data-state="ok">
+        <div class="status-head"><span class="dot"></span><span id="status-title">Ready to build</span></div>
+        <p class="status-note" id="status-note"></p>
+        <ul id="status-list" hidden></ul>
+      </section>
+    </div>
+
+    <aside class="controls">
+      <section class="panel">
+        <h2>Species <span id="species-name"></span></h2>
+        <div class="species" id="species"></div>
+        <div class="seedrow" style="margin-top:11px;">
+          <label for="seed" style="font-size:12.5px;">Seed</label>
+          <input type="number" id="seed" min="0" max="9999" step="1" value="7">
+          <button class="btn" id="shuffle" type="button">Shuffle</button>
+          <button class="btn" id="reset" type="button">Reset</button>
+        </div>
+        <p class="footnote">The seed places the warts and the irregularity in each lobe. The same seed rebuilds the same mushroom here, in the CAD kernel, and on anyone else&rsquo;s machine.</p>
+      </section>
+
+      <section class="panel"><h2>Cap</h2><div id="group-cap"></div></section>
+      <section class="panel"><h2>Underside</h2><div id="group-underside"></div></section>
+      <section class="panel"><h2>Stem</h2><div id="group-stem"></div></section>
+      <section class="panel"><h2>Veil ring</h2><div id="group-ring"></div></section>
+      <section class="panel"><h2>Warts</h2><div id="group-warts"></div></section>
+
+      <section class="panel">
+        <h2>Take it away</h2>
+        <pre class="command" id="command"></pre>
+        <div class="btnrow">
+          <button class="btn btn-primary" id="export-stl" type="button">Export STL</button>
+          <button class="btn" id="copy-cmd" type="button">Copy command</button>
+          <button class="btn" id="export-json" type="button">Parameters .json</button>
+        </div>
+        <p class="footnote" id="export-note"></p>
+      </section>
+    </aside>
+  </div>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+/* =================================================================
+   1. The schema. Ranges are the template's own -- a slider that goes
+      past them is a model the geometry has never been swept across.
+   ================================================================= */
+const SCHEMA = [
+  {k:"cap_d_mm",     g:"cap", label:"Cap diameter",   min:30,   max:120, step:1,    v:62,   unit:"mm",
+   note:"The circle the margin is cut from."},
+  {k:"cap_h_mm",     g:"cap", label:"Cap height",     min:6,    max:60,  step:1,    v:26,   unit:"mm"},
+  {k:"cap_fullness", g:"cap", label:"Fullness",       min:1,    max:6,   step:0.1,  v:2.2,  unit:"",
+   note:"Low is conical, high is flat with a steep skirt."},
+  {k:"cap_shoulder", g:"cap", label:"Shoulder",       min:0.3,  max:1.2, step:0.02, v:0.62, unit:"",
+   note:"Low rounds the shoulder over. 2.0 / 0.5 is a hemisphere; 1.0 / 1.0 a cone."},
+  {k:"cap_umbo_mm",  g:"cap", label:"Umbo",           min:0,    max:8,   step:0.5,  v:2.5,  unit:"mm",
+   note:"The central boss. Solid, so it never thins the flesh."},
+  {k:"cap_dish_mm",  g:"cap", label:"Dish",           min:0,    max:25,  step:1,    v:0,    unit:"mm",
+   note:"Drops the centre below the rim. This is what makes a funnel."},
+  {k:"cap_flesh_mm", g:"cap", label:"Flesh",          min:2.5,  max:12,  step:0.5,  v:6,    unit:"mm"},
+  {k:"cap_margin_mm",g:"cap", label:"Margin",         min:0.8,  max:3,   step:0.1,  v:1.6,  unit:"mm"},
+  {k:"cap_lobes",    g:"cap", label:"Lobes",          min:0,    max:9,   step:1,    v:5,    unit:""},
+  {k:"cap_wave_mm",  g:"cap", label:"Wave depth",     min:0,    max:6,   step:0.2,  v:2,    unit:"mm",
+   note:"How deep each lobe bites into the margin."},
+  {k:"cap_tilt_deg", g:"cap", label:"Cap tilt",       min:0,    max:10,  step:1,    v:4,    unit:"°"},
+
+  {k:"underside",    g:"underside", label:"Underside", choices:["gills","pores","smooth"], v:"gills",
+   note:"Pores stand in for a bolete's tube layer as concentric grooving — a real pore is smaller than a 0.4 mm nozzle can print."},
+  {k:"gill_count",   g:"underside", label:"Gills",     min:10, max:18,  step:1,    v:16,   unit:"",
+   note:"Half-length lamellulae are added between them, so the margin carries twice this."},
+  {k:"gill_t_mm",    g:"underside", label:"Blade thickness", min:0.8, max:2.2, step:0.1, v:1.3, unit:"mm",
+   note:"1.3 mm is three perimeters at a 0.4 mm nozzle."},
+  {k:"gill_depth_mm",g:"underside", label:"Gill depth", min:2,  max:9,  step:0.5,  v:5,    unit:"mm"},
+
+  {k:"stem_h_mm",    g:"stem", label:"Stem height",   min:20,  max:110, step:1,    v:58,   unit:"mm"},
+  {k:"stem_d_mm",    g:"stem", label:"Stem diameter", min:6,   max:30,  step:0.5,  v:14,   unit:"mm"},
+  {k:"stem_taper",   g:"stem", label:"Taper",         min:-0.25, max:0.5, step:0.01, v:0.2, unit:"",
+   note:"Negative widens upward, as a bolete does."},
+  {k:"stem_bulb",    g:"stem", label:"Basal bulb",    min:0,   max:1.2, step:0.05, v:0.5,  unit:"",
+   note:"Also the model's footprint on the plate."},
+  {k:"stem_lean_mm", g:"stem", label:"Lean",          min:0,   max:15,  step:0.5,  v:6,    unit:"mm",
+   note:"Nothing in a forest grows plumb."},
+  {k:"stem_flare",   g:"stem", label:"Apex flare",    min:0,   max:0.6, step:0.05, v:0.25, unit:""},
+
+  {k:"ring_style",   g:"ring", label:"Ring",          choices:["none","skirt","band"], v:"skirt"},
+  {k:"ring_pos",     g:"ring", label:"Height up stem",min:0.35, max:0.9, step:0.02, v:0.72, unit:"",
+   note:"Clamped down automatically so the ring always sits clear of the cap."},
+  {k:"ring_w_mm",    g:"ring", label:"Ring width",    min:2,   max:10,  step:0.5,  v:5,    unit:"mm"},
+
+  {k:"wart_count",   g:"warts", label:"Warts",        min:0,   max:26,  step:1,    v:20,   unit:""},
+  {k:"wart_d_mm",    g:"warts", label:"Wart size",    min:1.5, max:7,   step:0.2,  v:4.4,  unit:"mm"},
+  {k:"wart_flatten", g:"warts", label:"Relief",       min:0.15, max:0.9, step:0.05, v:0.45, unit:"",
+   note:"How much of each sphere is left proud of the cap."}
+];
+
+/* Seven species: the same definition, seven sets of slider positions. */
+const SPECIES = {
+  toadstool: {cap_d_mm:62, cap_h_mm:26, cap_fullness:2.2, cap_shoulder:0.62, cap_umbo_mm:2.5,
+    cap_flesh_mm:6, cap_lobes:5, cap_wave_mm:2, underside:"gills", gill_count:16,
+    stem_h_mm:58, stem_d_mm:14, stem_taper:0.2, stem_bulb:0.5, stem_lean_mm:6,
+    ring_style:"skirt", wart_count:15, wart_d_mm:4.2},
+  fly_agaric: {cap_d_mm:66, cap_h_mm:30, cap_fullness:2.4, cap_shoulder:0.55, cap_umbo_mm:0,
+    cap_flesh_mm:6.5, cap_lobes:4, cap_wave_mm:1.5, underside:"gills", gill_count:16,
+    stem_h_mm:72, stem_d_mm:13, stem_taper:0.22, stem_bulb:0.75, stem_lean_mm:5,
+    ring_style:"skirt", wart_count:22, wart_d_mm:4.5, wart_flatten:0.5},
+  parasol: {cap_d_mm:84, cap_h_mm:18, cap_fullness:3.6, cap_shoulder:0.5, cap_umbo_mm:6,
+    cap_flesh_mm:4.5, cap_lobes:7, cap_wave_mm:2.5, underside:"gills", gill_count:12,
+    stem_h_mm:92, stem_d_mm:10, stem_taper:0.15, stem_bulb:0.9, stem_lean_mm:7,
+    ring_style:"band", ring_w_mm:4, wart_count:19, wart_d_mm:5.7, wart_flatten:0.3},
+  bolete: {cap_d_mm:74, cap_h_mm:30, cap_fullness:3, cap_shoulder:0.42, cap_umbo_mm:0,
+    cap_flesh_mm:9, cap_lobes:3, cap_wave_mm:1.2, underside:"pores", gill_depth_mm:5,
+    stem_h_mm:48, stem_d_mm:26, stem_taper:-0.15, stem_bulb:0.35, stem_lean_mm:3,
+    ring_style:"none", wart_count:0},
+  chanterelle: {cap_d_mm:52, cap_h_mm:15, cap_fullness:1.6, cap_shoulder:0.8, cap_dish_mm:11,
+    cap_umbo_mm:0, cap_flesh_mm:5, cap_lobes:6, cap_wave_mm:5, cap_tilt_deg:7,
+    underside:"gills", gill_t_mm:1.8, gill_count:13, gill_depth_mm:3.5,
+    stem_h_mm:42, stem_d_mm:16, stem_taper:0.35, stem_bulb:0.15, stem_lean_mm:5,
+    ring_style:"none", wart_count:0},
+  ink_cap: {cap_d_mm:34, cap_h_mm:34, cap_fullness:1.3, cap_shoulder:0.95, cap_umbo_mm:0,
+    cap_flesh_mm:3.5, cap_margin_mm:1, cap_lobes:8, cap_wave_mm:1.5, underside:"gills",
+    gill_t_mm:0.9, gill_count:15, gill_depth_mm:2.5,
+    stem_h_mm:86, stem_d_mm:8, stem_taper:0.1, stem_bulb:0.6, stem_lean_mm:3,
+    ring_style:"none", wart_count:0},
+  button: {cap_d_mm:40, cap_h_mm:22, cap_fullness:2, cap_shoulder:0.5, cap_umbo_mm:1,
+    cap_flesh_mm:7, cap_lobes:0, cap_wave_mm:0, underside:"gills", gill_count:14,
+    stem_h_mm:34, stem_d_mm:16, stem_taper:0.12, stem_bulb:0.25, stem_lean_mm:2,
+    ring_style:"band", ring_w_mm:3, wart_count:0}
+};
+const SPECIES_LABEL = {
+  toadstool:"Toadstool", fly_agaric:"Fly agaric", parasol:"Parasol", bolete:"Bolete",
+  chanterelle:"Chanterelle", ink_cap:"Ink cap", button:"Button"
+};
+/* How far each slider may wander from its species when you shuffle. */
+const JITTER = {
+  cap_d_mm:["rel",0.16], cap_h_mm:["rel",0.22], cap_fullness:["rel",0.2], cap_shoulder:["rel",0.15],
+  cap_dish_mm:["rel",0.4], cap_umbo_mm:["abs",1.6], cap_flesh_mm:["rel",0.18],
+  cap_margin_mm:["rel",0.15], cap_lobes:["abs",2], cap_wave_mm:["rel",0.45],
+  cap_tilt_deg:["abs",3], gill_t_mm:["rel",0.15], stem_taper:["abs",0.08],
+  stem_bulb:["abs",0.22], stem_lean_mm:["rel",0.7], stem_flare:["abs",0.15],
+  ring_pos:["abs",0.07], wart_flatten:["abs",0.12]
+};
+
+const DEFAULTS = {};
+SCHEMA.forEach(f => DEFAULTS[f.k] = f.v);
+let P = Object.assign({}, DEFAULTS, SPECIES.toadstool, {seed: 7});
+let species = "toadstool";
+
+/* =================================================================
+   2. The geometry, ported from the template's build123d source.
+      hash01 is the same expression, so the scatter you see here is
+      the scatter the kernel builds.
+   ================================================================= */
+const TAU = Math.PI * 2;
+function hash01(i, salt, seed) {
+  const x = Math.sin((i + 1) * 12.9898 + (seed + 1) * 78.233 + salt * 37.719) * 43758.5453;
+  return x - Math.floor(x);
+}
+function domeZ(s, p) {
+  const t = Math.min(1, Math.max(0, s));
+  return p.cap_h_mm * Math.pow(1 - Math.pow(t, p.cap_fullness), p.cap_shoulder)
+       - p.cap_dish_mm * (1 - t * t);
+}
+function crownZ(s, p) {
+  return domeZ(s, p) + p.cap_umbo_mm * Math.exp(-Math.pow(s / 0.24, 2));
+}
+function fleshAt(s, p) {
+  return p.cap_flesh_mm * Math.pow(1 - Math.min(1, s), 0.7) + p.cap_margin_mm;
+}
+function resample(points, count) {
+  const run = [0];
+  for (let i = 1; i < points.length; i++) {
+    run.push(run[i - 1] + Math.hypot(points[i][0] - points[i-1][0], points[i][1] - points[i-1][1]));
+  }
+  const total = run[run.length - 1] || 1;
+  const out = [];
+  let j = 0;
+  for (let k = 0; k <= count; k++) {
+    const target = total * k / count;
+    while (j < run.length - 2 && run[j + 1] < target) j++;
+    const span = run[j + 1] - run[j];
+    const f = span <= 0 ? 0 : (target - run[j]) / span;
+    out.push([
+      points[j][0] + (points[j+1][0] - points[j][0]) * f,
+      points[j][1] + (points[j+1][1] - points[j][1]) * f
+    ]);
+  }
+  return out;
+}
+function interpZ(points, x) {
+  for (let i = 0; i < points.length - 1; i++) {
+    const [x0, z0] = points[i], [x1, z1] = points[i+1];
+    if (x0 <= x && x <= x1 && x1 > x0) return z0 + (z1 - z0) * (x - x0) / (x1 - x0);
+  }
+  return x > points[points.length-1][0] ? points[points.length-1][1] : points[0][1];
+}
+
+/* The cap's meridian: crown curve out to the rim, then the underside
+   offset along the dome's own normal back to the axis. */
+function capProfile(p) {
+  const R = p.cap_d_mm / 2, STEPS = 30, DENSE = 260;
+  const dome = [], crown = [];
+  for (let i = 0; i <= DENSE; i++) {
+    const s = i / DENSE;
+    dome.push([R * s, domeZ(s, p)]);
+    crown.push([R * s, crownZ(s, p)]);
+  }
+  const top = resample(crown, STEPS);
+  top[0] = [0, crown[0][1]];
+  top[top.length - 1] = crown[crown.length - 1];
+
+  const offsets = [];
+  const eps = R * 1e-3;
+  for (const [x] of resample(dome, STEPS)) {
+    const s = Math.min(1, x / R);
+    const dz = domeZ(Math.min(1, (x + eps) / R), p) - domeZ(Math.max(0, (x - eps) / R), p);
+    const len = Math.hypot(2 * eps, dz) || 1;
+    const t = fleshAt(s, p);
+    offsets.push([x + dz / len * t, domeZ(s, p) - 2 * eps / len * t]);
+  }
+  const inner = [];
+  for (const pt of offsets) {
+    if (pt[0] <= 0) continue;
+    if (inner.length && pt[0] <= inner[inner.length-1][0] + R * 1e-3) continue;
+    inner.push(pt);
+  }
+  if (inner.length < 2) inner.push([R * 0.5, domeZ(0.5, p) - fleshAt(0.5, p)]);
+  const [x0, z0] = inner[0], [x1, z1] = inner[1];
+  const axisZ = z0 - (z1 - z0) * x0 / Math.max(x1 - x0, 1e-6);
+  inner.unshift([0, Math.min(axisZ, domeZ(0, p) - Math.max(0.5, fleshAt(0, p) * 0.35))]);
+  return {top, inner, R};
+}
+
+function gillZone(p, prof) {
+  const stemR = p.stem_d_mm / 2;
+  const rIn = stemR * 1.25 + 1.5;
+  const rOut = Math.min(p.cap_d_mm / 2 - p.cap_margin_mm * 1.5 - p.cap_wave_mm,
+                        prof.inner[prof.inner.length - 1][0] - 1);
+  const on = p.underside === "gills" && rOut > rIn + 4;
+  const zIn = interpZ(prof.inner, rIn), zOut = interpZ(prof.inner, rOut);
+  const roof = r => zIn + (zOut - zIn) * (r - rIn) / Math.max(rOut - rIn, 1e-6);
+  return {rIn, rOut, on, roof};
+}
+
+/* --- mesh plumbing ------------------------------------------------ */
+function Builder() {
+  this.pos = [];
+}
+/* Signed volume of everything a builder holds: negative means the shell
+   is wound inside out, which a slicer reads as a hole rather than a
+   solid. Each part is checked and flipped as it is merged. */
+Builder.prototype.volume = function () {
+  let v = 0;
+  const p = this.pos;
+  for (let i = 0; i < p.length; i += 9) {
+    v += (p[i] * (p[i+4] * p[i+8] - p[i+5] * p[i+7])
+        - p[i+1] * (p[i+3] * p[i+8] - p[i+5] * p[i+6])
+        + p[i+2] * (p[i+3] * p[i+7] - p[i+4] * p[i+6])) / 6;
+  }
+  return v;
+};
+Builder.prototype.merge = function (other) {
+  const p = other.pos;
+  if (other.volume() < 0) {
+    for (let i = 0; i < p.length; i += 9) {
+      this.pos.push(p[i], p[i+1], p[i+2], p[i+6], p[i+7], p[i+8], p[i+3], p[i+4], p[i+5]);
+    }
+  } else {
+    for (let i = 0; i < p.length; i++) this.pos.push(p[i]);
+  }
+  return other.volume();
+};
+Builder.prototype.tri = function (a, b, c) {
+  this.pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+};
+Builder.prototype.quad = function (a, b, c, d) { this.tri(a, b, c); this.tri(a, c, d); };
+
+/* Revolve a meridian polyline, clamping each vertex to the trim cone
+   that cuts the lobes -- the same cone the template intersects with. */
+function revolve(build, profile, segments, p, xform) {
+  const lobes = Math.round(p.cap_lobes), wave = p.cap_wave_mm;
+  const trim = wave > 0 && lobes > 0;
+  const TRIM = Math.max(0.6, p.cap_margin_mm * 0.4);
+  const RISE = 1 / Math.tan(32 * Math.PI / 180);
+  const R = p.cap_d_mm / 2;
+  const ring = [];
+  for (let j = 0; j < segments; j++) {
+    const a = TAU * j / segments;
+    let limit = Infinity;
+    if (trim) {
+      const lobe = 0.5 - 0.5 * Math.cos(lobes * a);
+      const depth = wave * (0.7 + 0.6 * hash01(Math.floor(lobes * a / TAU), 3, p.seed));
+      limit = R - TRIM - depth * lobe;
+    }
+    ring.push([Math.cos(a), Math.sin(a), limit]);
+  }
+  const grid = profile.map(([r, z]) =>
+    ring.map(([ca, sa, limit]) => {
+      const rr = trim ? Math.min(r, limit + RISE * z) : r;
+      return xform([rr * ca, rr * sa, z]);
+    }));
+  for (let i = 0; i < profile.length - 1; i++) {
+    for (let j = 0; j < segments; j++) {
+      const k = (j + 1) % segments;
+      const a = grid[i][j], b = grid[i][k], c = grid[i+1][k], d = grid[i+1][j];
+      if (profile[i][0] < 1e-6) { build.tri(a, c, d); }
+      else if (profile[i+1][0] < 1e-6) { build.tri(a, b, c); }
+      else build.quad(a, b, c, d);
+    }
+  }
+}
+
+function prism(build, poly, half, xform) {
+  const front = poly.map(([r, z]) => xform([r, half, z]));
+  const back = poly.map(([r, z]) => xform([r, -half, z]));
+  for (let i = 1; i < poly.length - 1; i++) {
+    build.tri(front[0], front[i], front[i+1]);
+    build.tri(back[0], back[i+1], back[i]);
+  }
+  for (let i = 0; i < poly.length; i++) {
+    const j = (i + 1) % poly.length;
+    build.quad(front[i], back[i], back[j], front[j]);
+  }
+}
+
+function sphere(build, cx, cy, cz, r, rings, segs) {
+  const pt = (i, j) => {
+    const phi = Math.PI * i / rings, th = TAU * j / segs;
+    return [cx + r * Math.sin(phi) * Math.cos(th), cy + r * Math.sin(phi) * Math.sin(th), cz + r * Math.cos(phi)];
+  };
+  for (let i = 0; i < rings; i++) {
+    for (let j = 0; j < segs; j++) {
+      const a = pt(i, j), b = pt(i, j+1), c = pt(i+1, j+1), d = pt(i+1, j);
+      if (i === 0) build.tri(a, c, d);
+      else if (i === rings - 1) build.tri(a, b, c);
+      else build.quad(a, b, c, d);
+    }
+  }
+}
+
+/* --- the model ----------------------------------------------------- */
+function buildMesh(p, quality) {
+  const seg = quality === "export" ? 96 : 72;
+  const build = new Builder();
+  let material_mm3 = 0;
+  const part = () => new Builder();
+  const prof = capProfile(p);
+  const zone = gillZone(p, prof);
+  const capZ = p.stem_h_mm - p.cap_h_mm + p.cap_flesh_mm * 0.7;
+  const tilt = p.cap_tilt_deg * Math.PI / 180;
+  const place = ([x, y, z]) => [
+    x * Math.cos(tilt) + z * Math.sin(tilt) + p.stem_lean_mm,
+    y,
+    -x * Math.sin(tilt) + z * Math.cos(tilt) + capZ
+  ];
+
+  /* underside, with the gill roof flattened to a cone or corrugated
+     into pore rings */
+  let under = prof.inner.slice();
+  if (zone.on) {
+    const PAD = 2;
+    under = under.filter(pt => pt[0] < zone.rIn - PAD || pt[0] > zone.rOut + PAD);
+    const head = under.filter(pt => pt[0] < zone.rIn - PAD);
+    const tail = under.filter(pt => pt[0] > zone.rOut + PAD);
+    under = head.concat([[zone.rIn - PAD, zone.roof(zone.rIn - PAD)],
+                         [zone.rOut + PAD, zone.roof(zone.rOut + PAD)]], tail);
+  } else if (p.underside === "pores" && zone.rOut > zone.rIn + 4) {
+    const head = prof.inner.filter(pt => pt[0] < zone.rIn);
+    const tail = prof.inner.filter(pt => pt[0] > zone.rOut);
+    const mid = [];
+    const depth = Math.min(p.gill_depth_mm * 0.5, 2.5);
+    for (let r = zone.rIn; r <= zone.rOut; r += 0.45) {
+      const wave = 0.5 - 0.5 * Math.cos(TAU * (r - zone.rIn) / 3);
+      mid.push([r, interpZ(prof.inner, r) - depth * wave]);
+    }
+    under = head.concat(mid, tail);
+  }
+  const meridian = prof.top.concat(under.slice().reverse());
+  const capPart = part();
+  revolve(capPart, meridian, seg, p, place);
+  material_mm3 += Math.abs(build.merge(capPart));
+
+  /* gill blades: full-length gills alternating with lamellulae */
+  if (zone.on) {
+    const d = p.gill_depth_mm, half = p.gill_t_mm / 2;
+    const bladePoly = r0 => {
+      const mid = (r0 + zone.rOut) / 2;
+      return [
+        [r0, zone.roof(r0) + 0.8],
+        [zone.rOut, zone.roof(zone.rOut) + 0.8],
+        [zone.rOut, zone.roof(zone.rOut) - d * 0.15],
+        [mid, zone.roof(mid) - d],
+        [r0, zone.roof(r0) - d * 0.3]
+      ];
+    };
+    const long = bladePoly(zone.rIn), short = bladePoly((zone.rIn + zone.rOut) / 2);
+    const n = Math.round(p.gill_count);
+    for (let k = 0; k < n; k++) {
+      for (const [poly, off] of [[long, 0], [short, 0.5]]) {
+        const a = TAU * (k + off) / n, ca = Math.cos(a), sa = Math.sin(a);
+        const blade = part();
+        prism(blade, poly, half, ([r, y, z]) => place([r * ca - y * sa, r * sa + y * ca, z]));
+        material_mm3 += Math.abs(build.merge(blade)) * 0.55;
+      }
+    }
+  }
+
+  /* stem: circles lofted along a leaning axis */
+  const SECTIONS = 26, stemR = p.stem_d_mm / 2;
+  const rings = [];
+  for (let i = 0; i <= SECTIONS; i++) {
+    const t = i / SECTIONS;
+    const r = stemR * (1 - p.stem_taper * t)
+            * (1 + p.stem_bulb * Math.exp(-Math.pow(t / 0.18, 2)))
+            * (1 + p.stem_flare * Math.pow(t, 6));
+    rings.push([r, p.stem_h_mm * t, p.stem_lean_mm * Math.pow(t, 1.7)]);
+  }
+  const stemGrid = rings.map(([r, z, dx]) => {
+    const row = [];
+    for (let j = 0; j < seg; j++) {
+      const a = TAU * j / seg;
+      row.push([dx + r * Math.cos(a), r * Math.sin(a), z]);
+    }
+    return row;
+  });
+  const stemPart = part();
+  for (let i = 0; i < stemGrid.length - 1; i++) {
+    for (let j = 0; j < seg; j++) {
+      const k = (j + 1) % seg;
+      stemPart.quad(stemGrid[i][j], stemGrid[i][k], stemGrid[i+1][k], stemGrid[i+1][j]);
+    }
+  }
+  for (let j = 0; j < seg; j++) {
+    const k = (j + 1) % seg;
+    stemPart.tri([rings[0][2], 0, 0], stemGrid[0][k], stemGrid[0][j]);
+    const topRow = stemGrid[stemGrid.length - 1];
+    stemPart.tri([rings[rings.length-1][2], 0, p.stem_h_mm], topRow[j], topRow[k]);
+  }
+  material_mm3 += Math.abs(build.merge(stemPart)) * 0.72;
+
+  /* the veil ring, clamped below the cap so it is never swallowed */
+  if (p.ring_style !== "none") {
+    const t = Math.max(0.12, Math.min(p.ring_pos, (capZ - p.ring_w_mm * 0.6) / p.stem_h_mm));
+    const z = p.stem_h_mm * t;
+    const r0 = stemR * (1 - p.stem_taper * t) * 0.85;
+    const droop = p.ring_style === "skirt" ? 0.45 : 0.08;
+    const len = Math.hypot(1, droop), dr = 1 / len, dz = -droop / len;
+    const thick = Math.max(1.4, p.ring_w_mm * 0.28);
+    const nr = -dz * thick / 2, nz = dr * thick / 2;
+    const tipR = r0 + dr * p.ring_w_mm, tipZ = z + dz * p.ring_w_mm;
+    const dx = p.stem_lean_mm * Math.pow(t, 1.7);
+    const ringPart = part();
+    revolve(ringPart, [[r0 + nr, z + nz], [tipR + nr, tipZ + nz],
+                       [tipR - nr, tipZ - nz], [r0 - nr, z - nz], [r0 + nr, z + nz]],
+            seg, Object.assign({}, p, {cap_wave_mm: 0}), ([x, y, zz]) => [x + dx, y, zz]);
+    material_mm3 += Math.abs(build.merge(ringPart)) * 0.8;
+  }
+
+  /* warts: spheres sunk into the crown */
+  const R = p.cap_d_mm / 2;
+  const wr = quality === "export" ? [12, 16] : [10, 12];
+  for (let k = 0; k < Math.round(p.wart_count); k++) {
+    const s = Math.sqrt(hash01(k, 1, p.seed)) * 0.85;
+    const angle = TAU * hash01(k, 2, p.seed);
+    let r = Math.max(0.7, p.wart_d_mm / 2 * (0.6 + 0.8 * hash01(k, 5, p.seed)));
+    if (r * (1 - p.wart_flatten) > fleshAt(s, p) * 0.5) {
+      r = fleshAt(s, p) * 0.5 / Math.max(1 - p.wart_flatten, 0.05);
+    }
+    const c = place([R * s * Math.cos(angle), R * s * Math.sin(angle),
+                     crownZ(s, p) - r * (1 - p.wart_flatten)]);
+    const wart = part();
+    sphere(wart, c[0], c[1], c[2], r, wr[0], wr[1]);
+    material_mm3 += Math.abs(build.merge(wart)) * p.wart_flatten;
+  }
+  const out = new Float32Array(build.pos);
+  out.materialVolume = material_mm3;
+  return out;
+}
+
+/* =================================================================
+   3. The rules the template states as preconditions. Same numbers,
+      checked here so you find out before the kernel does.
+   ================================================================= */
+function check(p) {
+  const out = [];
+  if (!(p.stem_h_mm >= p.cap_h_mm * 0.5 + 12))
+    out.push(["The stem is too short for the cap it carries.", "raise the stem above " + (p.cap_h_mm * 0.5 + 12).toFixed(0) + " mm"]);
+  if (!(p.cap_flesh_mm + p.cap_margin_mm < p.cap_h_mm))
+    out.push(["The flesh is thicker than the cap is tall.", "thin the flesh or raise the cap"]);
+  if (p.underside !== "smooth") {
+    const room = p.cap_d_mm / 2 - p.cap_margin_mm * 1.5 - p.cap_wave_mm - (p.stem_d_mm * 0.625 + 1.5);
+    if (!(room > 5)) out.push(["No annulus left between the stem and the margin for a gill or pore layer.", "narrow the stem or widen the cap"]);
+  }
+  if (p.underside === "gills" && !(p.gill_depth_mm <= p.cap_flesh_mm + 3))
+    out.push(["The gills hang deeper than the flesh is thick.", "shallower gills, or more flesh"]);
+  if (p.ring_style !== "none" && !(p.stem_h_mm - p.cap_h_mm + p.cap_flesh_mm * 0.7 > p.ring_w_mm + 4))
+    out.push(["No stem left below the cap for the ring to sit on.", "raise the stem or narrow the ring"]);
+  if (!(p.stem_d_mm < p.cap_d_mm * 0.62))
+    out.push(["The stem is too fat for the cap.", "narrow the stem below " + (p.cap_d_mm * 0.62).toFixed(0) + " mm"]);
+  if (!(p.stem_lean_mm * 0.75 < p.stem_d_mm / 2 * (1 + p.stem_bulb)))
+    out.push(["It topples: the cap leans past its own footprint.", "widen the basal bulb, or reduce the lean"]);
+  return out;
+}
+
+/* =================================================================
+   4. Three.js stage
+   ================================================================= */
+const canvas = document.getElementById("view");
+const renderer = new THREE.WebGLRenderer({canvas, antialias: true, alpha: true, preserveDrawingBuffer: false});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(34, 1, 1, 4000);
+camera.up.set(0, 0, 1);
+const key = new THREE.DirectionalLight(0xffffff, 0.85); key.position.set(-90, -140, 180);
+const fill = new THREE.DirectionalLight(0xffffff, 0.32); fill.position.set(160, 60, 40);
+const rim = new THREE.DirectionalLight(0xffffff, 0.22); rim.position.set(40, 180, -60);
+scene.add(key, fill, rim, new THREE.AmbientLight(0xffffff, 0.34));
+
+const material = new THREE.MeshLambertMaterial({color: 0xc9c6be, side: THREE.DoubleSide});
+let mushroom = null;
+const plate = new THREE.GridHelper(200, 20);
+plate.rotation.x = Math.PI / 2;
+scene.add(plate);
+
+let orbit = {theta: 0.9, phi: 1.15, dist: 210, target: new THREE.Vector3(0, 0, 40)};
+function applyCamera() {
+  const {theta, phi, dist, target} = orbit;
+  camera.position.set(
+    target.x + dist * Math.sin(phi) * Math.cos(theta),
+    target.y + dist * Math.sin(phi) * Math.sin(theta),
+    target.z + dist * Math.cos(phi)
+  );
+  camera.lookAt(target);
+}
+function resize() {
+  const w = canvas.clientWidth || 800, h = canvas.clientHeight || 600;
+  if (canvas.width !== w || canvas.height !== h) {
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+}
+let dragging = false, lastX = 0, lastY = 0;
+canvas.addEventListener("pointerdown", e => {
+  dragging = true; lastX = e.clientX; lastY = e.clientY;
+  canvas.classList.add("dragging"); canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener("pointermove", e => {
+  if (!dragging) return;
+  orbit.theta -= (e.clientX - lastX) * 0.008;
+  orbit.phi = Math.min(Math.PI - 0.08, Math.max(0.08, orbit.phi - (e.clientY - lastY) * 0.006));
+  lastX = e.clientX; lastY = e.clientY;
+  applyCamera(); draw();
+});
+["pointerup", "pointercancel"].forEach(ev => canvas.addEventListener(ev, () => {
+  dragging = false; canvas.classList.remove("dragging");
+}));
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  orbit.dist = Math.min(700, Math.max(60, orbit.dist * (1 + Math.sign(e.deltaY) * 0.09)));
+  applyCamera(); draw();
+}, {passive: false});
+
+function draw() { resize(); renderer.render(scene, camera); }
+window.addEventListener("resize", () => { applyCamera(); draw(); });
+
+function themeColors() {
+  const css = getComputedStyle(document.documentElement);
+  return {
+    mesh: css.getPropertyValue("--mesh-light").trim() || "#c9c6be",
+    grid: css.getPropertyValue("--line").trim() || "#d2d7c9"
+  };
+}
+function paintTheme() {
+  const c = themeColors();
+  material.color.set(c.mesh);
+  plate.material.color.set(c.grid);
+  plate.material.opacity = 0.55;
+  plate.material.transparent = true;
+  draw();
+}
+
+/* =================================================================
+   5. Rebuild + readouts
+   ================================================================= */
+let lastPositions = null;
+function rebuild() {
+  const positions = buildMesh(P, "preview");
+  lastPositions = positions;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  geo.computeBoundingBox();
+  if (mushroom) { scene.remove(mushroom); mushroom.geometry.dispose(); }
+  mushroom = new THREE.Mesh(geo, material);
+  scene.add(mushroom);
+
+  const bb = geo.boundingBox;
+  const size = new THREE.Vector3(); bb.getSize(size);
+  const centre = new THREE.Vector3(); bb.getCenter(centre);
+  orbit.target.set(centre.x, centre.y, centre.z);
+  applyCamera();
+  draw();
+
+  const tris = positions.length / 9;
+  document.getElementById("readout").innerHTML =
+    `<span>height <b>${size.z.toFixed(0)} mm</b></span>` +
+    `<span>width <b>${Math.max(size.x, size.y).toFixed(0)} mm</b></span>` +
+    `<span>material <b>~${(positions.materialVolume / 1000).toFixed(1)} cm³</b></span>` +
+    `<span>triangles <b>${tris.toLocaleString()}</b></span>`;
+
+  const problems = check(P);
+  const status = document.getElementById("status");
+  const list = document.getElementById("status-list");
+  status.dataset.state = problems.length ? "blocked" : "ok";
+  document.getElementById("status-title").textContent =
+    problems.length ? `${problems.length} thing${problems.length > 1 ? "s" : ""} to fix before it builds` : "Ready to build";
+  document.getElementById("status-note").textContent = problems.length
+    ? "The template refuses these combinations up front rather than building something that fails later."
+    : "Every one of the template's preconditions holds. The command below builds this exact model in the CAD kernel and validates it.";
+  list.hidden = problems.length === 0;
+  list.innerHTML = problems.map(([what, fix]) => `<li>${what} <em>&mdash; ${fix}</em></li>`).join("");
+
+  document.getElementById("command").textContent = command();
+  document.getElementById("species-name").textContent = SPECIES_LABEL[species] || "";
+}
+function command() {
+  const parts = SCHEMA.map(f => `--set ${f.k}=${P[f.k]}`);
+  parts.push(`--set seed=${P.seed}`);
+  return "formforge build nature_mushroom \\\n  " + parts.join(" \\\n  ");
+}
+
+/* =================================================================
+   6. Controls
+   ================================================================= */
+const GROUPS = {cap: "group-cap", underside: "group-underside", stem: "group-stem",
+                ring: "group-ring", warts: "group-warts"};
+const inputs = {};
+function fmt(f, value) {
+  const digits = f.step >= 1 ? 0 : (f.step >= 0.1 ? 1 : 2);
+  return `${Number(value).toFixed(digits)}${f.unit ? " " + f.unit : ""}`;
+}
+SCHEMA.forEach(f => {
+  const host = document.getElementById(GROUPS[f.g]);
+  const field = document.createElement("div");
+  field.className = "field";
+  if (f.choices) {
+    field.innerHTML = `<div class="field-top"><label>${f.label}</label></div>` +
+      (f.note ? `<p>${f.note}</p>` : "") +
+      `<div class="segmented">${f.choices.map(c =>
+        `<button type="button" data-v="${c}" aria-pressed="${P[f.k] === c}">${c}</button>`).join("")}</div>`;
+    field.querySelectorAll("button").forEach(b => b.addEventListener("click", () => {
+      P[f.k] = b.dataset.v;
+      field.querySelectorAll("button").forEach(o => o.setAttribute("aria-pressed", String(o === b)));
+      rebuild();
+    }));
+    inputs[f.k] = {type: "choice", el: field};
+  } else {
+    const id = "f-" + f.k;
+    field.innerHTML = `<div class="field-top"><label for="${id}">${f.label}</label>` +
+      `<output id="o-${f.k}">${fmt(f, P[f.k])}</output></div>` +
+      (f.note ? `<p>${f.note}</p>` : "") +
+      `<input type="range" id="${id}" min="${f.min}" max="${f.max}" step="${f.step}" value="${P[f.k]}">`;
+    const range = field.querySelector("input");
+    range.addEventListener("input", () => {
+      P[f.k] = parseFloat(range.value);
+      document.getElementById("o-" + f.k).textContent = fmt(f, P[f.k]);
+      schedule();
+    });
+    inputs[f.k] = {type: "range", el: range, out: () => document.getElementById("o-" + f.k)};
+  }
+  host.appendChild(field);
+});
+function syncInputs() {
+  SCHEMA.forEach(f => {
+    const entry = inputs[f.k];
+    if (entry.type === "range") {
+      entry.el.value = P[f.k];
+      entry.out().textContent = fmt(f, P[f.k]);
+    } else {
+      entry.el.querySelectorAll("button").forEach(b =>
+        b.setAttribute("aria-pressed", String(b.dataset.v === P[f.k])));
+    }
+  });
+  document.getElementById("seed").value = P.seed;
+}
+let frame = null;
+function schedule() {
+  if (frame) return;
+  frame = requestAnimationFrame(() => { frame = null; rebuild(); });
+}
+
+/* species chips, each drawn from its own preset's silhouette: the outer
+   envelope of that species' cap and stem, so the icon is the model. */
+function silhouette(preset) {
+  const p = Object.assign({}, DEFAULTS, preset, {seed: 3});
+  const prof = capProfile(p);
+  const capZ = p.stem_h_mm - p.cap_h_mm + p.cap_flesh_mm * 0.7;
+  const stemR = p.stem_d_mm / 2;
+  const top = prof.top.map(([r, z]) => [r, z + capZ]);
+  const capLow = Math.min(...prof.inner.map(q => q[1])) + capZ;
+  const totalH = Math.max(...top.map(q => q[1]));
+
+  const radiusAt = z => {
+    let r = 0;
+    if (z <= p.stem_h_mm) {
+      const t = Math.max(0, Math.min(1, z / p.stem_h_mm));
+      r = stemR * (1 - p.stem_taper * t)
+        * (1 + p.stem_bulb * Math.exp(-Math.pow(t / 0.18, 2)))
+        * (1 + p.stem_flare * Math.pow(t, 6));
+    }
+    if (z >= capLow) {
+      for (const [rr, zz] of top) if (zz >= z && rr > r) r = rr;
+    }
+    return r;
+  };
+  const right = [];
+  for (let i = 0; i <= 40; i++) {
+    const z = totalH * i / 40;
+    right.push([radiusAt(z), z]);
+  }
+  const maxR = Math.max(...right.map(q => q[0])) || 1;
+  const k = Math.min(13 / maxR, 26 / totalH);
+  const put = ([r, z]) => `${(16 + r * k).toFixed(1)},${(29 - z * k).toFixed(1)}`;
+  const path = "M" + right.map(put).join("L") +
+    "L" + right.slice().reverse().map(([r, z]) =>
+      `${(16 - r * k).toFixed(1)},${(29 - z * k).toFixed(1)}`).join("L") + "Z";
+  return `<svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><path d="${path}"/></svg>`;
+}
+const speciesHost = document.getElementById("species");
+Object.keys(SPECIES).forEach(name => {
+  const chip = document.createElement("button");
+  chip.type = "button";
+  chip.className = "chip";
+  chip.setAttribute("aria-pressed", String(name === species));
+  chip.innerHTML = silhouette(SPECIES[name]) + `<small>${SPECIES_LABEL[name]}</small>`;
+  chip.addEventListener("click", () => {
+    species = name;
+    P = Object.assign({}, DEFAULTS, SPECIES[name], {seed: P.seed});
+    speciesHost.querySelectorAll(".chip").forEach(c =>
+      c.setAttribute("aria-pressed", String(c === chip)));
+    syncInputs();
+    rebuild();
+  });
+  speciesHost.appendChild(chip);
+});
+
+/* seed + shuffle: the jitter the generator applies, on the species you
+   are looking at */
+document.getElementById("seed").addEventListener("input", e => {
+  P.seed = Math.max(0, Math.min(9999, parseInt(e.target.value || "0", 10)));
+  schedule();
+});
+document.getElementById("shuffle").addEventListener("click", () => {
+  P.seed = Math.floor(Math.random() * 10000);
+  const base = Object.assign({}, DEFAULTS, SPECIES[species]);
+  const next = Object.assign({}, base, {seed: P.seed});
+  Object.keys(JITTER).forEach(k => {
+    const [mode, amount] = JITTER[k];
+    const swing = hash01(k.length * 7, k.charCodeAt(0), P.seed) * 2 - 1;
+    next[k] = mode === "rel" ? base[k] * (1 + amount * swing) : base[k] + amount * swing;
+  });
+  const capScale = next.cap_d_mm / base.cap_d_mm;
+  next.stem_h_mm = base.stem_h_mm * capScale;
+  next.stem_d_mm = base.stem_d_mm * capScale;
+  next.gill_count = Math.round(Math.min(next.cap_d_mm * 0.26, 1000 / next.cap_d_mm));
+  next.gill_depth_mm = Math.min(next.cap_flesh_mm + 2, next.cap_d_mm * 0.11);
+  next.ring_w_mm = next.stem_d_mm * 0.42;
+  if (base.wart_count) next.wart_count = Math.round(Math.min(next.cap_d_mm * next.cap_d_mm * 0.004, 1600 / next.cap_d_mm));
+  /* feasibility, the same way the generator applies it */
+  next.cap_h_mm = Math.max(next.cap_h_mm, next.cap_flesh_mm + next.cap_margin_mm + 1);
+  next.stem_h_mm = Math.max(next.stem_h_mm, next.cap_h_mm * 0.5 + 13);
+  next.stem_d_mm = Math.min(next.stem_d_mm, next.cap_d_mm * 0.55);
+  if (next.underside !== "smooth") {
+    const room = next.cap_d_mm / 2 - next.cap_margin_mm * 1.5 - next.cap_wave_mm;
+    next.stem_d_mm = Math.min(next.stem_d_mm, (room - 8.5) / 0.625);
+  }
+  const foot = next.stem_d_mm / 2 * (1 + next.stem_bulb);
+  if (next.stem_lean_mm * 0.75 >= foot) {
+    next.stem_bulb = Math.min(1.2, Math.max(next.stem_bulb,
+      next.stem_lean_mm * 0.825 / Math.max(next.stem_d_mm / 2, 1e-6) - 1));
+    next.stem_lean_mm = Math.min(next.stem_lean_mm,
+      next.stem_d_mm / 2 * (1 + next.stem_bulb) / 0.75 * 0.92);
+  }
+  if (next.ring_style !== "none") {
+    next.stem_h_mm = Math.max(next.stem_h_mm,
+      next.cap_h_mm - next.cap_flesh_mm * 0.7 + next.ring_w_mm + 6);
+  }
+  SCHEMA.forEach(f => {
+    if (f.choices) { next[f.k] = f.choices.includes(next[f.k]) ? next[f.k] : f.v; return; }
+    let value = Math.min(f.max, Math.max(f.min, next[f.k]));
+    value = f.step >= 1 ? Math.round(value) : Math.round(value / f.step) * f.step;
+    next[f.k] = parseFloat(value.toFixed(2));
+  });
+  P = next;
+  syncInputs();
+  rebuild();
+});
+document.getElementById("reset").addEventListener("click", () => {
+  P = Object.assign({}, DEFAULTS, SPECIES[species], {seed: 7});
+  syncInputs();
+  rebuild();
+});
+
+/* =================================================================
+   7. Export
+   ================================================================= */
+let downloads = null;
+if (window.claude && typeof window.claude.use === "function") {
+  window.claude.use("downloads").then(ns => {
+    downloads = ns;
+    setExportNote();
+  }).catch(() => setExportNote());
+}
+function hosted() { return !!(window.claude && typeof window.claude.use === "function"); }
+function setExportNote() {
+  document.getElementById("export-note").innerHTML = hosted()
+    ? "This page can only hand over file types the viewer allows, and <code>.stl</code> is not one of them &mdash; the mesh saves as <code>.txt</code>, so rename it to <code>.stl</code>. Opened from the repo (<code>web/studio.html</code>) the same button saves a binary <code>.stl</code> directly."
+    : "The exported mesh is this preview, triangulated. For the printable model &mdash; watertight, DFM-checked, with STEP and 3MF beside it &mdash; run the command above.";
+}
+setExportNote();
+
+function toast(message) {
+  const el = document.getElementById("toast");
+  el.textContent = message;
+  el.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove("show"), 3600);
+}
+function stlBinary(pos) {
+  const tris = pos.length / 9;
+  const buf = new ArrayBuffer(84 + tris * 50);
+  const view = new DataView(buf);
+  const head = "Mushroom Studio -- nature_mushroom preview mesh, millimetres";
+  for (let i = 0; i < 80; i++) view.setUint8(i, i < head.length ? head.charCodeAt(i) : 32);
+  view.setUint32(80, tris, true);
+  let o = 84;
+  for (let i = 0; i < pos.length; i += 9) {
+    const n = faceNormal(pos, i);
+    view.setFloat32(o, n[0], true); view.setFloat32(o+4, n[1], true); view.setFloat32(o+8, n[2], true);
+    o += 12;
+    for (let j = 0; j < 9; j++) { view.setFloat32(o, pos[i+j], true); o += 4; }
+    view.setUint16(o, 0, true); o += 2;
+  }
+  return buf;
+}
+function stlAscii(pos) {
+  const rows = ["solid mushroom"];
+  for (let i = 0; i < pos.length; i += 9) {
+    const n = faceNormal(pos, i);
+    rows.push(` facet normal ${n[0].toFixed(4)} ${n[1].toFixed(4)} ${n[2].toFixed(4)}`, "  outer loop");
+    for (let v = 0; v < 3; v++) {
+      rows.push(`   vertex ${pos[i+v*3].toFixed(3)} ${pos[i+v*3+1].toFixed(3)} ${pos[i+v*3+2].toFixed(3)}`);
+    }
+    rows.push("  endloop", " endfacet");
+  }
+  rows.push("endsolid mushroom");
+  return rows.join("\n");
+}
+function faceNormal(pos, i) {
+  const ux = pos[i+3]-pos[i], uy = pos[i+4]-pos[i+1], uz = pos[i+5]-pos[i+2];
+  const vx = pos[i+6]-pos[i], vy = pos[i+7]-pos[i+1], vz = pos[i+8]-pos[i+2];
+  const nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+  const len = Math.hypot(nx, ny, nz) || 1;
+  return [nx/len, ny/len, nz/len];
+}
+function stamp() {
+  return `${species}-${Math.round(P.cap_d_mm)}mm-seed${P.seed}`;
+}
+function localSave(filename, data) {
+  const blob = data instanceof ArrayBuffer ? new Blob([data], {type: "application/octet-stream"})
+                                           : new Blob([data], {type: "application/json"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+document.getElementById("export-stl").addEventListener("click", async () => {
+  const pos = buildMesh(P, "export");
+  if (downloads) {
+    try {
+      await downloads.save({filename: `${stamp()}-stl.txt`, data: stlAscii(pos)});
+      toast("Saved. Rename it from .txt to .stl and it opens in any slicer.");
+    } catch (err) {
+      const code = (err && err.code) || "unavailable";
+      toast(code === "declined" ? "Save cancelled."
+        : code === "too_large" ? "That mesh is too big to hand over here — lower the wart count or the gill count."
+        : "Saving is not available in this view. Use the command above instead.");
+    }
+    return;
+  }
+  localSave(`${stamp()}.stl`, stlBinary(pos));
+  toast(`${stamp()}.stl saved — ${(pos.length / 9).toLocaleString()} triangles, millimetres.`);
+});
+document.getElementById("export-json").addEventListener("click", async () => {
+  const payload = JSON.stringify({template: "nature_mushroom", species, params: paramsOnly()}, null, 2);
+  if (downloads) {
+    try {
+      await downloads.save({filename: `${stamp()}.json`, data: payload});
+      toast("Parameters saved.");
+    } catch (err) {
+      toast((err && err.code) === "declined" ? "Save cancelled." : "Saving is not available in this view.");
+    }
+    return;
+  }
+  localSave(`${stamp()}.json`, payload);
+  toast("Parameters saved.");
+});
+function paramsOnly() {
+  const out = {};
+  SCHEMA.forEach(f => out[f.k] = P[f.k]);
+  out.seed = P.seed;
+  return out;
+}
+document.getElementById("copy-cmd").addEventListener("click", async () => {
+  const text = command();
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Command copied. Run it in the repo to build this model for real.");
+  } catch (err) {
+    const range = document.createRange();
+    range.selectNodeContents(document.getElementById("command"));
+    const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
+    toast("Press ⌘C / Ctrl+C to copy the selected command.");
+  }
+});
+
+/* =================================================================
+   8. Boot
+   ================================================================= */
+document.getElementById("pipeline").innerHTML =
+  ["species", "seed", "jitter", "proportions", "feasibility", "geometry"]
+    .map((n, i) => (i ? '<i>&rarr;</i>' : "") + (i === 5 ? `<b>${n}</b>` : n)).join("");
+const themeWatcher = window.matchMedia("(prefers-color-scheme: dark)");
+themeWatcher.addEventListener("change", paintTheme);
+new MutationObserver(paintTheme).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
+paintTheme();
+syncInputs();
+rebuild();
+</script>
+</body>
+</html>

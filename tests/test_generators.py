@@ -9,6 +9,8 @@ space and hand every result to the template's own validator.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from formforge.generators import Definition, DefinitionError
@@ -227,3 +229,51 @@ class TestMushroomTemplate:
             brep_features=execution.stats.get("brep_features"),
         )
         assert report.passed, report.agent_feedback()
+
+
+class TestStudioPage:
+    """`web/studio.html` restates the schema in JavaScript, so it can drift.
+
+    The page emits a `formforge build` command from whatever its sliders hold.
+    A slider whose range has drifted past the template's emits a command the
+    CLI rejects -- or worse, one it accepts and the geometry has never been
+    swept across.
+    """
+
+    @staticmethod
+    def _fields():
+        import re
+
+        html = (Path(__file__).resolve().parents[1] / "web" / "studio.html").read_text()
+        pattern = re.compile(
+            r'\{k:"(?P<k>[a-z_]+)",\s*g:"[a-z]+",\s*label:"[^"]*",\s*(?P<rest>[^}]*)\}'
+        )
+        out = {}
+        for match in pattern.finditer(html):
+            rest = match.group("rest")
+            spec = {}
+            if "choices" in rest:
+                spec["enum"] = re.findall(r'"([a-z]+)"', re.search(r"choices:\[(.*?)\]", rest).group(1))
+                spec["default"] = re.search(r'v:"([a-z]+)"', rest).group(1)
+            else:
+                for page_key, schema_key in (("min", "minimum"), ("max", "maximum"), ("v", "default")):
+                    found = re.search(page_key + r":\s*(-?[\d.]+)", rest)
+                    if found:
+                        spec[schema_key] = float(found.group(1))
+            out[match.group("k")] = spec
+        return out
+
+    def test_the_page_offers_exactly_the_template_parameters(self, template):
+        fields = self._fields()
+        assert set(fields) | {"seed"} == set(template.properties)
+
+    def test_every_slider_stops_where_the_schema_stops(self, template):
+        for name, page in self._fields().items():
+            spec = template.properties[name]
+            if "enum" in page:
+                assert page["enum"] == spec["enum"], name
+                assert page["default"] == spec["default"], name
+                continue
+            for key in ("minimum", "maximum", "default"):
+                assert page[key] == pytest.approx(float(spec[key])), f"{name}.{key}"
+
