@@ -190,6 +190,16 @@ Nothing in this repository has been physically printed. The template records
 that as `print_test: untested`, and every claim above is a measurement of the
 model, not of a print.
 
+## A second generator
+
+`docs/vase-generator.md` covers the vase definition, which uses this same
+solver, seed, jitter, proportion and feasibility machinery and differs only in
+its domain. What the two have in common is named in
+`formforge/generators/__init__.py` as the `Generator` catalog entry -- a
+definition, a template, and a variant to start from, called a species here and
+a style there -- which is what lets one CLI command and one parametrised test
+cover both.
+
 ## Adding a species
 
 Add a set of slider positions to `SPECIES`. Nothing else changes: the jitter,

@@ -3,6 +3,7 @@
     formforge generate "a hex planter for a 4 inch pot"
     formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
     formforge mushroom --count 6 --seed 42 --species mixed --out out/mushrooms
+    formforge vase --count 8 --style mixed --formats stl,step
     formforge templates --category planter
     formforge check model.stl --profile bambu_p1s_0.4 --category planter
     formforge render model.stl --out previews/
@@ -66,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _add_generate(subparsers)
     _add_build(subparsers)
-    _add_mushroom(subparsers)
+    _add_generators(subparsers)
     _add_templates(subparsers)
     _add_check(subparsers)
     _add_render(subparsers)
@@ -285,27 +286,40 @@ def _coerce(raw: str, spec: dict) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# mushroom (the generator path: one definition, a population of models)
+# generators (one definition, a population of models)
 # ---------------------------------------------------------------------------
 
 
-def _add_mushroom(subparsers) -> None:
-    parser = subparsers.add_parser(
-        "mushroom",
-        help="generate variations of a detailed mushroom and export them as STL",
-    )
-    parser.add_argument("--count", type=int, default=6, help="how many specimens")
+def _add_generators(subparsers) -> None:
+    """One subcommand per generator, from the catalog.
+
+    The two definitions differ in their domain and in nothing else the command
+    line cares about, so the command is written once and the catalog supplies
+    the noun -- `--species` for mushrooms, `--style` for vases.
+    """
+    from .generators import CATALOG  # noqa: PLC0415
+
+    for generator in CATALOG:
+        _add_generator(subparsers, generator)
+
+
+def _add_generator(subparsers, generator) -> None:
+    parser = subparsers.add_parser(generator.name, help=generator.summary)
+    parser.add_argument("--count", type=int, default=6, help="how many to generate")
     parser.add_argument("--seed", type=int, default=7, help="the population's seed")
     parser.add_argument(
-        "--species",
+        f"--{generator.variant_flag}",
+        dest="variant",
         default="mixed",
-        help="one of the definition's species, or 'mixed' to draw one per specimen",
+        help=f"one of the definition's {generator.variant_noun} values, or 'mixed' "
+        f"to draw one per model",
     )
     parser.add_argument(
         "--variation",
         type=float,
         default=0.55,
-        help="0 rebuilds the species exactly; 1 lets every slider wander its full range",
+        help=f"0 rebuilds the {generator.variant_noun} exactly; 1 lets every slider "
+        f"wander its full range",
     )
     parser.add_argument(
         "--set",
@@ -315,7 +329,7 @@ def _add_mushroom(subparsers) -> None:
         help="pin a parameter across the whole population; repeatable",
     )
     parser.add_argument(
-        "--out", default="out/mushrooms", help="directory for the exported files"
+        "--out", default=f"out/{generator.name}s", help="directory for the exported files"
     )
     parser.add_argument(
         "--formats",
@@ -335,19 +349,21 @@ def _add_mushroom(subparsers) -> None:
         "--explain", action="store_true", help="print the definition graph and exit"
     )
     parser.add_argument("--json", action="store_true")
-    parser.set_defaults(handler=_cmd_mushroom)
+    parser.set_defaults(handler=_cmd_generator, generator=generator.name)
 
 
-def _cmd_mushroom(args) -> int:
-    from .generators import mushroom as definition  # noqa: PLC0415
+def _cmd_generator(args) -> int:
+    from .generators import catalog  # noqa: PLC0415
+
+    generator = catalog()[args.generator]
 
     if args.explain:
-        print(definition.DEFINITION.explain())
+        print(generator.definition.explain())
         return 0
 
     registry = TemplateRegistry.load(strict=False)
     try:
-        template = registry.get(definition.TEMPLATE_ID)
+        template = registry.get(generator.template_id)
     except KeyError as exc:
         print(_bad(str(exc)), file=sys.stderr)
         return 1
@@ -360,9 +376,9 @@ def _cmd_mushroom(args) -> int:
 
     try:
         solutions = [
-            definition.solve(
-                definition.member_seed(args.seed, index),
-                species=args.species,
+            generator.solve(
+                generator.member_seed(args.seed, index),
+                variant=args.variant,
                 variation=args.variation,
                 overrides=pins,
             )
@@ -375,7 +391,7 @@ def _cmd_mushroom(args) -> int:
     specimens = [
         {
             "index": index,
-            "species": solution["preset"]["species"],
+            "variant": generator.variant_of(solution),
             "seed": solution["params"]["seed"],
             "params": solution["params"],
         }
@@ -387,8 +403,8 @@ def _cmd_mushroom(args) -> int:
             print(json.dumps(specimens, indent=2))
             return 0
         for specimen in specimens:
-            print(f"  {specimen['index']:>2}  {specimen['species']:<12} "
-                  f"seed {specimen['seed']:<5} {definition.describe(specimen['params'])}")
+            print(f"  {specimen['index']:>2}  {specimen['variant']:<12} "
+                  f"seed {specimen['seed']:<5} {generator.describe(specimen['params'])}")
         return 0
 
     out_dir = Path(args.out)
@@ -403,16 +419,16 @@ def _cmd_mushroom(args) -> int:
         # The DFM verdict is measured on the mesh, so the STL is written either
         # way; --formats decides what is kept beside it.
         formats.insert(0, "stl")
-    built = _build_specimens(specimens, template, out_dir, args, formats)
+    built = _build_specimens(specimens, template, out_dir, args, formats, generator)
 
     manifest = out_dir / "variations.json"
     manifest.write_text(
         json.dumps(
             {
                 "template": template.id,
-                "definition": definition.DEFINITION.name,
+                "definition": generator.definition.name,
                 "seed": args.seed,
-                "species": args.species,
+                generator.variant_flag: args.variant,
                 "variation": args.variation,
                 "pinned": pins,
                 "formats": formats,
@@ -434,19 +450,18 @@ def _cmd_mushroom(args) -> int:
 
 
 def _build_specimens(
-    specimens: list[dict], template, out_dir: Path, args, wanted_formats: list[str]
+    specimens: list[dict], template, out_dir: Path, args, wanted_formats: list[str], generator
 ) -> list[dict]:
-    """Build each specimen in the sandbox and validate what came out."""
+    """Build each model in the sandbox and validate what came out."""
     import shutil  # noqa: PLC0415
 
-    from .generators import mushroom as definition  # noqa: PLC0415
     from .sandbox import ExecuteRequest, GeometrySandbox  # noqa: PLC0415
 
     sandbox = GeometrySandbox()
     built: list[dict] = []
     for specimen in specimens:
         params = specimen["params"]
-        name = f"{specimen['index']:02d}-{specimen['species']}-{specimen['seed']}"
+        name = f"{specimen['index']:02d}-{specimen['variant']}-{specimen['seed']}"
         record = {**{k: v for k, v in specimen.items() if k != "params"}, "params": params}
 
         problems = template.validate_params(params)
@@ -520,7 +535,7 @@ def _build_specimens(
         built.append(record)
         if not args.json:
             marker = _ok("ok") if report.passed else _warn("??")
-            print(f"  [{marker}] {name}: {definition.describe(params)}")
+            print(f"  [{marker}] {name}: {generator.describe(params)}")
             for failure in record["failures"]:
                 print(_warn(f"        {failure}"))
     return built

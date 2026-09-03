@@ -430,6 +430,40 @@ CATEGORY_INVARIANTS: dict[str, tuple[CategoryInvariant, ...]] = {
             severity=Severity.WARN,
         ),
     ),
+    "vessel": (
+        CategoryInvariant(
+            "vessel.single_piece",
+            "solids == 1",
+            "One piece",
+            "The vessel came out as separate lumps, so the wall and the base "
+            "are not joined.",
+            "Overlap the floor into the wall rather than leaving them touching.",
+        ),
+        CategoryInvariant(
+            "vessel.closed_surface",
+            "is_watertight",
+            "Closed surface",
+            "A vessel whose surface is not closed will not slice.",
+            "Rebuild the skin so the whole model is one closed shell.",
+        ),
+        CategoryInvariant(
+            "vessel.no_sealed_cavity",
+            "trapped_volumes == 0",
+            "Nothing sealed in",
+            "A sealed cavity in a vessel traps uncured resin or unextracted "
+            "support, and cannot be inspected.",
+            "Open the cavity at the rim.",
+        ),
+        CategoryInvariant(
+            "vessel.footprint",
+            "plate_contact_mm2 >= 300",
+            "Enough base to hold on",
+            "The base is too small to keep a tall vessel attached for the "
+            "length of the print.",
+            "Widen the base, or print it with a brim.",
+            severity=Severity.WARN,
+        ),
+    ),
     "nature": (
         CategoryInvariant(
             "nature.single_piece",

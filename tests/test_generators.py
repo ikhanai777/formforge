@@ -13,13 +13,132 @@ from pathlib import Path
 
 import pytest
 
-from formforge.generators import Definition, DefinitionError
+from formforge.generators import CATALOG, Definition, DefinitionError
 from formforge.generators import mushroom as mush
+from formforge.generators import vase as vase_gen
+
+GENERATOR_IDS = [g.name for g in CATALOG]
 
 
 @pytest.fixture(scope="module")
 def template(registry):
     return registry.get(mush.TEMPLATE_ID)
+
+
+@pytest.fixture(scope="module")
+def vase_template(registry):
+    return registry.get(vase_gen.TEMPLATE_ID)
+
+
+class TestCatalog:
+    """What every generator owes, whatever it generates.
+
+    These run over the catalog rather than over one definition on purpose: the
+    contract is only real if adding a generator means satisfying it, and the
+    cost of finding out is one parametrised test rather than a second copy of
+    this file.
+    """
+
+    @pytest.mark.parametrize("generator", CATALOG, ids=GENERATOR_IDS)
+    def test_every_variant_at_every_variation_is_buildable(self, registry, generator):
+        template = registry.get(generator.template_id)
+        for variant in (*generator.variants(), "mixed"):
+            for amount in (0.0, 0.6, 1.0):
+                for seed in (0, 91, 4242, 9999):
+                    params = generator.solve(
+                        seed, variant=variant, variation=amount
+                    )["params"]
+                    problems = template.validate_params(params)
+                    assert not problems, f"{generator.name}/{variant} seed={seed}: {problems}"
+
+    @pytest.mark.parametrize("generator", CATALOG, ids=GENERATOR_IDS)
+    def test_the_same_seed_is_the_same_model(self, generator):
+        first = generator.solve(77, variant="mixed", variation=0.5)["params"]
+        again = generator.solve(77, variant="mixed", variation=0.5)["params"]
+        assert first == again
+
+    @pytest.mark.parametrize("generator", CATALOG, ids=GENERATOR_IDS)
+    def test_a_population_is_stable_as_it_grows(self, generator):
+        def member(index):
+            seed = generator.member_seed(5, index)
+            return generator.solve(seed, variant="mixed", variation=0.5)["params"]
+
+        assert [member(i) for i in range(3)] == [member(i) for i in range(30)][:3]
+
+    @pytest.mark.parametrize("generator", CATALOG, ids=GENERATOR_IDS)
+    def test_models_actually_differ(self, generator):
+        population = [
+            generator.solve(
+                generator.member_seed(3, i), variant="mixed", variation=0.7
+            )["params"]
+            for i in range(10)
+        ]
+        assert len({tuple(sorted(p.items())) for p in population}) == len(population)
+
+    @pytest.mark.parametrize("generator", CATALOG, ids=GENERATOR_IDS)
+    def test_the_definition_names_every_node_it_solves(self, generator):
+        text = generator.definition.explain()
+        for node in generator.definition.order():
+            assert node in text
+
+    @pytest.mark.parametrize("generator", CATALOG, ids=GENERATOR_IDS)
+    def test_describe_says_something_about_the_model(self, generator):
+        params = generator.solve(1, variant=generator.variants()[0], variation=0.0)["params"]
+        assert "mm" in generator.describe(params)
+
+
+class TestVaseParameters:
+    def test_styles_keep_their_silhouette(self):
+        """A bottle stays a bottle: the neck stays narrower than the belly."""
+        for seed in (1, 2, 3, 4, 5):
+            bottle = vase_gen.specimen(seed, style="bottle", variation=1.0)
+            assert bottle["neck_d_mm"] < bottle["mid_d_mm"] * 0.55
+            tulip = vase_gen.specimen(seed, style="tulip", variation=1.0)
+            assert tulip["rim_d_mm"] > tulip["base_d_mm"] * 1.8
+            hourglass = vase_gen.specimen(seed, style="hourglass", variation=1.0)
+            assert hourglass["mid_d_mm"] < hourglass["base_d_mm"]
+
+    def test_diameters_follow_the_height(self):
+        """Scale a vase and it stays the same vase.
+
+        The four diameters are carried as ratios of the style's height, so a
+        taller specimen is a bigger version rather than a stretched one.
+        """
+        short = vase_gen.specimen(4, style="classic", overrides={"height_mm": 100})
+        tall = vase_gen.specimen(4, style="classic", overrides={"height_mm": 240})
+        for name in ("base_d_mm", "mid_d_mm", "neck_d_mm", "rim_d_mm"):
+            assert tall[name] > short[name] * 1.8, name
+
+    def test_twist_and_detail_stay_inside_what_the_kernel_can_afford(self):
+        """The one combination that costs minutes instead of seconds.
+
+        A fast twist against many flutes needs so many bands that the boolean
+        stops being affordable -- and under-sampled, it hands back a cavity
+        that has cut through its own outer wall. The template refuses the
+        combination; the generator never proposes it.
+        """
+        for style in vase_gen.style_names():
+            for seed in (0, 13, 808, 9999):
+                params = vase_gen.specimen(seed, style=style, variation=1.0)
+                detail = max(params["lobes"], params["facets"], 1)
+                assert abs(params["twist_deg"]) * detail <= 3600
+
+    def test_a_flute_never_eats_the_wall(self, vase_template):
+        for seed in (0, 5, 50, 500, 5000):
+            params = vase_gen.specimen(seed, style="fluted", variation=1.0)
+            if params["lobes"] >= 1:
+                assert params["neck_d_mm"] / 2 - params["lobe_mm"] - params["wall_mm"] * 2 > 3
+            assert not vase_template.validate_params(params)
+
+    def test_the_wall_stays_printable(self):
+        for style in vase_gen.style_names():
+            params = vase_gen.specimen(11, style=style, variation=1.0)
+            assert params["wall_mm"] >= 0.8
+            assert params["base_mm"] >= 1.2
+
+    def test_an_unknown_style_is_refused(self):
+        with pytest.raises(ValueError, match="unknown style"):
+            vase_gen.specimen(1, style="ming")
 
 
 class TestGraph:
@@ -253,10 +372,12 @@ class TestStudioPage:
             rest = match.group("rest")
             spec = {}
             if "choices" in rest:
-                spec["enum"] = re.findall(r'"([a-z]+)"', re.search(r"choices:\[(.*?)\]", rest).group(1))
+                choices = re.search(r"choices:\[(.*?)\]", rest).group(1)
+                spec["enum"] = re.findall(r'"([a-z]+)"', choices)
                 spec["default"] = re.search(r'v:"([a-z]+)"', rest).group(1)
             else:
-                for page_key, schema_key in (("min", "minimum"), ("max", "maximum"), ("v", "default")):
+                pairs = (("min", "minimum"), ("max", "maximum"), ("v", "default"))
+                for page_key, schema_key in pairs:
                     found = re.search(page_key + r":\s*(-?[\d.]+)", rest)
                     if found:
                         spec[schema_key] = float(found.group(1))

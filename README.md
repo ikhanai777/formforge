@@ -88,6 +88,7 @@ formforge templates                              # what is available
 formforge templates planter_halfmoon_wall        # parameters, ranges, print test
 formforge generate "a hex planter for a 4in pot"
 formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
+formforge vase --count 8 --style mixed                   # a shelf of vases
 formforge mushroom --count 8 --seed 42 --species mixed   # a population of STLs
 formforge check model.stl --profile bambu_p1s_0.4 --category planter
 formforge render model.stl --out previews/
@@ -116,11 +117,17 @@ where the sliders go, so one definition covers a population rather than a
 specimen:
 
 ```bash
-formforge mushroom --count 8 --seed 42 --species mixed --out out/mushrooms
-formforge mushroom --explain                    # the definition, as a graph
-formforge mushroom --params-only --count 12     # the sliders, no geometry
+formforge vase --count 8 --seed 42 --style mixed --out out/vases
+formforge mushroom --count 8 --seed 42 --species mixed
+formforge vase --explain                        # the definition, as a graph
+formforge vase --params-only --count 12         # the sliders, no geometry
 formforge mushroom --species parasol --set cap_d_mm=90 --render
 ```
+
+Two definitions ship today: a **vase** in twelve silhouettes -- urn, amphora,
+bottle, bud, tulip, hourglass, cylinder, faceted, crystal, spiral, fluted,
+rippled -- and a detailed **mushroom** in seven species. They share a solver, a
+CLI command and one test that every generator in the catalog has to pass.
 
 Each run writes an STL, a STEP and a 3MF per specimen plus a `variations.json`
 with the parameters, bounding box and DFM verdict of each, so a population is
@@ -300,7 +307,7 @@ formforge/
   api/            the HTTP gateway
   eval/           the template harness and the benchmark
   generators/     dataflow definitions that decide where the sliders go
-  templates/      13 verified parametric definitions
+  templates/      14 verified parametric definitions
 web/
   studio.html     the mushroom definition as a browser front end, no build step
 ```
