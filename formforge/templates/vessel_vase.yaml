@@ -26,11 +26,12 @@ print_test:
   rationale: >
     A vase is the one shape FDM prints well without supports, so the defaults
     are chosen to keep it that way: the silhouette is a monotone curve through
-    four diameters, the wall is 1.6 mm (four perimeters at 0.4 mm) and the base
-    is 2.4 mm so it does not warp off the plate. Set wall_mm to one extrusion
-    width and the same model prints in vase mode as a single continuous
-    extrusion. What no parameter can fix is that an FDM vase leaks: the wall is
-    a spiral of beads with a seam, so it wants a glass liner, a test tube, or a
+    four diameters, no segment of it turns faster than the 45 degrees a printer
+    holds unsupported, the wall is 1.6 mm (four perimeters at 0.4 mm) and the
+    base is 2.4 mm so it does not warp off the plate. It prints in vase mode as
+    it is -- the slicer follows the outer surface and ignores the modelled
+    wall. What no parameter can fix is that an FDM vase leaks: the wall is a
+    spiral of beads with a seam, so it wants a glass liner, a test tube, or a
     coat of sealant before it holds water.
 
 expected_solids: 1
@@ -45,9 +46,11 @@ param_schema:
     height_mm:
       type: number
       minimum: 60
-      maximum: 260
+      maximum: 240
       default: 180
-      description: "Base to rim. 260 mm is about as tall as a 0.4 mm nozzle stays tidy."
+      description: >
+        Base to rim. The ceiling is the build volume, not the geometry: 240 mm
+        leaves room under the 250 mm a P1S-class printer can reach.
       ui: { widget: slider, step: 5, label: "Height" }
     base_d_mm:
       type: number
@@ -166,13 +169,14 @@ param_schema:
       ui: { widget: slider, step: 0.1, label: "Ring depth" }
     wall_mm:
       type: number
-      minimum: 0.8
+      minimum: 1.0
       maximum: 4
       default: 1.6
       description: >
         Wall thickness, measured perpendicular to the surface. 1.6 mm is four
-        perimeters at a 0.4 mm nozzle; set it to one extrusion width for vase
-        mode.
+        perimeters at a 0.4 mm nozzle. Vase mode does not need a thinner wall
+        here -- the slicer follows the outer surface and lays one bead of
+        whatever width it is set to, whatever the model says.
       ui: { widget: slider, step: 0.1, label: "Wall" }
     base_mm:
       type: number
@@ -218,6 +222,13 @@ preconditions:
   # A flute is cut into the wall from both sides, so a deep one on a narrow
   # neck leaves nothing in between.
   - "lobes >= 1 implies neck_d_mm / 2 - lobe_mm - wall_mm * 2 > 3"
+  # No segment of the silhouette may change radius faster than 45 degrees --
+  # in either direction. Flaring out that fast is an overhang; closing in that
+  # fast is a bridge across the mouth. Both need support on a shape whose whole
+  # appeal is that it does not.
+  - "abs(mid_d_mm - base_d_mm) / 2 <= mid_pos * height_mm"
+  - "abs(neck_d_mm - mid_d_mm) / 2 <= (neck_pos - mid_pos) * height_mm"
+  - "abs(rim_d_mm - neck_d_mm) / 2 <= (1 - neck_pos) * height_mm"
   # Twist and detail multiply: the bands have to be fine enough that
   # consecutive sections are a fraction of a flute apart, and past this the
   # geometry costs minutes rather than seconds -- and starts handing back a
@@ -437,7 +448,11 @@ source: |
       z = BASE_MM + (HEIGHT_MM + 4.0 - BASE_MM) * i / INNER_STEPS
       t = min(1.0, z / HEIGHT_MM)
       slope = slope_at(t)
-      wall = WALL_MM * math.sqrt(1.0 + slope * slope)
+      # Perpendicular, not radial: a radial inset on a sloped shoulder is thinner
+      # than it looks by the cosine of the slope. Capped, because the correction
+      # runs away on a near-horizontal flare and insets the cavity past the far
+      # wall -- which came out as a 0.15 mm rim.
+      wall = WALL_MM * min(2.5, math.sqrt(1.0 + slope * slope))
       if RIM_BAND_MM > 0:
           # Thicken the last 10 mm into a lip you can pick the vase up by.
           near_rim = max(0.0, (z - (HEIGHT_MM - 10.0)) / 10.0)

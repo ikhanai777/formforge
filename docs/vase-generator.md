@@ -65,6 +65,14 @@ Applied to the radius, in this order, on both the outer skin and the cavity:
 * **twist** — rotation of the section from base to rim. With flutes or facets
   this is the spiral vase everyone prints; on a round section it does nothing.
 
+No segment of the silhouette may change radius faster than **45 degrees**, in
+either direction, and the template says so as a precondition. Flaring out that
+fast is an overhang; closing in that fast is a bridge across the mouth. The
+range sweep is what put the rule there: a 190 mm neck under a 66 mm rim built
+happily and then failed the DFM check on a 25 mm unsupported span, and a 200 mm
+rim came out with a 0.15 mm edge. Neither is a geometry bug -- both are shapes
+that need supports, on the one object that otherwise never does.
+
 ## The wall
 
 The cavity is a second loft of the same skin, inset perpendicular to the
@@ -73,8 +81,11 @@ thinner than it looks by the cosine of the slope. It starts at `base_mm` and
 runs past the rim, so one boolean gives both the wall and the mouth.
 `rim_band_mm` thickens the top 10 mm into a lip that survives handling.
 
-Set `wall_mm` to one extrusion width and the same model prints in vase mode as
-a single continuous bead.
+It prints in vase mode as it is: the slicer follows the outer surface and lays
+one bead of whatever width it is set to, whatever the model's wall says. The
+perpendicular compensation is capped at 2.5x for the same reason the 45 degree
+rule exists -- on a near-horizontal flare it runs away and insets the cavity
+past the far wall, which is how a 200 mm rim came out 0.15 mm thick.
 
 ## What the geometry costs, and why the schema stops where it does
 
@@ -110,6 +121,8 @@ the only overhang is whatever the shoulder makes. Two honest caveats:
 
 * **It will not hold water.** The wall is a spiral of beads with a seam. Use a
   test tube or a glass liner for cut flowers, or seal the inside.
+* Height stops at 240 mm because that is the build volume, not the geometry:
+  260 mm builds fine and then fails the DFM check against a 250 mm Z.
 * Nothing here has been physically printed. The template records
   `print_test: untested`, and every number above is a measurement of the model.
 

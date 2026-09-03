@@ -246,6 +246,24 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
     floor = out["wall_mm"] * 2 + 7.0
     for name in PROPORTIONAL:
         out[name] = max(out[name], floor)
+    # No segment of the silhouette turns faster than 45 degrees, in either
+    # direction: flaring out that fast is an overhang, closing in that fast is
+    # a bridge across the mouth, and the whole appeal of a vase is that it
+    # needs neither. Walked bottom-up, so each fix is measured against the
+    # segment below it that has already been fixed.
+    height = out["height_mm"]
+    spans = (
+        ("base_d_mm", "mid_d_mm", out["mid_pos"]),
+        ("mid_d_mm", "neck_d_mm", out["neck_pos"] - out["mid_pos"]),
+        ("neck_d_mm", "rim_d_mm", 1.0 - out["neck_pos"]),
+    )
+    for lower, upper, span in spans:
+        room = span * height * 2.0 * 0.96
+        delta = out[upper] - out[lower]
+        if abs(delta) > room:
+            out[upper] = out[lower] + (room if delta > 0 else -room)
+        out[upper] = max(out[upper], floor)
+
     # A flute is cut from both sides of the wall, so a deep one needs a neck
     # wide enough to have something left in the middle.
     if out["lobes"] >= 1:
