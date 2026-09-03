@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mushroom Studio</title>
+<title>FormForge Studio</title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
 /* ---------------------------------------------------------------
-   Mushroom Studio -- front end for the nature_mushroom definition.
+   FormForge Studio -- front end for the parametric definitions.
    Palette: humus and spore print. Chestnut is the only accent; moss
    carries "this will build", rust carries "this will not".
    --------------------------------------------------------------- */
@@ -135,6 +135,34 @@ button, input, select { font: inherit; color: inherit; }
 }
 .pipeline b { color: var(--accent); font-weight: 500; }
 .pipeline i { font-style: normal; opacity: .5; }
+
+/* model tabs */
+.tabs {
+  display: flex;
+  gap: 6px;
+  background: var(--sunken);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 3px;
+}
+.tab {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 7px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] {
+  background: var(--surface);
+  color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0,0,0,.08);
+}
 
 /* ---- layout --------------------------------------------------- */
 .studio {
@@ -437,10 +465,13 @@ input[type="range"]::-moz-range-thumb {
 <div class="shell">
   <header class="masthead">
     <div>
-      <h1 class="wordmark">Mushroom <span>Studio</span></h1>
-      <p class="tagline">Every slider below is a parameter of the <code>nature_mushroom</code> template. Move them, watch the model rebuild, then take the exact command that builds it for real &mdash; validated, watertight, with STEP and 3MF alongside.</p>
+      <h1 class="wordmark">FormForge <span>Studio</span></h1>
+      <p class="tagline" id="tagline"></p>
     </div>
-    <div class="pipeline" id="pipeline"></div>
+    <div style="display:grid; gap:10px; justify-items:end;">
+      <div class="tabs" id="tabs" role="tablist"></div>
+      <div class="pipeline" id="pipeline"></div>
+    </div>
   </header>
 
   <div class="studio">
@@ -459,7 +490,7 @@ input[type="range"]::-moz-range-thumb {
 
     <aside class="controls">
       <section class="panel">
-        <h2>Species <span id="species-name"></span></h2>
+        <h2 id="preset-heading">Presets <span id="species-name"></span></h2>
         <div class="species" id="species"></div>
         <div class="seedrow" style="margin-top:11px;">
           <label for="seed" style="font-size:12.5px;">Seed</label>
@@ -467,14 +498,10 @@ input[type="range"]::-moz-range-thumb {
           <button class="btn" id="shuffle" type="button">Shuffle</button>
           <button class="btn" id="reset" type="button">Reset</button>
         </div>
-        <p class="footnote">The seed places the warts and the irregularity in each lobe. The same seed rebuilds the same mushroom here, in the CAD kernel, and on anyone else&rsquo;s machine.</p>
+        <p class="footnote" id="seed-note"></p>
       </section>
 
-      <section class="panel"><h2>Cap</h2><div id="group-cap"></div></section>
-      <section class="panel"><h2>Underside</h2><div id="group-underside"></div></section>
-      <section class="panel"><h2>Stem</h2><div id="group-stem"></div></section>
-      <section class="panel"><h2>Veil ring</h2><div id="group-ring"></div></section>
-      <section class="panel"><h2>Warts</h2><div id="group-warts"></div></section>
+      <div id="groups" style="display:grid; gap:14px;"></div>
 
       <section class="panel">
         <h2>Take it away</h2>
@@ -505,11 +532,16 @@ input[type="range"]::-moz-range-thumb {
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 "use strict";
+/* The four things that change when you switch models: the model itself,
+   its schema, the parameter set on the sliders, and which preset that set
+   started from. Everything below reads them; useModel(), at the bottom, is
+   the only thing that writes them. */
+let MODEL = null, SCHEMA = null, P = null, variant = null;
 /* =================================================================
    1. The schema. Ranges are the template's own -- a slider that goes
       past them is a model the geometry has never been swept across.
    ================================================================= */
-const SCHEMA = [
+const MUSHROOM_SCHEMA = [
   {k:"cap_d_mm",     g:"cap", label:"Cap diameter",   min:30,   max:120, step:1,    v:62,   unit:"mm",
    note:"The circle the margin is cut from."},
   {k:"cap_h_mm",     g:"cap", label:"Cap height",     min:6,    max:60,  step:1,    v:26,   unit:"mm"},
@@ -558,7 +590,7 @@ const SCHEMA = [
 ];
 
 /* Seven species: the same definition, seven sets of slider positions. */
-const SPECIES = {
+const MUSHROOM_PRESETS = {
   toadstool: {cap_d_mm:62, cap_h_mm:26, cap_fullness:2.2, cap_shoulder:0.62, cap_umbo_mm:2.5,
     cap_flesh_mm:6, cap_lobes:5, cap_wave_mm:2, underside:"gills", gill_count:16,
     stem_h_mm:58, stem_d_mm:14, stem_taper:0.2, stem_bulb:0.5, stem_lean_mm:6,
@@ -590,12 +622,12 @@ const SPECIES = {
     stem_h_mm:34, stem_d_mm:16, stem_taper:0.12, stem_bulb:0.25, stem_lean_mm:2,
     ring_style:"band", ring_w_mm:3, wart_count:0}
 };
-const SPECIES_LABEL = {
+const MUSHROOM_LABELS = {
   toadstool:"Toadstool", fly_agaric:"Fly agaric", parasol:"Parasol", bolete:"Bolete",
   chanterelle:"Chanterelle", ink_cap:"Ink cap", button:"Button"
 };
 /* How far each slider may wander from its species when you shuffle. */
-const JITTER = {
+const MUSHROOM_JITTER = {
   cap_d_mm:["rel",0.16], cap_h_mm:["rel",0.22], cap_fullness:["rel",0.2], cap_shoulder:["rel",0.15],
   cap_dish_mm:["rel",0.4], cap_umbo_mm:["abs",1.6], cap_flesh_mm:["rel",0.18],
   cap_margin_mm:["rel",0.15], cap_lobes:["abs",2], cap_wave_mm:["rel",0.45],
@@ -604,10 +636,8 @@ const JITTER = {
   ring_pos:["abs",0.07], wart_flatten:["abs",0.12]
 };
 
-const DEFAULTS = {};
-SCHEMA.forEach(f => DEFAULTS[f.k] = f.v);
-let P = Object.assign({}, DEFAULTS, SPECIES.toadstool, {seed: 7});
-let species = "toadstool";
+const MUSHROOM_DEFAULTS = {};
+MUSHROOM_SCHEMA.forEach(f => MUSHROOM_DEFAULTS[f.k] = f.v);
 
 /* =================================================================
    2. The geometry, ported from the template's build123d source.
@@ -802,7 +832,7 @@ function sphere(build, cx, cy, cz, r, rings, segs) {
 }
 
 /* --- the model ----------------------------------------------------- */
-function buildMesh(p, quality) {
+function mushroomMesh(p, quality) {
   const seg = quality === "export" ? 96 : 72;
   const build = new Builder();
   let material_mm3 = 0;
@@ -941,12 +971,12 @@ function buildMesh(p, quality) {
 }
 
 /* =================================================================
-   2b. The template's own build123d source, verbatim and base64'd so the
+   2b. The mushroom template's own build123d source, verbatim and base64'd so the
        page can hand you a script that builds the real thing. A test in
        the repo asserts this is byte-for-byte the template's source, so
        the two cannot drift.
    ================================================================= */
-const TEMPLATE_SOURCE_B64 = [
+const MUSHROOM_SOURCE_B64 = [
   "ZnJvbSBidWlsZDEyM2QgaW1wb3J0ICoKCmltcG9ydCBtYXRoCgojIC0tLSBzbGlkZXJzIC0tLS0tLS0tLS0tLS0tLS0tLS0t",
   "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCkNBUF9EX01NID0gNjIuMApDQVBfSF9NTSA9IDI2",
   "LjAKQ0FQX0ZVTExORVNTID0gMi4yCkNBUF9TSE9VTERFUiA9IDAuNjIKQ0FQX0RJU0hfTU0gPSAwLjAKQ0FQX1VNQk9fTU0g",
@@ -1134,7 +1164,7 @@ const TEMPLATE_SOURCE_B64 = [
   "Cg=="
 ].join("");
 function templateSource() {
-  return atob(TEMPLATE_SOURCE_B64);
+  return atob(MODEL.sourceB64);
 }
 /* Bind the sliders into the script the same way the CLI does: rewrite the
    module-level constant, leave every comment in place. */
@@ -1149,33 +1179,36 @@ function boundScript(p) {
     out = out.replace(pattern, name + " = " + value);
   }
   return [
-    "# " + SPECIES_LABEL[species] + ", seed " + p.seed + " -- built in Mushroom Studio.",
+    "# " + MODEL.labels[variant] + " " + MODEL.noun + ", seed " + p.seed +
+      " -- built in FormForge Studio.",
     "#",
-    "# This is the nature_mushroom template with your slider positions bound in.",
+    "# This is the " + MODEL.templateId + " template with your slider positions bound in.",
     "# It needs no repository and no server, only the CAD kernel:",
     "#",
     "#     pip install build123d",
-    "#     python mushroom.py",
+    "#     python " + MODEL.noun + ".py",
     "#",
-    "# It writes mushroom.step -- one solid with analytic faces, which opens in",
-    "# SolidWorks, Fusion or FreeCAD with its edges and faces intact -- and",
-    "# mushroom.stl beside it. Every dimension below is still a named constant:",
-    "# change one, run it again, and you have a different mushroom.",
+    "# It writes " + MODEL.noun + ".step -- one solid with analytic faces, which",
+    "# opens in SolidWorks, Fusion or FreeCAD with its edges and faces intact --",
+    "# and " + MODEL.noun + ".stl beside it. Every dimension below is still a named",
+    "# constant: change one, run it again, and you have a different " + MODEL.noun + ".",
     "",
     out.trimEnd(),
     "",
-    'export_step(result, "mushroom.step")',
-    'export_stl(result, "mushroom.stl", tolerance=0.05, angular_tolerance=0.2)',
-    'print("wrote mushroom.step and mushroom.stl")',
+    'export_step(result, "' + MODEL.noun + '.step")',
+    'export_stl(result, "' + MODEL.noun + '.stl", tolerance=0.05, angular_tolerance=0.2)',
+    'print("wrote ' + MODEL.noun + '.step and ' + MODEL.noun + '.stl")',
     ""
   ].join("\n");
 }
 
 /* =================================================================
-   3. The rules the template states as preconditions. Same numbers,
-      checked here so you find out before the kernel does.
+   2c. The rules the mushroom template states as preconditions, and
+       the proportion and feasibility nodes the generator runs after
+       the jitter. Same numbers as the Python, checked here so you
+       find out before the kernel does.
    ================================================================= */
-function check(p) {
+function mushroomCheck(p) {
   const out = [];
   if (!(p.stem_h_mm >= p.cap_h_mm * 0.5 + 12))
     out.push(["The stem is too short for the cap it carries.", "raise the stem above " + (p.cap_h_mm * 0.5 + 12).toFixed(0) + " mm"]);
@@ -1196,6 +1229,496 @@ function check(p) {
   return out;
 }
 
+/* Shuffle: the proportion and feasibility nodes, as the generator runs them. */
+function mushroomShuffle(next, base, seed) {
+  const capScale = next.cap_d_mm / base.cap_d_mm;
+  next.stem_h_mm = base.stem_h_mm * capScale;
+  next.stem_d_mm = base.stem_d_mm * capScale;
+  next.gill_count = Math.round(Math.min(next.cap_d_mm * 0.26, 1000 / next.cap_d_mm));
+  next.gill_depth_mm = Math.min(next.cap_flesh_mm + 2, next.cap_d_mm * 0.11);
+  next.ring_w_mm = next.stem_d_mm * 0.42;
+  if (base.wart_count)
+    next.wart_count = Math.round(Math.min(next.cap_d_mm * next.cap_d_mm * 0.004, 1600 / next.cap_d_mm));
+
+  next.cap_h_mm = Math.max(next.cap_h_mm, next.cap_flesh_mm + next.cap_margin_mm + 1);
+  next.stem_h_mm = Math.max(next.stem_h_mm, next.cap_h_mm * 0.5 + 13);
+  next.stem_d_mm = Math.min(next.stem_d_mm, next.cap_d_mm * 0.55);
+  if (next.underside !== "smooth") {
+    const room = next.cap_d_mm / 2 - next.cap_margin_mm * 1.5 - next.cap_wave_mm;
+    next.stem_d_mm = Math.min(next.stem_d_mm, (room - 8.5) / 0.625);
+  }
+  const foot = next.stem_d_mm / 2 * (1 + next.stem_bulb);
+  if (next.stem_lean_mm * 0.75 >= foot) {
+    next.stem_bulb = Math.min(1.2, Math.max(next.stem_bulb,
+      next.stem_lean_mm * 0.825 / Math.max(next.stem_d_mm / 2, 1e-6) - 1));
+    next.stem_lean_mm = Math.min(next.stem_lean_mm,
+      next.stem_d_mm / 2 * (1 + next.stem_bulb) / 0.75 * 0.92);
+  }
+  if (next.ring_style !== "none") {
+    next.stem_h_mm = Math.max(next.stem_h_mm,
+      next.cap_h_mm - next.cap_flesh_mm * 0.7 + next.ring_w_mm + 6);
+  }
+  return next;
+}
+
+/* =================================================================
+   3. The vase: the vessel_vase template, ported the same way. Four
+      control diameters through a monotone cubic, wrapped in facets,
+      flutes, rings and a twist -- and, because a vase is a wall rather
+      than a lump, built here as one closed shell rather than a boolean
+      between two.
+   ================================================================= */
+const VASE_SCHEMA = [
+  {k:"height_mm",   g:"form", label:"Height",      min:60,  max:240, step:5,   v:180, unit:"mm",
+   note:"The ceiling is the build volume, not the geometry."},
+  {k:"base_d_mm",   g:"form", label:"Base",        min:25,  max:160, step:2,   v:62,  unit:"mm",
+   note:"Where it meets the plate. This is the whole footprint."},
+  {k:"mid_d_mm",    g:"form", label:"Belly",       min:30,  max:190, step:2,   v:96,  unit:"mm",
+   note:"Wider than base and rim is an urn; narrower is a waist."},
+  {k:"mid_pos",     g:"form", label:"Belly height",min:0.15,max:0.7, step:0.01,v:0.42,unit:""},
+  {k:"neck_d_mm",   g:"form", label:"Neck",        min:18,  max:190, step:2,   v:54,  unit:"mm"},
+  {k:"neck_pos",    g:"form", label:"Neck height", min:0.55,max:0.95,step:0.01,v:0.84,unit:""},
+  {k:"rim_d_mm",    g:"form", label:"Rim",         min:20,  max:200, step:2,   v:66,  unit:"mm",
+   note:"Well above a narrow neck it flares into a tulip."},
+  {k:"shoulder",    g:"form", label:"Roundness",   min:0,   max:1,   step:0.05,v:0.5, unit:"",
+   note:"0 runs the segments nearly straight for a turned look; 1 rounds them fully."},
+
+  {k:"facets",      g:"surface", label:"Facets",   min:0,   max:12,  step:1,   v:0,   unit:"",
+   note:"Sides of the cross-section. 0 keeps it round."},
+  {k:"facet_round", g:"surface", label:"Facet rounding", min:0, max:1, step:0.05, v:0.35, unit:""},
+  {k:"lobes",       g:"surface", label:"Flutes",   min:0,   max:12,  step:1,   v:0,   unit:""},
+  {k:"lobe_mm",     g:"surface", label:"Flute depth", min:0, max:5,  step:0.1, v:0,   unit:"mm",
+   note:"Added to the radius, not scaled into it, so the wall keeps its thickness in the troughs."},
+  {k:"flute_sharp", g:"surface", label:"Flute sharpness", min:0, max:1, step:0.05, v:0, unit:""},
+  {k:"twist_deg",   g:"surface", label:"Twist",    min:-720,max:720, step:10,  v:0,   unit:"°",
+   note:"With flutes or facets this is the spiral vase; on a round section it does nothing."},
+  {k:"ripples",     g:"surface", label:"Rings",    min:0,   max:12,  step:1,   v:0,   unit:""},
+  {k:"ripple_mm",   g:"surface", label:"Ring depth", min:0, max:3,   step:0.1, v:0,   unit:"mm"},
+
+  {k:"wall_mm",     g:"wall", label:"Wall",        min:1,   max:4,   step:0.1, v:1.6, unit:"mm",
+   note:"Measured perpendicular to the surface. Vase mode ignores it and lays one bead."},
+  {k:"base_mm",     g:"wall", label:"Floor",       min:1.2, max:8,   step:0.2, v:2.4, unit:"mm"},
+  {k:"rim_band_mm", g:"wall", label:"Rim thickening", min:0, max:3,  step:0.1, v:0,   unit:"mm",
+   note:"Extra wall in the top 10 mm, for a lip that survives handling."}
+];
+
+const VASE_PRESETS = {
+  classic: {height_mm:180, base_d_mm:62, mid_d_mm:96, mid_pos:0.42, neck_d_mm:54,
+    neck_pos:0.84, rim_d_mm:66, shoulder:0.5},
+  amphora: {height_mm:200, base_d_mm:46, mid_d_mm:104, mid_pos:0.5, neck_d_mm:44,
+    neck_pos:0.86, rim_d_mm:58, shoulder:0.6},
+  bottle: {height_mm:210, base_d_mm:74, mid_d_mm:86, mid_pos:0.22, neck_d_mm:30,
+    neck_pos:0.66, rim_d_mm:34, shoulder:0.85},
+  bud: {height_mm:130, base_d_mm:36, mid_d_mm:48, mid_pos:0.22, neck_d_mm:22,
+    neck_pos:0.7, rim_d_mm:26, shoulder:0.7, wall_mm:1.4},
+  tulip: {height_mm:165, base_d_mm:42, mid_d_mm:54, mid_pos:0.28, neck_d_mm:70,
+    neck_pos:0.78, rim_d_mm:106, shoulder:0.55, rim_band_mm:0.8},
+  hourglass: {height_mm:175, base_d_mm:84, mid_d_mm:46, mid_pos:0.45, neck_d_mm:74,
+    neck_pos:0.88, rim_d_mm:82, shoulder:0.65},
+  cylinder: {height_mm:190, base_d_mm:78, mid_d_mm:76, mid_pos:0.45, neck_d_mm:76,
+    neck_pos:0.85, rim_d_mm:80, shoulder:0.2, rim_band_mm:1.0},
+  faceted: {height_mm:180, base_d_mm:56, mid_d_mm:92, mid_pos:0.38, neck_d_mm:62,
+    neck_pos:0.82, rim_d_mm:74, shoulder:0.35, facets:6, facet_round:0.05},
+  crystal: {height_mm:180, base_d_mm:50, mid_d_mm:94, mid_pos:0.5, neck_d_mm:58,
+    neck_pos:0.84, rim_d_mm:66, shoulder:0.15, facets:5, facet_round:0.02, twist_deg:140},
+  spiral: {height_mm:190, base_d_mm:60, mid_d_mm:92, mid_pos:0.45, neck_d_mm:70,
+    neck_pos:0.85, rim_d_mm:78, shoulder:0.5, lobes:9, lobe_mm:3.4, flute_sharp:0.4,
+    twist_deg:300},
+  fluted: {height_mm:210, base_d_mm:78, mid_d_mm:82, mid_pos:0.5, neck_d_mm:78,
+    neck_pos:0.85, rim_d_mm:88, shoulder:0.2, lobes:12, lobe_mm:2.2, flute_sharp:0.85,
+    rim_band_mm:1.2},
+  rippled: {height_mm:180, base_d_mm:64, mid_d_mm:92, mid_pos:0.44, neck_d_mm:74,
+    neck_pos:0.86, rim_d_mm:80, shoulder:0.5, ripples:11, ripple_mm:2.2}
+};
+const VASE_LABELS = {
+  classic:"Classic", amphora:"Amphora", bottle:"Bottle", bud:"Bud", tulip:"Tulip",
+  hourglass:"Hourglass", cylinder:"Cylinder", faceted:"Faceted", crystal:"Crystal",
+  spiral:"Spiral", fluted:"Fluted", rippled:"Rippled"
+};
+const VASE_JITTER = {
+  height_mm:["rel",0.16], mid_pos:["abs",0.05], neck_pos:["abs",0.04],
+  shoulder:["abs",0.18], facet_round:["abs",0.06], lobe_mm:["rel",0.22],
+  flute_sharp:["abs",0.15], twist_deg:["rel",0.3], ripple_mm:["rel",0.25],
+  wall_mm:["abs",0.2], rim_band_mm:["abs",0.4]
+};
+const VASE_DEFAULTS = {};
+VASE_SCHEMA.forEach(f => VASE_DEFAULTS[f.k] = f.v);
+
+/* The vase template's own build123d source, base64'd the same way, so the
+   STEP script this page hands out is the template rather than a copy of it. */
+const VASE_SOURCE_B64 = [
+  "ZnJvbSBidWlsZDEyM2QgaW1wb3J0ICoKCmltcG9ydCBtYXRoCgojIC0tLSBzbGlkZXJzIC0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCkhFSUdIVF9NTSA9IDE4MC4wCkJBU0VfRF9NTSA9",
+  "IDYyLjAKTUlEX0RfTU0gPSA5Ni4wCk1JRF9QT1MgPSAwLjQyCk5FQ0tfRF9NTSA9IDU0LjAKTkVDS19QT1MgPSAwLjg0ClJJ",
+  "TV9EX01NID0gNjYuMApTSE9VTERFUiA9IDAuNQpGQUNFVFMgPSAwCkZBQ0VUX1JPVU5EID0gMC4zNQpMT0JFUyA9IDAKTE9C",
+  "RV9NTSA9IDAuMApGTFVURV9TSEFSUCA9IDAuMApUV0lTVF9ERUcgPSAwLjAKUklQUExFUyA9IDAKUklQUExFX01NID0gMC4w",
+  "CldBTExfTU0gPSAxLjYKQkFTRV9NTSA9IDIuNApSSU1fQkFORF9NTSA9IDAuMApTRUVEID0gMQoKVEFVID0gNi4yODMxODUz",
+  "MDcxNzk4NjIKCiMgUmVzb2x1dGlvbiBmb2xsb3dzIHRoZSBkZXRhaWwgYXNrZWQgZm9yLCBhbmQgbm90aGluZyBlbHNlLiBC",
+  "b3RoIHNraW5zIGFyZQojIGxvZnRlZCB0aHJvdWdoIFNFQ1RJT05TIHggUE9JTlRTIHBvaW50cyBhbmQgdGhlbiBjdXQgYWdh",
+  "aW5zdCBlYWNoIG90aGVyLCBzbwojIHRoZSBwcm9kdWN0IGlzIHdoYXQgdGhlIGJ1aWxkIGNvc3RzOiBhIGZpeGVkIGhpZ2gg",
+  "cmVzb2x1dGlvbiBzcGVuZHMgbW9zdCBvZgojIHRoZSBDUFUgYnVkZ2V0IHJlbmRlcmluZyBhIHNtb290aCBjeWxpbmRlciBp",
+  "biBleHF1aXNpdGUgZGV0YWlsLgpTSEFSUF9GQUNFVFMgPSBGQUNFVFMgPj0gMyBhbmQgRkFDRVRfUk9VTkQgPCAwLjE1IGFu",
+  "ZCBMT0JFUyA8IDEKaWYgU0hBUlBfRkFDRVRTOgogICAgIyBBIHBvbHlnb24gbmVlZHMgaXRzIG93biBjb3JuZXJzIGFuZCBu",
+  "b3RoaW5nIGVsc2U6IHNhbXBsaW5nIGF0IGV4YWN0bHkKICAgICMgRkFDRVRTIHBvaW50cyBsYW5kcyBvbiBldmVyeSBjb3Ju",
+  "ZXIsIGFuZCB0aGUgbG9mdCBpcyB0aGVuIGEgaGFuZGZ1bCBvZgogICAgIyBydWxlZCBzdHJpcHMgcmF0aGVyIHRoYW4gYSBm",
+  "ZXcgdGhvdXNhbmQgZmFjZXRzIHRvIGludGVyc2VjdC4KICAgIFBPSU5UUyA9IEZBQ0VUUwplbHNlOgogICAgUE9JTlRTID0g",
+  "bWluKDEyMCwgbWF4KDQ4LCBMT0JFUyAqIDYsIEZBQ0VUUyAqIDgpKQojIEEgcnVsZWQgYmFuZCBpcyBhIHN0cmFpZ2h0IGxp",
+  "bmUgdXAgdGhlIHdhbGwsIHNvIGEgcmlwcGxlIG5lZWRzIHNldmVyYWwgYmFuZHMKIyB0byBiZSBhIHJpcHBsZSByYXRoZXIg",
+  "dGhhbiBhIGNoYW1mZXIsIGFuZCBhIHR3aXN0ZWQgZmx1dGUgbmVlZHMgZW5vdWdoIGJhbmRzCiMgdGhhdCBjb25zZWN1dGl2",
+  "ZSBzZWN0aW9ucyBhcmUgYSBzbWFsbCBmcmFjdGlvbiBvZiBhIGZsdXRlIGFwYXJ0LiBVbmRlci1zYW1wbGUKIyBhIHR3aXN0",
+  "ZWQgZmx1dGUgYW5kIHRoZSBiYW5kcyBza2V3IHVudGlsIHRoZSBjYXZpdHkgY3Jvc3NlcyBpdHMgb3duIG91dGVyCiMgc2tp",
+  "bjogdGhlIGJvb2xlYW4gdGhlbiB0YWtlcyBtaW51dGVzIGFuZCBoYW5kcyBiYWNrIHRoZSB3cm9uZyBzb2xpZC4gT24gYQoj",
+  "IHNtb290aCBzaWxob3VldHRlIDQwIGJhbmRzIGtlZXBzIHRoZSBjaG9yZCBlcnJvciB1bmRlciBhIGxheWVyIGxpbmUsIGFu",
+  "ZCB0aGUKIyBzaGFkaW5nIGNvbnRpbnVvdXMgLS0gMjQgd2FzIGdlb21ldHJpY2FsbHkgZmluZSBhbmQgbG9va2VkIGZhY2V0",
+  "ZWQuClNQSVJBTCA9IGFicyhUV0lTVF9ERUcpICogbWF4KExPQkVTLCBGQUNFVFMsIDEpIC8gNjAuMApTRUNUSU9OUyA9IGlu",
+  "dChtaW4oOTYsIG1heCg0MCwgUklQUExFUyAqIDYsIFNQSVJBTCkpKQoKIyBCb3RoIHNraW5zIGFyZSBsb2Z0ZWQgdGhyb3Vn",
+  "aCBTRUNUSU9OUyB4IFBPSU5UUyBwb2ludHMgYW5kIHRoZW4gY3V0IGFnYWluc3QKIyBlYWNoIG90aGVyLCBzbyB0aGVpciBw",
+  "cm9kdWN0IGlzIHdoYXQgdGhlIGJ1aWxkIGNvc3RzLiBQYXN0IHRoaXMgY2VpbGluZyB0aGUKIyByZXNvbHV0aW9uIGdpdmVz",
+  "IHdheSByYXRoZXIgdGhhbiB0aGUgZGVzaWduOiB0aGUgYW5ndWxhciBzYW1wbGluZyBmaXJzdCwKIyB0aGVuIHRoZSBiYW5k",
+  "cyAtLSBidXQgbmV2ZXIgYmVsb3cgd2hhdCB0aGUgc3BpcmFsIG5lZWRzLCBiZWNhdXNlIHRoYXQgaXMgdGhlCiMgc2FtcGxp",
+  "bmcgd2hvc2UgZmFpbHVyZSBicmVha3MgdGhlIHNvbGlkIGluc3RlYWQgb2Ygc29mdGVuaW5nIGl0LgpCVURHRVQgPSA0ODAw",
+  "CmlmIFNFQ1RJT05TICogUE9JTlRTID4gQlVER0VUOgogICAgc2hyaW5rID0gKEJVREdFVCAvIChTRUNUSU9OUyAqIFBPSU5U",
+  "UykpICoqIDAuNQogICAgUE9JTlRTID0gbWF4KDQ4LCBpbnQoUE9JTlRTICogc2hyaW5rKSkKICAgIFNFQ1RJT05TID0gaW50",
+  "KG1heCgyNCwgbWluKFNFQ1RJT05TLCBtYXgoU1BJUkFMLCBCVURHRVQgLyBQT0lOVFMpKSkpCgoKZGVmIGhhc2gwMShpbmRl",
+  "eCwgc2FsdCk6CiAgICAiIiJEZXRlcm1pbmlzdGljIHBzZXVkby1yYW5kb20gaW4gWzAsMSkuIFNhbWUgc2VlZCwgc2FtZSB2",
+  "YXNlLCBhbnl3aGVyZS4iIiIKICAgIHggPSBtYXRoLnNpbigoaW5kZXggKyAxKSAqIDEyLjk4OTggKyAoU0VFRCArIDEpICog",
+  "NzguMjMzICsgc2FsdCAqIDM3LjcxOSkgKiA0Mzc1OC41NDUzCiAgICByZXR1cm4geCAtIG1hdGguZmxvb3IoeCkKCgojIC0t",
+  "LSAxLiB0aGUgc2lsaG91ZXR0ZSAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0KIyBGb3VyIGNvbnRyb2wgZGlhbWV0ZXJzIHVwIHRoZSBoZWlnaHQuIEV2ZXJ5dGhpbmcgZnJvbSBhIGN5bGluZGVyIHRv",
+  "IGFuCiMgaG91cmdsYXNzIGlzIHdoZXJlIHlvdSBwdXQgdGhlbTogbWlkIHdpZGVyIHRoYW4gYmFzZSBhbmQgcmltIGlzIGFu",
+  "IHVybiwgbWlkCiMgbmFycm93ZXIgaXMgYSB3YWlzdCwgbmVjayBmYXIgYWJvdmUgdGhlIG1pZCB3aXRoIGEgd2lkZSByaW0g",
+  "aXMgYSB0dWxpcC4KQ09OVFJPTCA9IFsKICAgICgwLjAsIEJBU0VfRF9NTSAvIDIpLAogICAgKE1JRF9QT1MsIE1JRF9EX01N",
+  "IC8gMiksCiAgICAoTkVDS19QT1MsIE5FQ0tfRF9NTSAvIDIpLAogICAgKDEuMCwgUklNX0RfTU0gLyAyKSwKXQoKCmRlZiBt",
+  "b25vdG9uZV9zbG9wZXMoeHMsIHlzKToKICAgICIiIkZyaXRzY2gtQ2FybHNvbiB0YW5nZW50czogYSBzbW9vdGggY3VydmUg",
+  "dGhyb3VnaCB0aGUgY29udHJvbCBwb2ludHMgdGhhdAogICAgbmV2ZXIgb3ZlcnNob290cyB0aGVtLgoKICAgIEEgbmF0dXJh",
+  "bCBjdWJpYyB0aHJvdWdoIGZvdXIgZGlhbWV0ZXJzIGJ1bGdlcyBwYXN0IHRoZSB3aWRlc3Qgb25lIGFuZCBwdXRzCiAgICBh",
+  "biB1bmRlcmN1dCB3aGVyZSB0aGUgdXNlciBhc2tlZCBmb3IgYSBzdHJhaWdodCBzaG91bGRlci4gVGhpcyBkb2VzIG5vdDog",
+  "YQogICAgcHJvZmlsZSB0aGF0IHN0YXlzIGluc2lkZSBpdHMgb3duIGNvbnRyb2wgcG9pbnRzIGlzIG9uZSB0aGUgc2xpZGVy",
+  "cwogICAgYWN0dWFsbHkgZGVzY3JpYmUuCiAgICAiIiIKICAgIG4gPSBsZW4oeHMpCiAgICBkZWx0YXMgPSBbKHlzW2kgKyAx",
+  "XSAtIHlzW2ldKSAvICh4c1tpICsgMV0gLSB4c1tpXSkgZm9yIGkgaW4gcmFuZ2UobiAtIDEpXQogICAgc2xvcGVzID0gW2Rl",
+  "bHRhc1swXV0gKyBbMC4wXSAqIChuIC0gMikgKyBbZGVsdGFzWy0xXV0KICAgIGZvciBpIGluIHJhbmdlKDEsIG4gLSAxKToK",
+  "ICAgICAgICBpZiBkZWx0YXNbaSAtIDFdICogZGVsdGFzW2ldIDw9IDA6CiAgICAgICAgICAgIHNsb3Blc1tpXSA9IDAuMAog",
+  "ICAgICAgIGVsc2U6CiAgICAgICAgICAgIHcxID0gMiAqICh4c1tpICsgMV0gLSB4c1tpXSkgKyAoeHNbaV0gLSB4c1tpIC0g",
+  "MV0pCiAgICAgICAgICAgIHcyID0gKHhzW2kgKyAxXSAtIHhzW2ldKSArIDIgKiAoeHNbaV0gLSB4c1tpIC0gMV0pCiAgICAg",
+  "ICAgICAgIHNsb3Blc1tpXSA9ICh3MSArIHcyKSAvICh3MSAvIGRlbHRhc1tpIC0gMV0gKyB3MiAvIGRlbHRhc1tpXSkKICAg",
+  "IHJldHVybiBzbG9wZXMKCgpDWCA9IFtjWzBdIGZvciBjIGluIENPTlRST0xdCkNZID0gW2NbMV0gZm9yIGMgaW4gQ09OVFJP",
+  "TF0KQ00gPSBtb25vdG9uZV9zbG9wZXMoQ1gsIENZKQoKCmRlZiByYWRpdXNfYXQodCk6CiAgICAiIiJPdXRlciByYWRpdXMg",
+  "YXQgaGVpZ2h0IGZyYWN0aW9uIHQsIGJlZm9yZSBhbnkgc3VyZmFjZSBwYXR0ZXJuLiIiIgogICAgdCA9IG1pbigxLjAsIG1h",
+  "eCgwLjAsIHQpKQogICAgZm9yIGkgaW4gcmFuZ2UobGVuKENYKSAtIDEpOgogICAgICAgIGlmIENYW2ldIDw9IHQgPD0gQ1hb",
+  "aSArIDFdOgogICAgICAgICAgICBoID0gQ1hbaSArIDFdIC0gQ1hbaV0KICAgICAgICAgICAgcyA9ICh0IC0gQ1hbaV0pIC8g",
+  "aAogICAgICAgICAgICAjIEhlcm1pdGUgYmFzaXMsIHRlbnNpb24gZnJvbSBTSE9VTERFUjogMCBydW5zIHRoZSBzZWdtZW50",
+  "cyBhbG1vc3QKICAgICAgICAgICAgIyBzdHJhaWdodCAoYSBoYXJkIHNob3VsZGVyKSwgMSBsZXRzIHRoZW0gcm91bmQgZnVs",
+  "bHkuCiAgICAgICAgICAgIG0wLCBtMSA9IENNW2ldICogaCAqIFNIT1VMREVSICogMiwgQ01baSArIDFdICogaCAqIFNIT1VM",
+  "REVSICogMgogICAgICAgICAgICByZXR1cm4gKAogICAgICAgICAgICAgICAgKDIgKiBzKiozIC0gMyAqIHMqKjIgKyAxKSAq",
+  "IENZW2ldCiAgICAgICAgICAgICAgICArIChzKiozIC0gMiAqIHMqKjIgKyBzKSAqIG0wCiAgICAgICAgICAgICAgICArICgt",
+  "MiAqIHMqKjMgKyAzICogcyoqMikgKiBDWVtpICsgMV0KICAgICAgICAgICAgICAgICsgKHMqKjMgLSBzKioyKSAqIG0xCiAg",
+  "ICAgICAgICAgICkKICAgIHJldHVybiBDWVstMV0KCgpkZWYgc2xvcGVfYXQodCk6CiAgICAiIiJkci9keiwgdXNlZCB0byBr",
+  "ZWVwIHRoZSB3YWxsIHRoaWNrbmVzcyBob25lc3Qgb24gYSBzbG9wZWQgc3VyZmFjZS4iIiIKICAgIHN0ZXAgPSAxZS0zCiAg",
+  "ICBsbywgaGkgPSBtYXgoMC4wLCB0IC0gc3RlcCksIG1pbigxLjAsIHQgKyBzdGVwKQogICAgcmV0dXJuIChyYWRpdXNfYXQo",
+  "aGkpIC0gcmFkaXVzX2F0KGxvKSkgLyAoKGhpIC0gbG8pICogSEVJR0hUX01NKQoKCiMgLS0tIDIuIHRoZSBjcm9zcy1zZWN0",
+  "aW9uIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQpkZWYgZmFjZXRfc2hhcGUo",
+  "YW5nbGUpOgogICAgIiIiUm91bmRlZCBwb2x5Z29uIGFzIGEgbXVsdGlwbGllciBvbiB0aGUgcmFkaXVzLiAwIGZhY2V0cyBz",
+  "dGF5cyByb3VuZC4iIiIKICAgIGlmIEZBQ0VUUyA8IDM6CiAgICAgICAgcmV0dXJuIDEuMAogICAgc3RlcCA9IFRBVSAvIEZB",
+  "Q0VUUwogICAgbG9jYWwgPSAoYW5nbGUgJSBzdGVwKSAtIHN0ZXAgLyAyCiAgICBwb2x5Z29uID0gbWF0aC5jb3MobWF0aC5w",
+  "aSAvIEZBQ0VUUykgLyBtYXRoLmNvcyhsb2NhbCkKICAgIHJldHVybiBwb2x5Z29uICsgKDEuMCAtIHBvbHlnb24pICogRkFD",
+  "RVRfUk9VTkQKCgpkZWYgZmx1dGUoYW5nbGUpOgogICAgIiIiVmVydGljYWwgZmx1dGluZywgaW4gbWlsbGltZXRyZXMgcmF0",
+  "aGVyIHRoYW4gYXMgYSBmcmFjdGlvbi4KCiAgICBBZGRlZCB0byB0aGUgcmFkaXVzIHJhdGhlciB0aGFuIG11bHRpcGxpZWQg",
+  "aW50byBpdCwgc28gdGhlIHdhbGwgc3RheXMgdGhlCiAgICBzYW1lIHRoaWNrbmVzcyBpbiB0aGUgdHJvdWdocyBhcyBvbiB0",
+  "aGUgY3Jlc3RzIC0tIHdoaWNoIGlzIHdoYXQgdGhlIG5venpsZQogICAgY2FyZXMgYWJvdXQuCiAgICAiIiIKICAgIGlmIExP",
+  "QkVTIDwgMSBvciBMT0JFX01NIDw9IDA6CiAgICAgICAgcmV0dXJuIDAuMAogICAgd2F2ZSA9IG1hdGguY29zKExPQkVTICog",
+  "YW5nbGUpCiAgICBpZiBGTFVURV9TSEFSUCA+IDA6CiAgICAgICAgIyBCbGVuZCB0b3dhcmQgYSBjdXNwZWQgcHJvZmlsZTog",
+  "cm91bmRlZCBmbHV0ZXMgdG8gc2hhcnAgcmlicy4KICAgICAgICAjIDEvKDEgKyAxLjVmKSwgbm90IDEvKDEgKyAzZik6IHRo",
+  "ZSBjdXNwaWVyIGV4cG9uZW50IGRvdWJsZWQgd2hhdCB0aGUKICAgICAgICAjIGJvb2xlYW4gY29zdCBvbiBhIGxhcmdlIHZh",
+  "c2UgZm9yIGEgcmliIG5vYm9keSBjb3VsZCBzZWUgdGhlCiAgICAgICAgIyBkaWZmZXJlbmNlIGluIGF0IDAuNCBtbSBub3p6",
+  "bGUgd2lkdGguCiAgICAgICAgc2hhcnAgPSBtYXRoLmNvcHlzaWduKGFicyh3YXZlKSAqKiAoMS4wIC8gKDEuMCArIDEuNSAq",
+  "IEZMVVRFX1NIQVJQKSksIHdhdmUpCiAgICAgICAgd2F2ZSA9IHdhdmUgKiAoMSAtIEZMVVRFX1NIQVJQKSArIHNoYXJwICog",
+  "RkxVVEVfU0hBUlAKICAgIHJldHVybiBMT0JFX01NICogd2F2ZQoKCmRlZiByaXBwbGUodCk6CiAgICAiIiJIb3Jpem9udGFs",
+  "IHJpbmdpbmcgdXAgdGhlIHdhbGwuIiIiCiAgICBpZiBSSVBQTEVTIDwgMSBvciBSSVBQTEVfTU0gPD0gMDoKICAgICAgICBy",
+  "ZXR1cm4gMC4wCiAgICByZXR1cm4gUklQUExFX01NICogbWF0aC5zaW4oVEFVICogUklQUExFUyAqIHQpCgoKZGVmIG91dGVy",
+  "X3JhZGl1cyhhbmdsZSwgdCk6CiAgICBzcGluID0gbWF0aC5yYWRpYW5zKFRXSVNUX0RFRykgKiB0CiAgICByZXR1cm4gcmFk",
+  "aXVzX2F0KHQpICogZmFjZXRfc2hhcGUoYW5nbGUgKyBzcGluKSArIGZsdXRlKGFuZ2xlICsgc3BpbikgKyByaXBwbGUodCkK",
+  "CgpkZWYgc2VjdGlvbih0LCBpbnNldCwgaGVpZ2h0LCBjbG9zZWRfY3VydmU9VHJ1ZSk6CiAgICAiIiJPbmUgY2xvc2VkIGNy",
+  "b3NzLXNlY3Rpb24sIGFzIGEgZmFjZSBvbiBpdHMgb3duIHBsYW5lLiIiIgogICAgcG9pbnRzID0gW10KICAgIGZvciBpIGlu",
+  "IHJhbmdlKFBPSU5UUyk6CiAgICAgICAgYW5nbGUgPSBUQVUgKiBpIC8gUE9JTlRTCiAgICAgICAgciA9IG1heCgwLjQsIG91",
+  "dGVyX3JhZGl1cyhhbmdsZSwgdCkgLSBpbnNldCkKICAgICAgICBwb2ludHMuYXBwZW5kKChyICogbWF0aC5jb3MoYW5nbGUp",
+  "LCByICogbWF0aC5zaW4oYW5nbGUpKSkKICAgIHBsYW5lID0gUGxhbmUuWFkub2Zmc2V0KGhlaWdodCkKICAgIHdpdGggQnVp",
+  "bGRMaW5lKHBsYW5lKSBhcyBsaW5lOgogICAgICAgIGlmIGNsb3NlZF9jdXJ2ZToKICAgICAgICAgICAgU3BsaW5lKCpwb2lu",
+  "dHMsIHBvaW50c1swXSkKICAgICAgICBlbHNlOgogICAgICAgICAgICBQb2x5bGluZSgqcG9pbnRzLCBwb2ludHNbMF0pCiAg",
+  "ICByZXR1cm4gbWFrZV9mYWNlKGxpbmUubGluZSkKCgojIC0tLSAzLiBvdXRlciBza2luIC0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KU01PT1RIID0gRkFDRVRTID09IDAgb3IgRkFDRVRfUk9V",
+  "TkQgPiAwLjE1Cm91dGVyX3NlY3Rpb25zID0gWwogICAgc2VjdGlvbihpIC8gU0VDVElPTlMsIDAuMCwgSEVJR0hUX01NICog",
+  "aSAvIFNFQ1RJT05TLCBTTU9PVEgpIGZvciBpIGluIHJhbmdlKFNFQ1RJT05TICsgMSkKXQojIFJ1bGVkLCBub3Qgc21vb3Ro",
+  "OiBhIEMyIGxvZnQgdGhyb3VnaCB0d2lzdGVkIHNlY3Rpb25zIGJ1bGdlcyBiZXR3ZWVuIHRoZW0sCiMgYW5kIGEgY2F2aXR5",
+  "IHRoYXQgYnVsZ2VzIHRocm91Z2ggaXRzIG93biBvdXRlciBza2luIGN1dHMgdG8gbm90aGluZyAtLSBhCiMgdHdpc3RlZCB2",
+  "YXNlIGNhbWUgb3V0IHNvbGlkLCA4MzAgY20zIG9mIGl0LiBTdHJhaWdodCBiYW5kcyBiZXR3ZWVuIGNsb3NlbHkKIyBzcGFj",
+  "ZWQgc2VjdGlvbnMgYXJlIGFsc28gd2hhdCB0aGUgc2xpY2VyIHNlZXMgYW55d2F5LgpvdXRlciA9IGxvZnQob3V0ZXJfc2Vj",
+  "dGlvbnMsIHJ1bGVkPVRydWUpCgojIC0tLSA0LiB0aGUgY2F2aXR5IC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KIyBUaGUgd2FsbCBpcyBtZWFzdXJlZCBwZXJwZW5kaWN1bGFyIHRvIHRoZSBz",
+  "dXJmYWNlOiBvbiBhIHNsb3BlZCBzaG91bGRlciBhCiMgcHVyZWx5IHJhZGlhbCBpbnNldCBpcyB0aGlubmVyIHRoYW4gaXQg",
+  "bG9va3MsIGJ5IHRoZSBjb3NpbmUgb2YgdGhlIHNsb3BlLgpJTk5FUl9TVEVQUyA9IFNFQ1RJT05TCmlubmVyX3NlY3Rpb25z",
+  "ID0gW10KZm9yIGkgaW4gcmFuZ2UoSU5ORVJfU1RFUFMgKyAxKToKICAgIHogPSBCQVNFX01NICsgKEhFSUdIVF9NTSArIDQu",
+  "MCAtIEJBU0VfTU0pICogaSAvIElOTkVSX1NURVBTCiAgICB0ID0gbWluKDEuMCwgeiAvIEhFSUdIVF9NTSkKICAgIHNsb3Bl",
+  "ID0gc2xvcGVfYXQodCkKICAgICMgUGVycGVuZGljdWxhciwgbm90IHJhZGlhbDogYSByYWRpYWwgaW5zZXQgb24gYSBzbG9w",
+  "ZWQgc2hvdWxkZXIgaXMgdGhpbm5lcgogICAgIyB0aGFuIGl0IGxvb2tzIGJ5IHRoZSBjb3NpbmUgb2YgdGhlIHNsb3BlLiBD",
+  "YXBwZWQsIGJlY2F1c2UgdGhlIGNvcnJlY3Rpb24KICAgICMgcnVucyBhd2F5IG9uIGEgbmVhci1ob3Jpem9udGFsIGZsYXJl",
+  "IGFuZCBpbnNldHMgdGhlIGNhdml0eSBwYXN0IHRoZSBmYXIKICAgICMgd2FsbCAtLSB3aGljaCBjYW1lIG91dCBhcyBhIDAu",
+  "MTUgbW0gcmltLgogICAgd2FsbCA9IFdBTExfTU0gKiBtaW4oMi41LCBtYXRoLnNxcnQoMS4wICsgc2xvcGUgKiBzbG9wZSkp",
+  "CiAgICBpZiBSSU1fQkFORF9NTSA+IDA6CiAgICAgICAgIyBUaGlja2VuIHRoZSBsYXN0IDEwIG1tIGludG8gYSBsaXAgeW91",
+  "IGNhbiBwaWNrIHRoZSB2YXNlIHVwIGJ5LgogICAgICAgIG5lYXJfcmltID0gbWF4KDAuMCwgKHogLSAoSEVJR0hUX01NIC0g",
+  "MTAuMCkpIC8gMTAuMCkKICAgICAgICB3YWxsICs9IFJJTV9CQU5EX01NICogbWluKDEuMCwgbmVhcl9yaW0pCiAgICBpbm5l",
+  "cl9zZWN0aW9ucy5hcHBlbmQoc2VjdGlvbih0LCB3YWxsLCB6LCBTTU9PVEgpKQpjYXZpdHkgPSBsb2Z0KGlubmVyX3NlY3Rp",
+  "b25zLCBydWxlZD1UcnVlKQoKcmVzdWx0ID0gb3V0ZXIgLSBjYXZpdHkK"
+].join("");
+
+/* The silhouette: a Fritsch-Carlson monotone cubic through the four control
+   diameters. A natural cubic bulges past the widest of them and puts an
+   undercut where the slider said straight shoulder. */
+function vaseProfile(p) {
+  const cx = [0, p.mid_pos, p.neck_pos, 1];
+  const cy = [p.base_d_mm / 2, p.mid_d_mm / 2, p.neck_d_mm / 2, p.rim_d_mm / 2];
+  const d = [];
+  for (let i = 0; i < 3; i++) d.push((cy[i + 1] - cy[i]) / Math.max(cx[i + 1] - cx[i], 1e-6));
+  const m = [d[0], 0, 0, d[2]];
+  for (let i = 1; i < 3; i++) {
+    if (d[i - 1] * d[i] <= 0) { m[i] = 0; continue; }
+    const w1 = 2 * (cx[i + 1] - cx[i]) + (cx[i] - cx[i - 1]);
+    const w2 = (cx[i + 1] - cx[i]) + 2 * (cx[i] - cx[i - 1]);
+    m[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i]);
+  }
+  const radiusAt = t => {
+    t = Math.min(1, Math.max(0, t));
+    for (let i = 0; i < 3; i++) {
+      if (cx[i] <= t && t <= cx[i + 1]) {
+        const h = cx[i + 1] - cx[i];
+        const s = h <= 0 ? 0 : (t - cx[i]) / h;
+        const m0 = m[i] * h * p.shoulder * 2, m1 = m[i + 1] * h * p.shoulder * 2;
+        return (2 * s ** 3 - 3 * s ** 2 + 1) * cy[i]
+             + (s ** 3 - 2 * s ** 2 + s) * m0
+             + (-2 * s ** 3 + 3 * s ** 2) * cy[i + 1]
+             + (s ** 3 - s ** 2) * m1;
+      }
+    }
+    return cy[3];
+  };
+  const slopeAt = t => {
+    const step = 1e-3;
+    const lo = Math.max(0, t - step), hi = Math.min(1, t + step);
+    return (radiusAt(hi) - radiusAt(lo)) / ((hi - lo) * p.height_mm);
+  };
+  return {radiusAt, slopeAt};
+}
+
+function vaseFacet(p, angle) {
+  if (p.facets < 3) return 1;
+  const step = TAU / p.facets;
+  const local = ((angle % step) + step) % step - step / 2;
+  const polygon = Math.cos(Math.PI / p.facets) / Math.cos(local);
+  return polygon + (1 - polygon) * p.facet_round;
+}
+function vaseFlute(p, angle) {
+  if (p.lobes < 1 || p.lobe_mm <= 0) return 0;
+  let wave = Math.cos(p.lobes * angle);
+  if (p.flute_sharp > 0) {
+    const sharp = Math.sign(wave) * Math.abs(wave) ** (1 / (1 + 1.5 * p.flute_sharp));
+    wave = wave * (1 - p.flute_sharp) + sharp * p.flute_sharp;
+  }
+  return p.lobe_mm * wave;
+}
+function vaseRipple(p, t) {
+  if (p.ripples < 1 || p.ripple_mm <= 0) return 0;
+  return p.ripple_mm * Math.sin(TAU * p.ripples * t);
+}
+
+function vaseResolution(p, quality) {
+  const sharp = p.facets >= 3 && p.facet_round < 0.15 && p.lobes < 1;
+  let points = sharp ? p.facets : Math.min(120, Math.max(48, p.lobes * 6, p.facets * 8));
+  const spiral = Math.abs(p.twist_deg) * Math.max(p.lobes, p.facets, 1) / 60;
+  let sections = Math.min(96, Math.max(40, p.ripples * 6, spiral));
+  if (quality !== "export") {
+    sections = Math.min(sections, 56);
+    if (!sharp) points = Math.min(points, 84);
+  }
+  return {points: Math.round(points), sections: Math.round(sections), sharp};
+}
+
+/* A vase is a wall, so the mesh is one closed shell -- outer skin, rim,
+   inner skin, floor -- rather than a solid with a cavity cut out of it.
+   That makes the volume readout exact rather than an estimate. */
+function vaseMesh(p, quality) {
+  const {points, sections} = vaseResolution(p, quality);
+  const prof = vaseProfile(p);
+  const build = new Builder();
+
+  const ring = (t, inset, z) => {
+    const spin = (p.twist_deg * Math.PI / 180) * t;
+    const out = [];
+    for (let j = 0; j < points; j++) {
+      const angle = TAU * j / points;
+      const r = Math.max(0.4,
+        prof.radiusAt(t) * vaseFacet(p, angle + spin) + vaseFlute(p, angle + spin)
+        + vaseRipple(p, t) - inset);
+      out.push([r * Math.cos(angle), r * Math.sin(angle), z]);
+    }
+    return out;
+  };
+  const wallAt = t => {
+    const slope = prof.slopeAt(t);
+    let wall = p.wall_mm * Math.min(2.5, Math.sqrt(1 + slope * slope));
+    if (p.rim_band_mm > 0) {
+      const nearRim = Math.max(0, (t * p.height_mm - (p.height_mm - 10)) / 10);
+      wall += p.rim_band_mm * Math.min(1, nearRim);
+    }
+    return wall;
+  };
+
+  const outer = [], inner = [];
+  for (let i = 0; i <= sections; i++) {
+    const t = i / sections;
+    outer.push(ring(t, 0, p.height_mm * t));
+    const zi = p.base_mm + (p.height_mm - p.base_mm) * t;
+    const ti = Math.min(1, zi / p.height_mm);
+    inner.push(ring(ti, wallAt(ti), zi));
+  }
+
+  /* The kernel's bands are ruled, so every point between two sections is a
+     straight blend of them -- which means extra rows cost nothing in
+     accuracy and are exactly on the surface the kernel builds. They are
+     worth having: one quad spanning a 7 degree twist triangulates into a
+     visible chevron, and the vase looks stepped where the solid is not. */
+  const rows = Math.max(1, Math.min(4, Math.round(160 / sections)));
+  const dense = rings => {
+    if (rows === 1) return rings;
+    const out = [];
+    for (let i = 0; i < rings.length - 1; i++) {
+      for (let s = 0; s < rows; s++) {
+        const f = s / rows;
+        out.push(rings[i].map((q, j) => [
+          q[0] + (rings[i + 1][j][0] - q[0]) * f,
+          q[1] + (rings[i + 1][j][1] - q[1]) * f,
+          q[2] + (rings[i + 1][j][2] - q[2]) * f
+        ]));
+      }
+    }
+    out.push(rings[rings.length - 1]);
+    return out;
+  };
+  const outerRows = dense(outer), innerRows = dense(inner);
+
+  for (let i = 0; i < outerRows.length - 1; i++) {
+    for (let j = 0; j < points; j++) {
+      const k = (j + 1) % points;
+      build.quad(outerRows[i][j], outerRows[i][k], outerRows[i + 1][k], outerRows[i + 1][j]);
+      build.quad(innerRows[i][k], innerRows[i][j], innerRows[i + 1][j], innerRows[i + 1][k]);
+    }
+  }
+  // rim: the annulus that closes outer to inner at the top
+  const topOuter = outer[sections], topInner = inner[sections];
+  for (let j = 0; j < points; j++) {
+    const k = (j + 1) % points;
+    build.quad(topOuter[j], topOuter[k], topInner[k], topInner[j]);
+  }
+  // floor: a disc under the outside, and the cavity's floor above it
+  const baseRing = outer[0], cavityRing = inner[0];
+  const outerCentre = [0, 0, 0], innerCentre = [0, 0, p.base_mm];
+  for (let j = 0; j < points; j++) {
+    const k = (j + 1) % points;
+    build.tri(outerCentre, baseRing[k], baseRing[j]);
+    build.tri(innerCentre, cavityRing[j], cavityRing[k]);
+  }
+
+  const positions = new Float32Array(build.pos);
+  positions.materialVolume = Math.abs(build.volume());
+  return positions;
+}
+
+/* The template's preconditions, checked as you drag. */
+function vaseCheck(p) {
+  const out = [];
+  if (!(p.neck_pos > p.mid_pos + 0.05))
+    out.push(["The neck sits at or below the belly.", "raise the neck, or drop the belly"]);
+  if (!(p.base_mm < p.height_mm * 0.3))
+    out.push(["The floor is a third of the whole vase.", "thin the floor"]);
+  if (!(Math.min(p.base_d_mm, p.mid_d_mm, p.neck_d_mm, p.rim_d_mm) > p.wall_mm * 2 + 6))
+    out.push(["The cavity does not fit inside the narrowest diameter.",
+              "widen that diameter, or thin the wall"]);
+  if (p.lobes >= 1 && !(p.neck_d_mm / 2 - p.lobe_mm - p.wall_mm * 2 > 3))
+    out.push(["The flutes cut deeper than the neck has wall to spare.",
+              "shallower flutes, or a wider neck"]);
+  if (!(Math.abs(p.twist_deg) * Math.max(p.lobes, p.facets, 1) <= 3600))
+    out.push(["Twist times detail is past what the kernel can afford.",
+              "less twist, or fewer flutes"]);
+  const spans = [
+    [p.mid_d_mm - p.base_d_mm, p.mid_pos, "belly"],
+    [p.neck_d_mm - p.mid_d_mm, p.neck_pos - p.mid_pos, "neck"],
+    [p.rim_d_mm - p.neck_d_mm, 1 - p.neck_pos, "rim"]
+  ];
+  for (const [delta, span, where] of spans) {
+    if (Math.abs(delta) / 2 > span * p.height_mm) {
+      out.push([`The ${where} turns faster than 45°, which needs support.`,
+                delta > 0 ? "flare it less, or raise it further up" : "close it in more gently"]);
+      break;
+    }
+  }
+  return out;
+}
+
+/* Chip icon: the outer envelope of that style, so the icon is the vase. */
+function vaseSilhouette(preset) {
+  const p = Object.assign({}, VASE_DEFAULTS, preset);
+  const prof = vaseProfile(p);
+  const right = [];
+  for (let i = 0; i <= 40; i++) {
+    const t = i / 40;
+    right.push([prof.radiusAt(t), p.height_mm * t]);
+  }
+  const maxR = Math.max(...right.map(q => q[0])) || 1;
+  const k = Math.min(12 / maxR, 27 / p.height_mm);
+  const put = ([r, z]) => `${(16 + r * k).toFixed(1)},${(30 - z * k).toFixed(1)}`;
+  return `<svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><path d="M` +
+    right.map(put).join("L") + "L" +
+    right.slice().reverse().map(([r, z]) =>
+      `${(16 - r * k).toFixed(1)},${(30 - z * k).toFixed(1)}`).join("L") +
+    `Z"/></svg>`;
+}
+
+/* Shuffle: the proportion and feasibility nodes, as the generator runs them. */
+function vaseShuffle(next, base, seed) {
+  const height = next.height_mm;
+  const reference = base.height_mm;
+  ["base_d_mm", "mid_d_mm", "neck_d_mm", "rim_d_mm"].forEach(name => {
+    const wobble = 1 + 0.08 * (hash01(name.length, name.charCodeAt(1), seed) * 2 - 1);
+    next[name] = height * (base[name] / reference) * wobble;
+  });
+  if (base.ripples) next.ripples = Math.max(3, Math.round(height / (reference / base.ripples)));
+  if (base.lobes) next.lobes = Math.max(4, Math.round(next.mid_d_mm / (base.mid_d_mm / base.lobes)));
+
+  next.mid_pos = Math.min(Math.max(next.mid_pos, 0.16), 0.66);
+  next.neck_pos = Math.min(Math.max(next.neck_pos, next.mid_pos + 0.08), 0.95);
+  const floor = next.wall_mm * 2 + 7;
+  ["base_d_mm", "mid_d_mm", "neck_d_mm", "rim_d_mm"].forEach(n => {
+    next[n] = Math.max(next[n], floor);
+  });
+  // 45 degrees, in either direction, walked bottom-up
+  [["base_d_mm", "mid_d_mm", next.mid_pos],
+   ["mid_d_mm", "neck_d_mm", next.neck_pos - next.mid_pos],
+   ["neck_d_mm", "rim_d_mm", 1 - next.neck_pos]].forEach(([lower, upper, span]) => {
+    const room = span * next.height_mm * 2 * 0.96;
+    const delta = next[upper] - next[lower];
+    if (Math.abs(delta) > room) next[upper] = next[lower] + (delta > 0 ? room : -room);
+    next[upper] = Math.max(next[upper], floor);
+  });
+  if (next.lobes >= 1) {
+    next.lobe_mm = Math.max(0, Math.min(next.lobe_mm, next.neck_d_mm / 2 - next.wall_mm * 2 - 3.5));
+    if (next.lobe_mm < 0.4) next.lobes = 0;
+  }
+  const detail = Math.max(next.lobes, next.facets, 1);
+  if (Math.abs(next.twist_deg) * detail > 3400) {
+    next.twist_deg = Math.round(3400 / detail) * (next.twist_deg >= 0 ? 1 : -1);
+  }
+  next.base_mm = Math.min(next.base_mm, next.height_mm * 0.25);
+  return next;
+}
+
 /* =================================================================
    4. Three.js stage
    ================================================================= */
@@ -1211,7 +1734,7 @@ const rim = new THREE.DirectionalLight(0xffffff, 0.22); rim.position.set(40, 180
 scene.add(key, fill, rim, new THREE.AmbientLight(0xffffff, 0.34));
 
 const material = new THREE.MeshLambertMaterial({color: 0xc9c6be, side: THREE.DoubleSide});
-let mushroom = null;
+let shape = null;
 const plate = new THREE.GridHelper(200, 20);
 plate.rotation.x = Math.PI / 2;
 scene.add(plate);
@@ -1278,21 +1801,31 @@ function paintTheme() {
    5. Rebuild + readouts
    ================================================================= */
 let lastPositions = null;
+let refit = true;
 function rebuild() {
-  const positions = buildMesh(P, "preview");
+  const positions = MODEL.mesh(P, "preview");
   lastPositions = positions;
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   geo.computeVertexNormals();
   geo.computeBoundingBox();
-  if (mushroom) { scene.remove(mushroom); mushroom.geometry.dispose(); }
-  mushroom = new THREE.Mesh(geo, material);
-  scene.add(mushroom);
+  if (shape) { scene.remove(shape); shape.geometry.dispose(); }
+  shape = new THREE.Mesh(geo, material);
+  scene.add(shape);
 
   const bb = geo.boundingBox;
   const size = new THREE.Vector3(); bb.getSize(size);
   const centre = new THREE.Vector3(); bb.getCenter(centre);
   orbit.target.set(centre.x, centre.y, centre.z);
+  /* A slider drag keeps whatever zoom you set; a new model or a new preset
+     is a different object, so that one gets framed. A 240 mm vase and a
+     60 mm mushroom cannot share a camera distance. */
+  if (refit) {
+    refit = false;
+    const reach = Math.hypot(size.x, size.y, size.z) / 2;
+    const fov = camera.fov * Math.PI / 180;
+    orbit.dist = Math.min(700, Math.max(60, reach / Math.tan(fov / 2) * 1.15));
+  }
   applyCamera();
   draw();
 
@@ -1303,7 +1836,7 @@ function rebuild() {
     `<span>material <b>~${(positions.materialVolume / 1000).toFixed(1)} cm³</b></span>` +
     `<span>triangles <b>${tris.toLocaleString()}</b></span>`;
 
-  const problems = check(P);
+  const problems = MODEL.check(P);
   const status = document.getElementById("status");
   const list = document.getElementById("status-list");
   status.dataset.state = problems.length ? "blocked" : "ok";
@@ -1316,26 +1849,42 @@ function rebuild() {
   list.innerHTML = problems.map(([what, fix]) => `<li>${what} <em>&mdash; ${fix}</em></li>`).join("");
 
   document.getElementById("command").textContent = command();
-  document.getElementById("species-name").textContent = SPECIES_LABEL[species] || "";
+  document.getElementById("species-name").textContent = MODEL.labels[variant] || "";
 }
 function command() {
-  const parts = SCHEMA.map(f => `--set ${f.k}=${P[f.k]}`);
+  const parts = SCHEMA.filter(f => f.k !== "seed").map(f => `--set ${f.k}=${P[f.k]}`);
   parts.push(`--set seed=${P.seed}`);
-  return "formforge build nature_mushroom \\\n  " + parts.join(" \\\n  ");
+  return `formforge build ${MODEL.templateId} \\\n  ` + parts.join(" \\\n  ");
 }
 
 /* =================================================================
    6. Controls
    ================================================================= */
-const GROUPS = {cap: "group-cap", underside: "group-underside", stem: "group-stem",
-                ring: "group-ring", warts: "group-warts"};
-const inputs = {};
+let inputs = {};
 function fmt(f, value) {
   const digits = f.step >= 1 ? 0 : (f.step >= 0.1 ? 1 : 2);
   return `${Number(value).toFixed(digits)}${f.unit ? " " + f.unit : ""}`;
 }
-SCHEMA.forEach(f => {
-  const host = document.getElementById(GROUPS[f.g]);
+/* The panels are built from the model's own schema, so switching models
+   rebuilds the whole right-hand column rather than hiding half of it. */
+function buildControls() {
+  const host = document.getElementById("groups");
+  host.innerHTML = "";
+  inputs = {};
+  const panels = {};
+  MODEL.groups.forEach(([id, title]) => {
+    const panel = document.createElement("section");
+    panel.className = "panel";
+    panel.innerHTML = `<h2>${title}</h2>`;
+    const body = document.createElement("div");
+    panel.appendChild(body);
+    host.appendChild(panel);
+    panels[id] = body;
+  });
+  SCHEMA.forEach(f => addField(panels[f.g] || panels[MODEL.groups[0][0]], f));
+}
+function addField(host, f) {
+  {
   const field = document.createElement("div");
   field.className = "field";
   if (f.choices) {
@@ -1364,7 +1913,8 @@ SCHEMA.forEach(f => {
     inputs[f.k] = {type: "range", el: range, out: () => document.getElementById("o-" + f.k)};
   }
   host.appendChild(field);
-});
+  }
+}
 function syncInputs() {
   SCHEMA.forEach(f => {
     const entry = inputs[f.k];
@@ -1386,8 +1936,8 @@ function schedule() {
 
 /* species chips, each drawn from its own preset's silhouette: the outer
    envelope of that species' cap and stem, so the icon is the model. */
-function silhouette(preset) {
-  const p = Object.assign({}, DEFAULTS, preset, {seed: 3});
+function mushroomSilhouette(preset) {
+  const p = Object.assign({}, MUSHROOM_DEFAULTS, preset, {seed: 3});
   const prof = capProfile(p);
   const capZ = p.stem_h_mm - p.cap_h_mm + p.cap_flesh_mm * 0.7;
   const stemR = p.stem_d_mm / 2;
@@ -1422,76 +1972,68 @@ function silhouette(preset) {
   return `<svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><path d="${path}"/></svg>`;
 }
 const speciesHost = document.getElementById("species");
-Object.keys(SPECIES).forEach(name => {
-  const chip = document.createElement("button");
-  chip.type = "button";
-  chip.className = "chip";
-  chip.setAttribute("aria-pressed", String(name === species));
-  chip.innerHTML = silhouette(SPECIES[name]) + `<small>${SPECIES_LABEL[name]}</small>`;
-  chip.addEventListener("click", () => {
-    species = name;
-    P = Object.assign({}, DEFAULTS, SPECIES[name], {seed: P.seed});
-    speciesHost.querySelectorAll(".chip").forEach(c =>
-      c.setAttribute("aria-pressed", String(c === chip)));
-    syncInputs();
-    rebuild();
+function buildChips() {
+  speciesHost.innerHTML = "";
+  Object.keys(MODEL.presets).forEach(name => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "chip";
+    chip.setAttribute("aria-pressed", String(name === variant));
+    chip.innerHTML = MODEL.silhouette(MODEL.presets[name]) +
+      `<small>${MODEL.labels[name]}</small>`;
+    chip.addEventListener("click", () => {
+      variant = name;
+      refit = true;
+      P = Object.assign({}, MODEL.defaults, MODEL.presets[name], {seed: P.seed});
+      speciesHost.querySelectorAll(".chip").forEach(c =>
+        c.setAttribute("aria-pressed", String(c === chip)));
+      syncInputs();
+      rebuild();
+    });
+    speciesHost.appendChild(chip);
   });
-  speciesHost.appendChild(chip);
-});
+}
 
-/* seed + shuffle: the jitter the generator applies, on the species you
-   are looking at */
+/* seed + shuffle: the jitter the generator applies, on the preset you are
+   looking at, with the same proportion and feasibility rules after it */
 document.getElementById("seed").addEventListener("input", e => {
   P.seed = Math.max(0, Math.min(9999, parseInt(e.target.value || "0", 10)));
   schedule();
 });
-document.getElementById("shuffle").addEventListener("click", () => {
-  P.seed = Math.floor(Math.random() * 10000);
-  const base = Object.assign({}, DEFAULTS, SPECIES[species]);
-  const next = Object.assign({}, base, {seed: P.seed});
-  Object.keys(JITTER).forEach(k => {
-    const [mode, amount] = JITTER[k];
-    const swing = hash01(k.length * 7, k.charCodeAt(0), P.seed) * 2 - 1;
+function jitter(base, seed) {
+  const next = Object.assign({}, base, {seed});
+  Object.keys(MODEL.jitter).forEach(k => {
+    const [mode, amount] = MODEL.jitter[k];
+    if (typeof base[k] !== "number") return;
+    const swing = hash01(k.length * 7, k.charCodeAt(0), seed) * 2 - 1;
     next[k] = mode === "rel" ? base[k] * (1 + amount * swing) : base[k] + amount * swing;
   });
-  const capScale = next.cap_d_mm / base.cap_d_mm;
-  next.stem_h_mm = base.stem_h_mm * capScale;
-  next.stem_d_mm = base.stem_d_mm * capScale;
-  next.gill_count = Math.round(Math.min(next.cap_d_mm * 0.26, 1000 / next.cap_d_mm));
-  next.gill_depth_mm = Math.min(next.cap_flesh_mm + 2, next.cap_d_mm * 0.11);
-  next.ring_w_mm = next.stem_d_mm * 0.42;
-  if (base.wart_count) next.wart_count = Math.round(Math.min(next.cap_d_mm * next.cap_d_mm * 0.004, 1600 / next.cap_d_mm));
-  /* feasibility, the same way the generator applies it */
-  next.cap_h_mm = Math.max(next.cap_h_mm, next.cap_flesh_mm + next.cap_margin_mm + 1);
-  next.stem_h_mm = Math.max(next.stem_h_mm, next.cap_h_mm * 0.5 + 13);
-  next.stem_d_mm = Math.min(next.stem_d_mm, next.cap_d_mm * 0.55);
-  if (next.underside !== "smooth") {
-    const room = next.cap_d_mm / 2 - next.cap_margin_mm * 1.5 - next.cap_wave_mm;
-    next.stem_d_mm = Math.min(next.stem_d_mm, (room - 8.5) / 0.625);
-  }
-  const foot = next.stem_d_mm / 2 * (1 + next.stem_bulb);
-  if (next.stem_lean_mm * 0.75 >= foot) {
-    next.stem_bulb = Math.min(1.2, Math.max(next.stem_bulb,
-      next.stem_lean_mm * 0.825 / Math.max(next.stem_d_mm / 2, 1e-6) - 1));
-    next.stem_lean_mm = Math.min(next.stem_lean_mm,
-      next.stem_d_mm / 2 * (1 + next.stem_bulb) / 0.75 * 0.92);
-  }
-  if (next.ring_style !== "none") {
-    next.stem_h_mm = Math.max(next.stem_h_mm,
-      next.cap_h_mm - next.cap_flesh_mm * 0.7 + next.ring_w_mm + 6);
-  }
+  return next;
+}
+function clampToSchema(values) {
   SCHEMA.forEach(f => {
-    if (f.choices) { next[f.k] = f.choices.includes(next[f.k]) ? next[f.k] : f.v; return; }
-    let value = Math.min(f.max, Math.max(f.min, next[f.k]));
+    if (f.choices) {
+      values[f.k] = f.choices.includes(values[f.k]) ? values[f.k] : f.v;
+      return;
+    }
+    let value = Math.min(f.max, Math.max(f.min, values[f.k]));
     value = f.step >= 1 ? Math.round(value) : Math.round(value / f.step) * f.step;
-    next[f.k] = parseFloat(value.toFixed(2));
+    values[f.k] = parseFloat(value.toFixed(2));
   });
-  P = next;
+  return values;
+}
+document.getElementById("shuffle").addEventListener("click", () => {
+  const seed = Math.floor(Math.random() * 10000);
+  const base = Object.assign({}, MODEL.defaults, MODEL.presets[variant]);
+  P = clampToSchema(MODEL.shuffle(jitter(base, seed), base, seed));
+  P.seed = seed;
+  refit = true;
   syncInputs();
   rebuild();
 });
 document.getElementById("reset").addEventListener("click", () => {
-  P = Object.assign({}, DEFAULTS, SPECIES[species], {seed: 7});
+  P = Object.assign({}, MODEL.defaults, MODEL.presets[variant], {seed: MODEL.seed});
+  refit = true;
   syncInputs();
   rebuild();
 });
@@ -1512,8 +2054,7 @@ function setExportNote() {
     "STEP is a solid model, not a mesh, and a browser has no CAD kernel to make one. " +
     "So the STEP button hands you the script instead: the template with your slider " +
     "positions bound in, which needs nothing but <code>pip install build123d</code> and " +
-    "writes a <code>.step</code> whose cap is a surface of revolution, whose warts are " +
-    "spheres and whose gills are planes &mdash; editable, not faceted.";
+    "writes a <code>.step</code> " + MODEL.stepDetail + " &mdash; editable, not faceted.";
   document.getElementById("export-note").innerHTML = hosted()
     ? stepLine + " Saves here as <code>.txt</code> (rename to <code>.py</code>), because a " +
       "hosted page may only hand over the file types the viewer allows &mdash; the same " +
@@ -1522,7 +2063,6 @@ function setExportNote() {
     : stepLine + " The STL is this preview triangulated; the command below builds the same " +
       "model in the repo and validates it, with 3MF alongside.";
 }
-setExportNote();
 
 function toast(message) {
   const el = document.getElementById("toast");
@@ -1535,7 +2075,7 @@ function stlBinary(pos) {
   const tris = pos.length / 9;
   const buf = new ArrayBuffer(84 + tris * 50);
   const view = new DataView(buf);
-  const head = "Mushroom Studio -- nature_mushroom preview mesh, millimetres";
+  const head = `FormForge Studio -- ${MODEL.templateId} preview mesh, millimetres`;
   for (let i = 0; i < 80; i++) view.setUint8(i, i < head.length ? head.charCodeAt(i) : 32);
   view.setUint32(80, tris, true);
   let o = 84;
@@ -1549,7 +2089,7 @@ function stlBinary(pos) {
   return buf;
 }
 function stlAscii(pos) {
-  const rows = ["solid mushroom"];
+  const rows = ["solid " + MODEL.noun];
   for (let i = 0; i < pos.length; i += 9) {
     const n = faceNormal(pos, i);
     rows.push(` facet normal ${n[0].toFixed(4)} ${n[1].toFixed(4)} ${n[2].toFixed(4)}`, "  outer loop");
@@ -1558,7 +2098,7 @@ function stlAscii(pos) {
     }
     rows.push("  endloop", " endfacet");
   }
-  rows.push("endsolid mushroom");
+  rows.push("endsolid " + MODEL.noun);
   return rows.join("\n");
 }
 function faceNormal(pos, i) {
@@ -1569,7 +2109,7 @@ function faceNormal(pos, i) {
   return [nx/len, ny/len, nz/len];
 }
 function stamp() {
-  return `${species}-${Math.round(P.cap_d_mm)}mm-seed${P.seed}`;
+  return `${variant}-${Math.round(P[MODEL.sizeKey])}mm-seed${P.seed}`;
 }
 function localSave(filename, data) {
   const blob = data instanceof ArrayBuffer ? new Blob([data], {type: "application/octet-stream"})
@@ -1581,7 +2121,7 @@ function localSave(filename, data) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 document.getElementById("export-stl").addEventListener("click", async () => {
-  const pos = buildMesh(P, "export");
+  const pos = MODEL.mesh(P, "export");
   if (downloads) {
     try {
       await downloads.save({filename: `${stamp()}-stl.txt`, data: stlAscii(pos)});
@@ -1601,19 +2141,20 @@ document.getElementById("export-step").addEventListener("click", async () => {
   const script = boundScript(P);
   if (downloads) {
     try {
-      await downloads.save({filename: `${stamp()}-mushroom-py.txt`, data: script});
-      toast("Saved. Rename it to .py, then: pip install build123d && python mushroom.py");
+      await downloads.save({filename: `${stamp()}-${MODEL.noun}-py.txt`, data: script});
+      toast(`Saved. Rename it to .py, then: pip install build123d && python ${MODEL.noun}.py`);
     } catch (err) {
       toast((err && err.code) === "declined" ? "Save cancelled."
         : "Saving is not available in this view. Use the command below instead.");
     }
     return;
   }
-  localSave("mushroom.py", script);
-  toast("mushroom.py saved. Run it with build123d installed and it writes mushroom.step.");
+  localSave(`${MODEL.noun}.py`, script);
+  toast(`${MODEL.noun}.py saved. Run it with build123d installed and it writes ${MODEL.noun}.step.`);
 });
 document.getElementById("export-json").addEventListener("click", async () => {
-  const payload = JSON.stringify({template: "nature_mushroom", species, params: paramsOnly()}, null, 2);
+  const payload = JSON.stringify(
+    {template: MODEL.templateId, [MODEL.variantKey]: variant, params: paramsOnly()}, null, 2);
   if (downloads) {
     try {
       await downloads.save({filename: `${stamp()}.json`, data: payload});
@@ -1646,17 +2187,118 @@ document.getElementById("copy-cmd").addEventListener("click", async () => {
 });
 
 /* =================================================================
+   8. The two models, and the switch between them
+
+      Everything above this point is either shared machinery or one
+      model's own port of its template. A model is the pairing: its
+      schema, its presets, the three functions that draw it, and the
+      strings that name its parts. Adding a third is adding an entry.
+   ================================================================= */
+const MODELS = {
+  mushroom: {
+    title: "Mushroom",
+    noun: "mushroom",
+    templateId: "nature_mushroom",
+    presetHeading: "Species",
+    variantKey: "species",
+    sizeKey: "cap_d_mm",
+    seed: 7,
+    tagline: "Every slider below is a parameter of the <code>nature_mushroom</code> template. " +
+      "Move them, watch the model rebuild, then take the exact command that builds it for real " +
+      "&mdash; validated, watertight, with STEP and 3MF alongside.",
+    seedNote: "The seed places the warts and the irregularity in each lobe. The same seed " +
+      "rebuilds the same mushroom here, in the CAD kernel, and on anyone else&rsquo;s machine.",
+    stepDetail: "whose cap is a surface of revolution, whose warts are spheres and whose " +
+      "gills are planes",
+    groups: [["cap", "Cap"], ["underside", "Underside"], ["stem", "Stem"],
+             ["ring", "Veil ring"], ["warts", "Warts"]],
+    schema: MUSHROOM_SCHEMA,
+    presets: MUSHROOM_PRESETS,
+    labels: MUSHROOM_LABELS,
+    jitter: MUSHROOM_JITTER,
+    defaults: MUSHROOM_DEFAULTS,
+    sourceB64: MUSHROOM_SOURCE_B64,
+    mesh: mushroomMesh,
+    check: mushroomCheck,
+    shuffle: mushroomShuffle,
+    silhouette: mushroomSilhouette
+  },
+  vase: {
+    title: "Vase",
+    noun: "vase",
+    templateId: "vessel_vase",
+    presetHeading: "Styles",
+    variantKey: "style",
+    sizeKey: "height_mm",
+    seed: 1,
+    tagline: "Every slider below is a parameter of the <code>vessel_vase</code> template. " +
+      "Four control diameters and a surface treatment; it prints in vase mode with no " +
+      "supports, and the same command builds it as a solid with STEP alongside.",
+    seedNote: "The seed wobbles the proportions around the style you are looking at. The " +
+      "same seed rebuilds the same vase here, in the CAD kernel, and on anyone else&rsquo;s " +
+      "machine.",
+    stepDetail: "whose wall is a lofted surface you can re-thicken and whose profile is " +
+      "still four diameters on a curve",
+    groups: [["form", "Silhouette"], ["surface", "Surface"], ["wall", "Wall"]],
+    schema: VASE_SCHEMA,
+    presets: VASE_PRESETS,
+    labels: VASE_LABELS,
+    jitter: VASE_JITTER,
+    defaults: VASE_DEFAULTS,
+    sourceB64: VASE_SOURCE_B64,
+    mesh: vaseMesh,
+    check: vaseCheck,
+    shuffle: vaseShuffle,
+    silhouette: vaseSilhouette
+  }
+};
+
+/* Switching models rebuilds the right-hand column from the new schema
+   rather than hiding half of the old one: the panels, the chips and the
+   sliders are all the model's own. */
+function useModel(name) {
+  MODEL = MODELS[name];
+  SCHEMA = MODEL.schema;
+  refit = true;
+  variant = Object.keys(MODEL.presets)[0];
+  P = Object.assign({}, MODEL.defaults, MODEL.presets[variant], {seed: MODEL.seed});
+  document.getElementById("tagline").innerHTML = MODEL.tagline;
+  document.getElementById("seed-note").innerHTML = MODEL.seedNote;
+  document.getElementById("preset-heading").innerHTML =
+    MODEL.presetHeading + ' <span id="species-name"></span>';
+  buildTabs();
+  buildChips();
+  buildControls();
+  setExportNote();
+  syncInputs();
+  rebuild();
+}
+
+/* =================================================================
    8. Boot
    ================================================================= */
+function buildTabs() {
+  const host = document.getElementById("tabs");
+  host.innerHTML = "";
+  Object.keys(MODELS).forEach(name => {
+    const tab = document.createElement("button");
+    tab.type = "button";
+    tab.className = "tab";
+    tab.setAttribute("role", "tab");
+    tab.setAttribute("aria-selected", String(MODELS[name] === MODEL));
+    tab.textContent = MODELS[name].title;
+    tab.addEventListener("click", () => useModel(name));
+    host.appendChild(tab);
+  });
+}
 document.getElementById("pipeline").innerHTML =
-  ["species", "seed", "jitter", "proportions", "feasibility", "geometry"]
+  ["preset", "seed", "jitter", "proportions", "feasibility", "geometry"]
     .map((n, i) => (i ? '<i>&rarr;</i>' : "") + (i === 5 ? `<b>${n}</b>` : n)).join("");
 const themeWatcher = window.matchMedia("(prefers-color-scheme: dark)");
 themeWatcher.addEventListener("change", paintTheme);
 new MutationObserver(paintTheme).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
 paintTheme();
-syncInputs();
-rebuild();
+useModel("mushroom");
 </script>
 </body>
 </html>

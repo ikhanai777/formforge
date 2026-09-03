@@ -137,13 +137,15 @@ SolidWorks or Fusion with its faces and edges intact. The same seed gives the sa
 machine, and member three of a population is member three whether you asked for
 four or forty.
 
-`web/studio.html` is the same definition with a face on it: open the file in a
-browser -- no server, no build step -- and every slider in the template is
-there, with the model rebuilding live, the printability rules checked as you
-move them, and buttons that export the mesh as STL or hand you a script that builds the
-STEP. It also writes the exact `formforge build` command for whatever is on
-screen, which is how a shape you liked in the browser becomes the validated,
-watertight model with STEP and 3MF beside it.
+`web/studio.html` is the same definitions with a face on them: open the file in
+a browser -- no server, no build step -- and a tab per generator gives you every
+slider in that template, with the model rebuilding live, the printability rules
+checked as you move them, and buttons that export the mesh as STL or hand you a
+script that builds the STEP. It also writes the exact `formforge build` command
+for whatever is on screen, which is how a shape you liked in the browser becomes
+the validated, watertight model with STEP and 3MF beside it. Both generators are
+in it -- **Mushroom** and **Vase** -- and a third is an entry in one registry at
+the bottom of the page.
 
 The definition follows Grasshopper's rules rather than its interface: sliders
 are the only free values, components are pure functions of their inputs wired
@@ -309,7 +311,7 @@ formforge/
   generators/     dataflow definitions that decide where the sliders go
   templates/      14 verified parametric definitions
 web/
-  studio.html     the mushroom definition as a browser front end, no build step
+  studio.html     both definitions as a browser front end, no build step
 ```
 
 `docs/architecture.md` covers the parts that need more than a paragraph:

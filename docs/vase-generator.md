@@ -16,6 +16,34 @@ of parameters and DFM verdicts. The machinery — the dataflow solver, the seed,
 the jitter, the proportion and feasibility nodes — is the same one
 `docs/mushroom-generator.md` describes; this page is what is specific to vases.
 
+## The front end
+
+`web/studio.html`, the **Vase** tab: the same page the mushroom lives in, with
+the right-hand column rebuilt from this template's schema. Open the file in a
+browser -- no server, no build step -- and you have
+
+* the twelve styles as chips, each drawn from its own silhouette
+* every slider the template declares, grouped as silhouette, surface and wall
+* the vase rebuilt as you drag, as one closed shell rather than a solid with a
+  cavity cut from it: outer skin, rim, cavity, floor. That is what makes the
+  material readout exact rather than an estimate -- 80.4 cm3 on screen against
+  79.9 cm3 out of the kernel for the spiral, a 0.6% difference that is the rim
+  and the cavity overshoot, not a guess
+* the preconditions checked as you move: the 45 degree rule, twist times detail,
+  a cavity that does not fit inside the narrowest diameter
+* **Download STL**, and **STEP script** -- a `.py` carrying this template's own
+  source with your slider positions bound in, which `pip install build123d &&
+  python vase.py` turns into a `vase.step` you can open in SolidWorks
+* the exact `formforge build vessel_vase --set ...` command for what is on
+  screen
+
+The geometry is a port, not a call: the profile is the same Fritsch-Carlson
+curve and the resolution rules are the template's own, so a twisted vase looks
+banded on screen because the ruled loft the kernel builds is banded -- measuring
+the crest radius up the kernel's own STL finds the same 1-2 mm of it. The
+preview subdivides those bands, which costs nothing in accuracy: every point
+between two sections of a ruled loft is a straight blend of them.
+
 ## The styles
 
 | Style | What it is |

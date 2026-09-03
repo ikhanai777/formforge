@@ -29,7 +29,10 @@ nature_mushroom --set cap_d_mm=70 --set seed=42`.
 ## The front end
 
 `web/studio.html` is a single file with no build step and no server: open it in
-a browser and you have the definition with a face on it.
+a browser and you have the definitions with a face on them -- a tab per
+generator, **Mushroom** and **Vase**, sharing one shell. What follows describes
+the mushroom tab; `docs/vase-generator.md` covers what is different about the
+other.
 
 * every parameter in the template, grouped by the part of the mushroom it
   belongs to, stopping exactly where the schema stops
@@ -54,11 +57,13 @@ union, so the export is a set of closed shells that a slicer unions at slice
 time rather than one B-rep solid, and there is no STEP, no 3MF and no DFM
 report. That is what the command is for.
 
-Two tests in `tests/test_generators.py::TestStudioPage` keep the page honest:
-one asserts its parameters, ranges and defaults are the template's own, the
-other that the source it embeds is the template's source byte for byte -- a
-stale copy would export a script that builds a different mushroom from the one
-on screen.
+`tests/test_generators.py::TestStudioPage` keeps the page honest, and runs over
+the catalog rather than over one model: for every generator it asserts that the
+page's parameters, ranges and defaults are that template's own, that the source
+it embeds is that template's source byte for byte -- a stale copy would export a
+script that builds a different mushroom from the one on screen -- and that every
+variant the CLI offers has a chip. A model the studio has not caught up with
+fails the suite rather than shipping quietly.
 
 ## Where Grasshopper's ideas land
 

@@ -351,24 +351,41 @@ class TestMushroomTemplate:
 
 
 class TestStudioPage:
-    """`web/studio.html` restates the schema in JavaScript, so it can drift.
+    """`web/studio.html` restates each model's schema in JavaScript, so it can
+    drift.
 
     The page emits a `formforge build` command from whatever its sliders hold.
     A slider whose range has drifted past the template's emits a command the
     CLI rejects -- or worse, one it accepts and the geometry has never been
-    swept across.
+    swept across. The page carries one block per model, so these run over the
+    catalog: adding a generator to the studio means satisfying them too.
     """
 
     @staticmethod
-    def _fields():
+    def _html():
+        return (Path(__file__).resolve().parents[1] / "web" / "studio.html").read_text()
+
+    @classmethod
+    def _block(cls, generator, suffix):
+        """The one model's block, so two schemas on one page cannot be confused."""
         import re
 
-        html = (Path(__file__).resolve().parents[1] / "web" / "studio.html").read_text()
+        name = f"{generator.name.upper()}_{suffix}"
+        match = re.search(
+            r"const " + name + r" = (\[|\{)(.*?)\n(\]|\})", cls._html(), re.S
+        )
+        assert match, f"the page no longer carries {name}"
+        return match.group(2)
+
+    @classmethod
+    def _fields(cls, generator):
+        import re
+
         pattern = re.compile(
-            r'\{k:"(?P<k>[a-z_]+)",\s*g:"[a-z]+",\s*label:"[^"]*",\s*(?P<rest>[^}]*)\}'
+            r'\{k:"(?P<k>[a-z_0-9]+)",\s*g:"[a-z]+",\s*label:"[^"]*",\s*(?P<rest>[^}]*)\}'
         )
         out = {}
-        for match in pattern.finditer(html):
+        for match in pattern.finditer(cls._block(generator, "SCHEMA")):
             rest = match.group("rest")
             spec = {}
             if "choices" in rest:
@@ -384,12 +401,15 @@ class TestStudioPage:
             out[match.group("k")] = spec
         return out
 
-    def test_the_page_offers_exactly_the_template_parameters(self, template):
-        fields = self._fields()
-        assert set(fields) | {"seed"} == set(template.properties)
+    @pytest.mark.parametrize("generator", CATALOG, ids=GENERATOR_IDS)
+    def test_the_page_offers_exactly_the_template_parameters(self, registry, generator):
+        template = registry.get(generator.template_id)
+        assert set(self._fields(generator)) | {"seed"} == set(template.properties)
 
-    def test_every_slider_stops_where_the_schema_stops(self, template):
-        for name, page in self._fields().items():
+    @pytest.mark.parametrize("generator", CATALOG, ids=GENERATOR_IDS)
+    def test_every_slider_stops_where_the_schema_stops(self, registry, generator):
+        template = registry.get(generator.template_id)
+        for name, page in self._fields(generator).items():
             spec = template.properties[name]
             if "enum" in page:
                 assert page["enum"] == spec["enum"], name
@@ -398,7 +418,8 @@ class TestStudioPage:
             for key in ("minimum", "maximum", "default"):
                 assert page[key] == pytest.approx(float(spec[key])), f"{name}.{key}"
 
-    def test_the_page_carries_the_template_source_verbatim(self, template):
+    @pytest.mark.parametrize("generator", CATALOG, ids=GENERATOR_IDS)
+    def test_the_page_carries_the_template_source_verbatim(self, registry, generator):
         """The page hands out a runnable script, so it embeds the real source.
 
         A stale copy would export a `.py` that builds last month's mushroom
@@ -408,9 +429,16 @@ class TestStudioPage:
         import base64
         import re
 
-        html = (Path(__file__).resolve().parents[1] / "web" / "studio.html").read_text()
-        block = re.search(r"const TEMPLATE_SOURCE_B64 = \[(.*?)\n\]\.join\(\"\"\);", html, re.S)
-        assert block, "the page no longer embeds the template source"
-        encoded = "".join(re.findall(r'"([A-Za-z0-9+/=]*)"', block.group(1)))
+        template = registry.get(generator.template_id)
+        block = self._block(generator, "SOURCE_B64")
+        encoded = "".join(re.findall(r'"([A-Za-z0-9+/=]*)"', block))
         assert base64.b64decode(encoded).decode() == template.source
 
+    @pytest.mark.parametrize("generator", CATALOG, ids=GENERATOR_IDS)
+    def test_the_page_offers_every_variant_the_generator_does(self, generator):
+        """A style in the CLI and not in the studio is a style nobody sees."""
+        import re
+
+        block = self._block(generator, "PRESETS")
+        on_page = set(re.findall(r"^\s*([a-z_]+):\s*\{", block, re.M))
+        assert on_page == set(generator.variants())
