@@ -430,6 +430,75 @@ CATEGORY_INVARIANTS: dict[str, tuple[CategoryInvariant, ...]] = {
             severity=Severity.WARN,
         ),
     ),
+    "vessel": (
+        CategoryInvariant(
+            "vessel.single_piece",
+            "solids == 1",
+            "One piece",
+            "The vessel came out as separate lumps, so the wall and the base "
+            "are not joined.",
+            "Overlap the floor into the wall rather than leaving them touching.",
+        ),
+        CategoryInvariant(
+            "vessel.closed_surface",
+            "is_watertight",
+            "Closed surface",
+            "A vessel whose surface is not closed will not slice.",
+            "Rebuild the skin so the whole model is one closed shell.",
+        ),
+        CategoryInvariant(
+            "vessel.no_sealed_cavity",
+            "trapped_volumes == 0",
+            "Nothing sealed in",
+            "A sealed cavity in a vessel traps uncured resin or unextracted "
+            "support, and cannot be inspected.",
+            "Open the cavity at the rim.",
+        ),
+        CategoryInvariant(
+            "vessel.footprint",
+            "plate_contact_mm2 >= 300",
+            "Enough base to hold on",
+            "The base is too small to keep a tall vessel attached for the "
+            "length of the print.",
+            "Widen the base, or print it with a brim.",
+            severity=Severity.WARN,
+        ),
+    ),
+    "nature": (
+        CategoryInvariant(
+            "nature.single_piece",
+            "solids == 1",
+            "One piece",
+            "The model came out as separate lumps, so a feature is floating "
+            "rather than joined to the body.",
+            "Overlap every appendage into the body before the union rather "
+            "than leaving it touching.",
+        ),
+        CategoryInvariant(
+            "nature.watertight",
+            "is_watertight",
+            "Closed surface",
+            "An organic form that is not a closed solid will not slice.",
+            "Rebuild the surface so the whole model is one closed shell.",
+        ),
+        CategoryInvariant(
+            "nature.stands",
+            "com_inside_footprint",
+            "Stands up",
+            "The centre of mass falls outside the footprint, so the piece "
+            "topples once the supports come off.",
+            "Widen the base, or reduce the lean of whatever overhangs it.",
+        ),
+        CategoryInvariant(
+            "nature.footprint",
+            "plate_contact_fraction >= 0.02",
+            "Something to stick down",
+            "Almost nothing touches the plate, so this will come loose during "
+            "the print.",
+            "Flatten or widen the base, or print it with a brim.",
+            severity=Severity.WARN,
+        ),
+    ),
     "box": (
         CategoryInvariant(
             "box.no_trapped_volume",

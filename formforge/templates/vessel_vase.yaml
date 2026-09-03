@@ -1,0 +1,463 @@
+id: vessel_vase
+version: 1
+category: vessel
+display_name: "Parametric Vase"
+description: >
+  One vase definition that covers a shelf of them: four control diameters set
+  the silhouette, from a straight cylinder through an urn, a bottle, a tulip or
+  a pinched hourglass, and a second layer of sliders wraps it in facets, flutes,
+  ripples or a spiral twist. The wall is a constant thickness measured
+  perpendicular to the surface, so it prints in vase mode or in three
+  perimeters, and the cavity is cut from the same skin the outside is lofted
+  from.
+tags: [vase, vessel, urn, bottle, decor, homeware, spiral, fluted, faceted, generative, parametric]
+embedding_text: >
+  vase flower vase bud vase spiral vase twisted vase fluted vase ribbed vase
+  faceted vase geometric vase urn amphora bottle vessel carafe decanter table
+  centrepiece vase mode spiralize single wall vase home decor vase
+language: build123d
+
+print_test:
+  # No model in this repository has been physically printed. The target machine
+  # and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    A vase is the one shape FDM prints well without supports, so the defaults
+    are chosen to keep it that way: the silhouette is a monotone curve through
+    four diameters, no segment of it turns faster than the 45 degrees a printer
+    holds unsupported, the wall is 1.6 mm (four perimeters at 0.4 mm) and the
+    base is 2.4 mm so it does not warp off the plate. It prints in vase mode as
+    it is -- the slicer follows the outer surface and ignores the modelled
+    wall. What no parameter can fix is that an FDM vase leaks: the wall is a
+    spiral of beads with a seam, so it wants a glass liner, a test tube, or a
+    coat of sealant before it holds water.
+
+expected_solids: 1
+
+dimension_map:
+  height_mm: height
+
+param_schema:
+  type: object
+  required: [height_mm, mid_d_mm]
+  properties:
+    height_mm:
+      type: number
+      minimum: 60
+      maximum: 240
+      default: 180
+      description: >
+        Base to rim. The ceiling is the build volume, not the geometry: 240 mm
+        leaves room under the 250 mm a P1S-class printer can reach.
+      ui: { widget: slider, step: 5, label: "Height" }
+    base_d_mm:
+      type: number
+      minimum: 25
+      maximum: 160
+      default: 62
+      description: "Diameter where it meets the plate. This is the whole footprint."
+      ui: { widget: slider, step: 2, label: "Base" }
+    mid_d_mm:
+      type: number
+      minimum: 30
+      maximum: 190
+      default: 96
+      description: >
+        Diameter at mid_pos. Wider than the base and the rim gives an urn;
+        narrower gives a waist.
+      ui: { widget: slider, step: 2, label: "Belly" }
+    mid_pos:
+      type: number
+      minimum: 0.15
+      maximum: 0.7
+      default: 0.42
+      description: "Height fraction of the belly. Low reads as a jug, high as an amphora."
+      ui: { widget: slider, step: 0.01, label: "Belly height" }
+    neck_d_mm:
+      type: number
+      minimum: 18
+      maximum: 190
+      default: 54
+      description: "Diameter at neck_pos, the narrow point below the rim."
+      ui: { widget: slider, step: 2, label: "Neck" }
+    neck_pos:
+      type: number
+      minimum: 0.55
+      maximum: 0.95
+      default: 0.84
+      description: "Height fraction of the neck. Must sit above the belly."
+      ui: { widget: slider, step: 0.01, label: "Neck height" }
+    rim_d_mm:
+      type: number
+      minimum: 20
+      maximum: 200
+      default: 66
+      description: "Diameter at the mouth. Well above the neck it flares into a tulip."
+      ui: { widget: slider, step: 2, label: "Rim" }
+    shoulder:
+      type: number
+      minimum: 0
+      maximum: 1
+      default: 0.5
+      description: >
+        How roundly the profile passes through its control diameters. 0 runs
+        the segments nearly straight for a hard-shouldered, turned look; 1
+        rounds them fully.
+      ui: { widget: slider, step: 0.05, label: "Roundness" }
+    facets:
+      type: integer
+      minimum: 0
+      maximum: 12
+      default: 0
+      description: "Sides of the cross-section. 0 (or 1, 2) keeps it round."
+      ui: { widget: slider, step: 1, label: "Facets" }
+    facet_round:
+      type: number
+      minimum: 0
+      maximum: 1
+      default: 0.35
+      description: "0 is a sharp polygon, 1 is back to a circle."
+      ui: { widget: slider, step: 0.05, label: "Facet rounding" }
+    lobes:
+      type: integer
+      minimum: 0
+      maximum: 12
+      default: 0
+      description: "Vertical flutes around the wall. 0 leaves it plain."
+      ui: { widget: slider, step: 1, label: "Flutes" }
+    lobe_mm:
+      type: number
+      minimum: 0
+      maximum: 5
+      default: 0
+      description: >
+        Flute depth in millimetres, added to the radius rather than scaled into
+        it, so the wall stays the same thickness in the troughs.
+      ui: { widget: slider, step: 0.1, label: "Flute depth" }
+    flute_sharp:
+      type: number
+      minimum: 0
+      maximum: 1
+      default: 0
+      description: "0 is a rounded flute, 1 a cusped rib."
+      ui: { widget: slider, step: 0.05, label: "Flute sharpness" }
+    twist_deg:
+      type: number
+      minimum: -720
+      maximum: 720
+      default: 0
+      description: >
+        Rotation of the cross-section from base to rim. With flutes or facets
+        this is the spiral vase everyone prints; on a round section it does
+        nothing.
+      ui: { widget: slider, step: 10, label: "Twist" }
+    ripples:
+      type: integer
+      minimum: 0
+      maximum: 12
+      default: 0
+      description: "Horizontal rings up the wall."
+      ui: { widget: slider, step: 1, label: "Rings" }
+    ripple_mm:
+      type: number
+      minimum: 0
+      maximum: 3
+      default: 0
+      description: "Ring depth."
+      ui: { widget: slider, step: 0.1, label: "Ring depth" }
+    wall_mm:
+      type: number
+      minimum: 1.0
+      maximum: 4
+      default: 1.6
+      description: >
+        Wall thickness, measured perpendicular to the surface. 1.6 mm is four
+        perimeters at a 0.4 mm nozzle. Vase mode does not need a thinner wall
+        here -- the slicer follows the outer surface and lays one bead of
+        whatever width it is set to, whatever the model says.
+      ui: { widget: slider, step: 0.1, label: "Wall" }
+    base_mm:
+      type: number
+      minimum: 1.2
+      maximum: 8
+      default: 2.4
+      description: "Floor thickness. Thin floors curl off the plate."
+      ui: { widget: slider, step: 0.2, label: "Floor" }
+    rim_band_mm:
+      type: number
+      minimum: 0
+      maximum: 3
+      default: 0
+      description: "Extra wall in the top 10 mm, for a lip that survives handling."
+      ui: { widget: slider, step: 0.1, label: "Rim thickening" }
+    seed:
+      type: integer
+      minimum: 0
+      maximum: 9999
+      default: 1
+      description: "Reserved for the scattered detail; the silhouette is fully determined by the sliders above."
+      ui: { widget: slider, step: 1, label: "Seed" }
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "trapped_volumes == 0"
+  - "min_wall >= 0.7"
+  - "com_inside_footprint"
+  - "bbox.z <= height_mm + 2"
+  - "bbox.z >= height_mm - 2"
+  # The widest control diameter plus whatever the flutes stand out by, and a
+  # little slack for the facet corners.
+  - "bbox.x <= max(base_d_mm, mid_d_mm, neck_d_mm, rim_d_mm) + lobe_mm * 2 + 6"
+  # It has to stand on the plate long enough to finish printing.
+  - "plate_contact_mm2 >= 350"
+
+preconditions:
+  - "neck_pos > mid_pos + 0.05"
+  - "base_mm < height_mm * 0.3"
+  # The cavity has to fit inside the narrowest part of the silhouette.
+  - "min(base_d_mm, mid_d_mm, neck_d_mm, rim_d_mm) > wall_mm * 2 + 6"
+  # A flute is cut into the wall from both sides, so a deep one on a narrow
+  # neck leaves nothing in between.
+  - "lobes >= 1 implies neck_d_mm / 2 - lobe_mm - wall_mm * 2 > 3"
+  # No segment of the silhouette may change radius faster than 45 degrees --
+  # in either direction. Flaring out that fast is an overhang; closing in that
+  # fast is a bridge across the mouth. Both need support on a shape whose whole
+  # appeal is that it does not.
+  - "abs(mid_d_mm - base_d_mm) / 2 <= mid_pos * height_mm"
+  - "abs(neck_d_mm - mid_d_mm) / 2 <= (neck_pos - mid_pos) * height_mm"
+  - "abs(rim_d_mm - neck_d_mm) / 2 <= (1 - neck_pos) * height_mm"
+  # Twist and detail multiply: the bands have to be fine enough that
+  # consecutive sections are a fraction of a flute apart, and past this the
+  # geometry costs minutes rather than seconds -- and starts handing back a
+  # cavity that has cut through its own outer wall.
+  - "abs(twist_deg) * max(lobes, facets, 1) <= 3600"
+
+source: |
+  from build123d import *
+
+  import math
+
+  # --- sliders --------------------------------------------------------------
+  HEIGHT_MM = 180.0
+  BASE_D_MM = 62.0
+  MID_D_MM = 96.0
+  MID_POS = 0.42
+  NECK_D_MM = 54.0
+  NECK_POS = 0.84
+  RIM_D_MM = 66.0
+  SHOULDER = 0.5
+  FACETS = 0
+  FACET_ROUND = 0.35
+  LOBES = 0
+  LOBE_MM = 0.0
+  FLUTE_SHARP = 0.0
+  TWIST_DEG = 0.0
+  RIPPLES = 0
+  RIPPLE_MM = 0.0
+  WALL_MM = 1.6
+  BASE_MM = 2.4
+  RIM_BAND_MM = 0.0
+  SEED = 1
+
+  TAU = 6.283185307179862
+
+  # Resolution follows the detail asked for, and nothing else. Both skins are
+  # lofted through SECTIONS x POINTS points and then cut against each other, so
+  # the product is what the build costs: a fixed high resolution spends most of
+  # the CPU budget rendering a smooth cylinder in exquisite detail.
+  SHARP_FACETS = FACETS >= 3 and FACET_ROUND < 0.15 and LOBES < 1
+  if SHARP_FACETS:
+      # A polygon needs its own corners and nothing else: sampling at exactly
+      # FACETS points lands on every corner, and the loft is then a handful of
+      # ruled strips rather than a few thousand facets to intersect.
+      POINTS = FACETS
+  else:
+      POINTS = min(120, max(48, LOBES * 6, FACETS * 8))
+  # A ruled band is a straight line up the wall, so a ripple needs several bands
+  # to be a ripple rather than a chamfer, and a twisted flute needs enough bands
+  # that consecutive sections are a small fraction of a flute apart. Under-sample
+  # a twisted flute and the bands skew until the cavity crosses its own outer
+  # skin: the boolean then takes minutes and hands back the wrong solid. On a
+  # smooth silhouette 40 bands keeps the chord error under a layer line, and the
+  # shading continuous -- 24 was geometrically fine and looked faceted.
+  SPIRAL = abs(TWIST_DEG) * max(LOBES, FACETS, 1) / 60.0
+  SECTIONS = int(min(96, max(40, RIPPLES * 6, SPIRAL)))
+
+  # Both skins are lofted through SECTIONS x POINTS points and then cut against
+  # each other, so their product is what the build costs. Past this ceiling the
+  # resolution gives way rather than the design: the angular sampling first,
+  # then the bands -- but never below what the spiral needs, because that is the
+  # sampling whose failure breaks the solid instead of softening it.
+  BUDGET = 4800
+  if SECTIONS * POINTS > BUDGET:
+      shrink = (BUDGET / (SECTIONS * POINTS)) ** 0.5
+      POINTS = max(48, int(POINTS * shrink))
+      SECTIONS = int(max(24, min(SECTIONS, max(SPIRAL, BUDGET / POINTS))))
+
+
+  def hash01(index, salt):
+      """Deterministic pseudo-random in [0,1). Same seed, same vase, anywhere."""
+      x = math.sin((index + 1) * 12.9898 + (SEED + 1) * 78.233 + salt * 37.719) * 43758.5453
+      return x - math.floor(x)
+
+
+  # --- 1. the silhouette ------------------------------------------------------
+  # Four control diameters up the height. Everything from a cylinder to an
+  # hourglass is where you put them: mid wider than base and rim is an urn, mid
+  # narrower is a waist, neck far above the mid with a wide rim is a tulip.
+  CONTROL = [
+      (0.0, BASE_D_MM / 2),
+      (MID_POS, MID_D_MM / 2),
+      (NECK_POS, NECK_D_MM / 2),
+      (1.0, RIM_D_MM / 2),
+  ]
+
+
+  def monotone_slopes(xs, ys):
+      """Fritsch-Carlson tangents: a smooth curve through the control points that
+      never overshoots them.
+
+      A natural cubic through four diameters bulges past the widest one and puts
+      an undercut where the user asked for a straight shoulder. This does not: a
+      profile that stays inside its own control points is one the sliders
+      actually describe.
+      """
+      n = len(xs)
+      deltas = [(ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]) for i in range(n - 1)]
+      slopes = [deltas[0]] + [0.0] * (n - 2) + [deltas[-1]]
+      for i in range(1, n - 1):
+          if deltas[i - 1] * deltas[i] <= 0:
+              slopes[i] = 0.0
+          else:
+              w1 = 2 * (xs[i + 1] - xs[i]) + (xs[i] - xs[i - 1])
+              w2 = (xs[i + 1] - xs[i]) + 2 * (xs[i] - xs[i - 1])
+              slopes[i] = (w1 + w2) / (w1 / deltas[i - 1] + w2 / deltas[i])
+      return slopes
+
+
+  CX = [c[0] for c in CONTROL]
+  CY = [c[1] for c in CONTROL]
+  CM = monotone_slopes(CX, CY)
+
+
+  def radius_at(t):
+      """Outer radius at height fraction t, before any surface pattern."""
+      t = min(1.0, max(0.0, t))
+      for i in range(len(CX) - 1):
+          if CX[i] <= t <= CX[i + 1]:
+              h = CX[i + 1] - CX[i]
+              s = (t - CX[i]) / h
+              # Hermite basis, tension from SHOULDER: 0 runs the segments almost
+              # straight (a hard shoulder), 1 lets them round fully.
+              m0, m1 = CM[i] * h * SHOULDER * 2, CM[i + 1] * h * SHOULDER * 2
+              return (
+                  (2 * s**3 - 3 * s**2 + 1) * CY[i]
+                  + (s**3 - 2 * s**2 + s) * m0
+                  + (-2 * s**3 + 3 * s**2) * CY[i + 1]
+                  + (s**3 - s**2) * m1
+              )
+      return CY[-1]
+
+
+  def slope_at(t):
+      """dr/dz, used to keep the wall thickness honest on a sloped surface."""
+      step = 1e-3
+      lo, hi = max(0.0, t - step), min(1.0, t + step)
+      return (radius_at(hi) - radius_at(lo)) / ((hi - lo) * HEIGHT_MM)
+
+
+  # --- 2. the cross-section ---------------------------------------------------
+  def facet_shape(angle):
+      """Rounded polygon as a multiplier on the radius. 0 facets stays round."""
+      if FACETS < 3:
+          return 1.0
+      step = TAU / FACETS
+      local = (angle % step) - step / 2
+      polygon = math.cos(math.pi / FACETS) / math.cos(local)
+      return polygon + (1.0 - polygon) * FACET_ROUND
+
+
+  def flute(angle):
+      """Vertical fluting, in millimetres rather than as a fraction.
+
+      Added to the radius rather than multiplied into it, so the wall stays the
+      same thickness in the troughs as on the crests -- which is what the nozzle
+      cares about.
+      """
+      if LOBES < 1 or LOBE_MM <= 0:
+          return 0.0
+      wave = math.cos(LOBES * angle)
+      if FLUTE_SHARP > 0:
+          # Blend toward a cusped profile: rounded flutes to sharp ribs.
+          # 1/(1 + 1.5f), not 1/(1 + 3f): the cuspier exponent doubled what the
+          # boolean cost on a large vase for a rib nobody could see the
+          # difference in at 0.4 mm nozzle width.
+          sharp = math.copysign(abs(wave) ** (1.0 / (1.0 + 1.5 * FLUTE_SHARP)), wave)
+          wave = wave * (1 - FLUTE_SHARP) + sharp * FLUTE_SHARP
+      return LOBE_MM * wave
+
+
+  def ripple(t):
+      """Horizontal ringing up the wall."""
+      if RIPPLES < 1 or RIPPLE_MM <= 0:
+          return 0.0
+      return RIPPLE_MM * math.sin(TAU * RIPPLES * t)
+
+
+  def outer_radius(angle, t):
+      spin = math.radians(TWIST_DEG) * t
+      return radius_at(t) * facet_shape(angle + spin) + flute(angle + spin) + ripple(t)
+
+
+  def section(t, inset, height, closed_curve=True):
+      """One closed cross-section, as a face on its own plane."""
+      points = []
+      for i in range(POINTS):
+          angle = TAU * i / POINTS
+          r = max(0.4, outer_radius(angle, t) - inset)
+          points.append((r * math.cos(angle), r * math.sin(angle)))
+      plane = Plane.XY.offset(height)
+      with BuildLine(plane) as line:
+          if closed_curve:
+              Spline(*points, points[0])
+          else:
+              Polyline(*points, points[0])
+      return make_face(line.line)
+
+
+  # --- 3. outer skin ----------------------------------------------------------
+  SMOOTH = FACETS == 0 or FACET_ROUND > 0.15
+  outer_sections = [
+      section(i / SECTIONS, 0.0, HEIGHT_MM * i / SECTIONS, SMOOTH) for i in range(SECTIONS + 1)
+  ]
+  # Ruled, not smooth: a C2 loft through twisted sections bulges between them,
+  # and a cavity that bulges through its own outer skin cuts to nothing -- a
+  # twisted vase came out solid, 830 cm3 of it. Straight bands between closely
+  # spaced sections are also what the slicer sees anyway.
+  outer = loft(outer_sections, ruled=True)
+
+  # --- 4. the cavity ----------------------------------------------------------
+  # The wall is measured perpendicular to the surface: on a sloped shoulder a
+  # purely radial inset is thinner than it looks, by the cosine of the slope.
+  INNER_STEPS = SECTIONS
+  inner_sections = []
+  for i in range(INNER_STEPS + 1):
+      z = BASE_MM + (HEIGHT_MM + 4.0 - BASE_MM) * i / INNER_STEPS
+      t = min(1.0, z / HEIGHT_MM)
+      slope = slope_at(t)
+      # Perpendicular, not radial: a radial inset on a sloped shoulder is thinner
+      # than it looks by the cosine of the slope. Capped, because the correction
+      # runs away on a near-horizontal flare and insets the cavity past the far
+      # wall -- which came out as a 0.15 mm rim.
+      wall = WALL_MM * min(2.5, math.sqrt(1.0 + slope * slope))
+      if RIM_BAND_MM > 0:
+          # Thicken the last 10 mm into a lip you can pick the vase up by.
+          near_rim = max(0.0, (z - (HEIGHT_MM - 10.0)) / 10.0)
+          wall += RIM_BAND_MM * min(1.0, near_rim)
+      inner_sections.append(section(t, wall, z, SMOOTH))
+  cavity = loft(inner_sections, ruled=True)
+
+  result = outer - cavity

@@ -88,6 +88,8 @@ formforge templates                              # what is available
 formforge templates planter_halfmoon_wall        # parameters, ranges, print test
 formforge generate "a hex planter for a 4in pot"
 formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
+formforge vase --count 8 --style mixed                   # a shelf of vases
+formforge mushroom --count 8 --seed 42 --species mixed   # a population of STLs
 formforge check model.stl --profile bambu_p1s_0.4 --category planter
 formforge render model.stl --out previews/
 formforge rules --profile prusa_mk4_0.4          # the DFM rules being applied
@@ -107,6 +109,50 @@ substitute. Every DFM constant in this system is a conventional maker value;
 a print outcome recorded against a model is the only thing that can make one
 of them a measurement, and it lands next to what the validator measured at the
 time.
+
+### Generators
+
+A template is one model with sliders. A **generator** is the thing that decides
+where the sliders go, so one definition covers a population rather than a
+specimen:
+
+```bash
+formforge vase --count 8 --seed 42 --style mixed --out out/vases
+formforge mushroom --count 8 --seed 42 --species mixed
+formforge vase --explain                        # the definition, as a graph
+formforge vase --params-only --count 12         # the sliders, no geometry
+formforge mushroom --species parasol --set cap_d_mm=90 --render
+```
+
+Two definitions ship today: a **vase** in twelve silhouettes -- urn, amphora,
+bottle, bud, tulip, hourglass, cylinder, faceted, crystal, spiral, fluted,
+rippled -- and a detailed **mushroom** in seven species. They share a solver, a
+CLI command and one test that every generator in the catalog has to pass.
+
+Each run writes an STL, a STEP and a 3MF per specimen plus a `variations.json`
+with the parameters, bounding box and DFM verdict of each, so a population is
+reproducible from its manifest. The STEP is a real B-rep -- one solid whose cap
+is a surface of revolution and whose warts are spheres -- so it opens in
+SolidWorks or Fusion with its faces and edges intact. The same seed gives the same mushrooms on any
+machine, and member three of a population is member three whether you asked for
+four or forty.
+
+`web/studio.html` is the same definitions with a face on them: open the file in
+a browser -- no server, no build step -- and a tab per generator gives you every
+slider in that template, with the model rebuilding live, the printability rules
+checked as you move them, and buttons that export the mesh as STL or hand you a
+script that builds the STEP. It also writes the exact `formforge build` command
+for whatever is on screen, which is how a shape you liked in the browser becomes
+the validated, watertight model with STEP and 3MF beside it. Both generators are
+in it -- **Mushroom** and **Vase** -- and a third is an entry in one registry at
+the bottom of the page.
+
+The definition follows Grasshopper's rules rather than its interface: sliders
+are the only free values, components are pure functions of their inputs wired
+into a DAG, and a solve is a deterministic walk of it. What that buys is a
+generator you can read a variation out of -- "why did this one come out squat"
+is answered by the node that decided it. `docs/mushroom-generator.md` maps each
+idea to where it lives.
 
 ### From Claude, over MCP
 
@@ -262,7 +308,10 @@ formforge/
   mcp/            the MCP server
   api/            the HTTP gateway
   eval/           the template harness and the benchmark
-  templates/      12 verified parametric definitions
+  generators/     dataflow definitions that decide where the sliders go
+  templates/      14 verified parametric definitions
+web/
+  studio.html     both definitions as a browser front end, no build step
 ```
 
 `docs/architecture.md` covers the parts that need more than a paragraph:

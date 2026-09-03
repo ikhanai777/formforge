@@ -2,6 +2,8 @@
 
     formforge generate "a hex planter for a 4 inch pot"
     formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
+    formforge mushroom --count 6 --seed 42 --species mixed --out out/mushrooms
+    formforge vase --count 8 --style mixed --formats stl,step
     formforge templates --category planter
     formforge check model.stl --profile bambu_p1s_0.4 --category planter
     formforge render model.stl --out previews/
@@ -65,6 +67,7 @@ def main(argv: list[str] | None = None) -> int:
 
     _add_generate(subparsers)
     _add_build(subparsers)
+    _add_generators(subparsers)
     _add_templates(subparsers)
     _add_check(subparsers)
     _add_render(subparsers)
@@ -280,6 +283,262 @@ def _coerce(raw: str, spec: dict) -> Any:
         except ValueError:
             raise SystemExit(f"expected a number, got {raw!r}") from None
     return raw
+
+
+# ---------------------------------------------------------------------------
+# generators (one definition, a population of models)
+# ---------------------------------------------------------------------------
+
+
+def _add_generators(subparsers) -> None:
+    """One subcommand per generator, from the catalog.
+
+    The two definitions differ in their domain and in nothing else the command
+    line cares about, so the command is written once and the catalog supplies
+    the noun -- `--species` for mushrooms, `--style` for vases.
+    """
+    from .generators import CATALOG  # noqa: PLC0415
+
+    for generator in CATALOG:
+        _add_generator(subparsers, generator)
+
+
+def _add_generator(subparsers, generator) -> None:
+    parser = subparsers.add_parser(generator.name, help=generator.summary)
+    parser.add_argument("--count", type=int, default=6, help="how many to generate")
+    parser.add_argument("--seed", type=int, default=7, help="the population's seed")
+    parser.add_argument(
+        f"--{generator.variant_flag}",
+        dest="variant",
+        default="mixed",
+        help=f"one of the definition's {generator.variant_noun} values, or 'mixed' "
+        f"to draw one per model",
+    )
+    parser.add_argument(
+        "--variation",
+        type=float,
+        default=0.55,
+        help=f"0 rebuilds the {generator.variant_noun} exactly; 1 lets every slider "
+        f"wander its full range",
+    )
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="pin a parameter across the whole population; repeatable",
+    )
+    parser.add_argument(
+        "--out", default=f"out/{generator.name}s", help="directory for the exported files"
+    )
+    parser.add_argument(
+        "--formats",
+        default="stl,step,3mf",
+        help="which exports to keep per specimen: stl (print), step (edit in CAD), "
+        "3mf (print, declares its units). Default keeps all three.",
+    )
+    parser.add_argument("--profile", default=DEFAULT_PROFILE_ID)
+    parser.add_argument("--material", default="PLA")
+    parser.add_argument(
+        "--params-only",
+        action="store_true",
+        help="print the parameter sets without building anything",
+    )
+    parser.add_argument("--render", action="store_true", help="also write a preview PNG each")
+    parser.add_argument(
+        "--explain", action="store_true", help="print the definition graph and exit"
+    )
+    parser.add_argument("--json", action="store_true")
+    parser.set_defaults(handler=_cmd_generator, generator=generator.name)
+
+
+def _cmd_generator(args) -> int:
+    from .generators import catalog  # noqa: PLC0415
+
+    generator = catalog()[args.generator]
+
+    if args.explain:
+        print(generator.definition.explain())
+        return 0
+
+    registry = TemplateRegistry.load(strict=False)
+    try:
+        template = registry.get(generator.template_id)
+    except KeyError as exc:
+        print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    try:
+        pins = _parse_settings(args.set, template)
+    except SystemExit as exc:
+        print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    try:
+        solutions = [
+            generator.solve(
+                generator.member_seed(args.seed, index),
+                variant=args.variant,
+                variation=args.variation,
+                overrides=pins,
+            )
+            for index in range(max(0, args.count))
+        ]
+    except ValueError as exc:
+        print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    specimens = [
+        {
+            "index": index,
+            "variant": generator.variant_of(solution),
+            "seed": solution["params"]["seed"],
+            "params": solution["params"],
+        }
+        for index, solution in enumerate(solutions)
+    ]
+
+    if args.params_only:
+        if args.json:
+            print(json.dumps(specimens, indent=2))
+            return 0
+        for specimen in specimens:
+            print(f"  {specimen['index']:>2}  {specimen['variant']:<12} "
+                  f"seed {specimen['seed']:<5} {generator.describe(specimen['params'])}")
+        return 0
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    formats = [f.strip().lower() for f in args.formats.split(",") if f.strip()]
+    unknown = [f for f in formats if f not in {"stl", "step", "3mf"}]
+    if unknown:
+        print(_bad(f"unknown format(s): {', '.join(unknown)}. Known: stl, step, 3mf."),
+              file=sys.stderr)
+        return 1
+    if "stl" not in formats:
+        # The DFM verdict is measured on the mesh, so the STL is written either
+        # way; --formats decides what is kept beside it.
+        formats.insert(0, "stl")
+    built = _build_specimens(specimens, template, out_dir, args, formats, generator)
+
+    manifest = out_dir / "variations.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "template": template.id,
+                "definition": generator.definition.name,
+                "seed": args.seed,
+                generator.variant_flag: args.variant,
+                "variation": args.variation,
+                "pinned": pins,
+                "formats": formats,
+                "specimens": built,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    if args.json:
+        print(json.dumps(built, indent=2))
+    else:
+        ok = sum(1 for b in built if b["status"] == "ok")
+        print()
+        print(f"{ok}/{len(built)} built into {out_dir} as {', '.join(formats)}")
+        print(_dim(f"parameters and verdicts: {manifest}"))
+    return 0 if all(b["status"] == "ok" for b in built) else 1
+
+
+def _build_specimens(
+    specimens: list[dict], template, out_dir: Path, args, wanted_formats: list[str], generator
+) -> list[dict]:
+    """Build each model in the sandbox and validate what came out."""
+    import shutil  # noqa: PLC0415
+
+    from .sandbox import ExecuteRequest, GeometrySandbox  # noqa: PLC0415
+
+    sandbox = GeometrySandbox()
+    built: list[dict] = []
+    for specimen in specimens:
+        params = specimen["params"]
+        name = f"{specimen['index']:02d}-{specimen['variant']}-{specimen['seed']}"
+        record = {**{k: v for k, v in specimen.items() if k != "params"}, "params": params}
+
+        problems = template.validate_params(params)
+        if problems:
+            record.update(status="rejected", detail="; ".join(problems))
+            built.append(record)
+            if not args.json:
+                print(f"  [{_bad('!!')}] {name}: {problems[0]}")
+            continue
+
+        execution = sandbox.execute(
+            ExecuteRequest(
+                source=template.render_source(params),
+                language=template.language,
+                params=params,
+                # Hand-authored templates are human-reviewed; the magic-number
+                # style rule does not apply to them.
+                enforce_named_constants=False,
+            )
+        )
+        if not execution.ok:
+            record.update(
+                status="failed", detail=f"{execution.error_class}: {execution.message}"
+            )
+            built.append(record)
+            if not args.json:
+                print(f"  [{_bad('!!')}] {name}: {execution.message}")
+            continue
+
+        # The kernel exports STL, STEP and 3MF on every build; which of them
+        # survive is the caller's choice. STEP is the one that opens in CAD
+        # with its faces and edges intact, so it is kept by default.
+        stl = out_dir / f"{name}.stl"
+        shutil.copyfile(execution.artifacts["stl"], stl)
+        for fmt in wanted_formats:
+            source = execution.artifacts.get(fmt)
+            if fmt == "stl" or not source:
+                continue
+            copy = out_dir / f"{name}.{fmt}"
+            shutil.copyfile(source, copy)
+            record[fmt] = str(copy)
+        missing = [f for f in wanted_formats if f != "stl" and not execution.artifacts.get(f)]
+        for fmt in missing:
+            record[f"{fmt}_error"] = execution.artifacts.get(f"{fmt}_error", "not exported")
+
+        report = validate(
+            str(stl),
+            profile_id=args.profile,
+            material=args.material,
+            category=template.category,
+            params=params,
+            template_invariants=template.invariants,
+            expected_solids=template.expected_solids,
+            brep_features=execution.stats.get("brep_features"),
+        )
+        record.update(
+            status="ok" if report.passed else "unprintable",
+            stl=str(stl),
+            bbox_mm=execution.stats.get("bbox_mm"),
+            triangles=execution.stats.get("triangles"),
+            failures=[c.id for c in report.hard_failures],
+            warnings=[c.id for c in report.warnings],
+        )
+
+        if args.render:
+            from .render import render_views  # noqa: PLC0415
+
+            preview = render_views(str(stl), out_dir / name, views=("iso",))
+            record["preview"] = preview.views.get("iso")
+
+        built.append(record)
+        if not args.json:
+            marker = _ok("ok") if report.passed else _warn("??")
+            print(f"  [{marker}] {name}: {generator.describe(params)}")
+            for failure in record["failures"]:
+                print(_warn(f"        {failure}"))
+    return built
 
 
 # ---------------------------------------------------------------------------
