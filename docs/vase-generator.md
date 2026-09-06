@@ -15,11 +15,15 @@ Every run writes `.stl`, `.step` and `.3mf` per vase plus a `variations.json`
 of parameters and DFM verdicts. The machinery — the dataflow solver, the seed,
 the jitter, the proportion and feasibility nodes — is the same one
 `docs/mushroom-generator.md` describes; this page is what is specific to vases.
+There is a second vase generator alongside this one:
+`docs/sculpt-vase-generator.md` builds its surface out of solid blades standing
+on the wall rather than out of the wall itself.
 
 ## The front end
 
-`web/studio.html`, the **Vase** tab: the same page the mushroom lives in, with
-the right-hand column rebuilt from this template's schema. Open the file in a
+`web/studio.html`, the **Vase** tab: the same page the mushroom and the
+sculptural vase live in, with the right-hand column rebuilt from this
+template's schema. Open the file in a
 browser -- no server, no build step -- and you have
 
 * the twelve styles as chips, each drawn from its own silhouette

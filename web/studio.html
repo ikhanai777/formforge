@@ -1470,12 +1470,11 @@ const VASE_SOURCE_B64 = [
   "b25zLCBydWxlZD1UcnVlKQoKcmVzdWx0ID0gb3V0ZXIgLSBjYXZpdHkK"
 ].join("");
 
-/* The silhouette: a Fritsch-Carlson monotone cubic through the four control
+/* The silhouette: a Fritsch-Carlson monotone cubic through four control
    diameters. A natural cubic bulges past the widest of them and puts an
-   undercut where the slider said straight shoulder. */
-function vaseProfile(p) {
-  const cx = [0, p.mid_pos, p.neck_pos, 1];
-  const cy = [p.base_d_mm / 2, p.mid_d_mm / 2, p.neck_d_mm / 2, p.rim_d_mm / 2];
+   undercut where the slider said straight shoulder. Both vases turn their
+   profile on this, so it lives here rather than in either of them. */
+function monotoneProfile(cx, cy, shoulder, height) {
   const d = [];
   for (let i = 0; i < 3; i++) d.push((cy[i + 1] - cy[i]) / Math.max(cx[i + 1] - cx[i], 1e-6));
   const m = [d[0], 0, 0, d[2]];
@@ -1491,7 +1490,7 @@ function vaseProfile(p) {
       if (cx[i] <= t && t <= cx[i + 1]) {
         const h = cx[i + 1] - cx[i];
         const s = h <= 0 ? 0 : (t - cx[i]) / h;
-        const m0 = m[i] * h * p.shoulder * 2, m1 = m[i + 1] * h * p.shoulder * 2;
+        const m0 = m[i] * h * shoulder * 2, m1 = m[i + 1] * h * shoulder * 2;
         return (2 * s ** 3 - 3 * s ** 2 + 1) * cy[i]
              + (s ** 3 - 2 * s ** 2 + s) * m0
              + (-2 * s ** 3 + 3 * s ** 2) * cy[i + 1]
@@ -1503,9 +1502,14 @@ function vaseProfile(p) {
   const slopeAt = t => {
     const step = 1e-3;
     const lo = Math.max(0, t - step), hi = Math.min(1, t + step);
-    return (radiusAt(hi) - radiusAt(lo)) / ((hi - lo) * p.height_mm);
+    return (radiusAt(hi) - radiusAt(lo)) / ((hi - lo) * height);
   };
   return {radiusAt, slopeAt};
+}
+function vaseProfile(p) {
+  return monotoneProfile([0, p.mid_pos, p.neck_pos, 1],
+    [p.base_d_mm / 2, p.mid_d_mm / 2, p.neck_d_mm / 2, p.rim_d_mm / 2],
+    p.shoulder, p.height_mm);
 }
 
 function vaseFacet(p, angle) {
@@ -1720,7 +1724,510 @@ function vaseShuffle(next, base, seed) {
 }
 
 /* =================================================================
-   4. Three.js stage
+   4. The sculptural vase: the vessel_sculpt_vase template, ported the
+      same way. A turned wall with solid ribs standing off it -- the
+      cavity behind them is smooth, which is what makes them ribs rather
+      than corrugations -- a plan that can be squashed to an oval, and a
+      mouth cut on the slant or scooped by a cylinder.
+   ================================================================= */
+const SCULPT_SCHEMA = [
+  {k:"height_mm",   g:"form", label:"Height",      min:80,  max:240, step:5,   v:200, unit:"mm",
+   note:"To the highest point of the rim. The ceiling is the build volume."},
+  {k:"base_d_mm",   g:"form", label:"Base",        min:25,  max:140, step:2,   v:52,  unit:"mm"},
+  {k:"belly_d_mm",  g:"form", label:"Belly",       min:40,  max:190, step:2,   v:120, unit:"mm",
+   note:"Measured the wide way across. Wider than base and mouth is an urn."},
+  {k:"belly_pos",   g:"form", label:"Belly height",min:0.15,max:0.75,step:0.01,v:0.38,unit:""},
+  {k:"neck_d_mm",   g:"form", label:"Neck",        min:18,  max:170, step:2,   v:62,  unit:"mm"},
+  {k:"neck_pos",    g:"form", label:"Neck height", min:0.55,max:0.95,step:0.01,v:0.82,unit:""},
+  {k:"mouth_d_mm",  g:"form", label:"Mouth",       min:20,  max:180, step:2,   v:74,  unit:"mm"},
+  {k:"shoulder",    g:"form", label:"Roundness",   min:0,   max:1,   step:0.05,v:0.55,unit:""},
+  {k:"oval",        g:"form", label:"Squash",      min:0,   max:0.55,step:0.05,v:0,   unit:"",
+   note:"0 is round; 0.5 is half as deep as it is wide, which sits flat to a wall."},
+
+  {k:"fin_count",   g:"fins", label:"Fins",        min:0,   max:14,  step:1,   v:14,  unit:"",
+   note:"Ribs standing off the wall. Under 3 leaves it plain; the ceiling is what the surface costs to mesh."},
+  {k:"fin_mm",      g:"fins", label:"Fin depth",   min:0,   max:14,  step:0.5, v:6,   unit:"mm"},
+  {k:"fin_width",   g:"fins", label:"Fin width",  min:0.25,max:0.9, step:0.05,v:0.45,unit:"",
+   note:"How much of the gap between ribs each one fills. 0.25 is a blade, 0.9 a pleat."},
+  {k:"fin_sharp",   g:"fins", label:"Fin edge",    min:0,   max:1,   step:0.05,v:0.6, unit:"",
+   note:"0 is a soft swell in the wall, 1 a rib with steep sides and a flat crest."},
+  {k:"fin_start",   g:"fins", label:"Fin start",   min:0,   max:0.8, step:0.02,v:0,   unit:""},
+  {k:"fin_end",     g:"fins", label:"Fin end",     min:0.2, max:1,   step:0.02,v:0.72,unit:"",
+   note:"At 1 they run into the rim, and a cut mouth leaves it serrated."},
+  {k:"fin_fade",    g:"fins", label:"Fin fade",    min:0.05,max:0.6, step:0.05,v:0.25,unit:"",
+   note:"The ramp in and out. This is what keeps a fin from being an overhang."},
+  {k:"fin_vary",    g:"fins", label:"Fin variation", min:0, max:1,   step:0.05,v:0,   unit:""},
+  {k:"sweep_deg",   g:"fins", label:"Sweep",       min:-360,max:360, step:5,   v:0,   unit:"°",
+   note:"How far the blades wind round between the bottom of the band and the top."},
+  {k:"sweep_ease",  g:"fins", label:"Sweep ease",  min:0,   max:1,   step:0.05,v:0.6, unit:"",
+   note:"0 is a helix; 1 leaves the base and meets the rim upright, turning in between."},
+
+  {k:"rim_cut",     g:"rim", label:"Rim", choices:["flat","slant","saddle"], v:"flat",
+   note:"A tilted plane makes a beak; a cylinder laid across makes a saddle."},
+  {k:"rim_drop_mm", g:"rim", label:"Rim drop",     min:0,   max:60,  step:2,   v:0,   unit:"mm"},
+
+  {k:"wall_mm",     g:"rim", label:"Wall",         min:1.2, max:4,   step:0.1, v:1.8, unit:"mm",
+   note:"Measured on the wide axis; a squashed vase carries less across the flanks."},
+  {k:"base_mm",     g:"rim", label:"Floor",        min:1.5, max:8,   step:0.5, v:3,   unit:"mm"}
+];
+
+const SCULPT_PRESETS = {
+  pleat: {height_mm:190, base_d_mm:56, belly_d_mm:122, belly_pos:0.42, neck_d_mm:92, neck_pos:0.8, mouth_d_mm:104, shoulder:0.6, fin_count:14, fin_mm:5, fin_width:0.85, fin_sharp:0.25, fin_end:1, fin_fade:0.15, sweep_deg:55, sweep_ease:0.4, rim_cut:"saddle", rim_drop_mm:28},
+  blade: {height_mm:230, base_d_mm:62, belly_d_mm:110, belly_pos:0.3, neck_d_mm:34, neck_pos:0.8, mouth_d_mm:40, shoulder:0.5, fin_count:14, fin_mm:10, fin_width:0.32, fin_sharp:1, fin_start:0.02, fin_end:0.5, fin_fade:0.4, rim_cut:"slant", rim_drop_mm:26},
+  wave: {height_mm:200, base_d_mm:60, belly_d_mm:130, belly_pos:0.55, neck_d_mm:96, neck_pos:0.85, mouth_d_mm:92, shoulder:0.7, oval:0.45, fin_count:14, fin_mm:3.5, fin_width:0.8, fin_sharp:0.15, fin_end:1, fin_fade:0.2, sweep_deg:55, sweep_ease:1, rim_cut:"slant", rim_drop_mm:16, wall_mm:2},
+  column: {height_mm:210, base_d_mm:78, belly_d_mm:84, belly_pos:0.5, neck_d_mm:82, neck_pos:0.85, mouth_d_mm:86, shoulder:0.2, fin_count:14, fin_mm:4.5, fin_width:0.4, fin_sharp:0.9, fin_end:1, fin_fade:0.1},
+  urn: {height_mm:190, base_d_mm:52, belly_d_mm:118, belly_pos:0.38, neck_d_mm:60, neck_pos:0.82, mouth_d_mm:72, shoulder:0.55, fin_count:14, fin_mm:6, fin_width:0.45, fin_sharp:0.6, fin_end:0.72, fin_fade:0.25},
+  crown: {height_mm:200, base_d_mm:66, belly_d_mm:104, belly_pos:0.35, neck_d_mm:88, neck_pos:0.75, mouth_d_mm:100, shoulder:0.65, fin_count:14, fin_mm:5, fin_width:0.42, fin_sharp:0.8, fin_start:0.45, fin_end:1, fin_fade:0.2, rim_cut:"saddle", rim_drop_mm:22},
+  spindle: {height_mm:235, base_d_mm:48, belly_d_mm:88, belly_pos:0.45, neck_d_mm:44, neck_pos:0.85, mouth_d_mm:52, shoulder:0.7, fin_count:8, fin_mm:9, fin_width:0.5, fin_sharp:0.5, fin_end:0.9, fin_fade:0.3, sweep_deg:180, sweep_ease:0.5},
+  shell: {height_mm:180, base_d_mm:66, belly_d_mm:140, belly_pos:0.5, neck_d_mm:118, neck_pos:0.8, mouth_d_mm:112, shoulder:0.8, oval:0.5, fin_count:0, rim_cut:"saddle", rim_drop_mm:24, wall_mm:2},
+  bud: {height_mm:140, base_d_mm:40, belly_d_mm:70, belly_pos:0.35, neck_d_mm:30, neck_pos:0.78, mouth_d_mm:34, shoulder:0.6, fin_count:12, fin_mm:4, fin_width:0.4, fin_sharp:0.7, fin_end:0.65, fin_fade:0.25, rim_cut:"slant", rim_drop_mm:12, wall_mm:1.6},
+  flare: {height_mm:175, base_d_mm:46, belly_d_mm:62, belly_pos:0.25, neck_d_mm:78, neck_pos:0.75, mouth_d_mm:116, shoulder:0.55, fin_count:14, fin_mm:5, fin_width:0.4, fin_sharp:0.85, fin_start:0.1, fin_end:0.8, fin_fade:0.3},
+  carafe: {height_mm:220, base_d_mm:70, belly_d_mm:96, belly_pos:0.25, neck_d_mm:36, neck_pos:0.7, mouth_d_mm:44, shoulder:0.8, fin_count:14, fin_mm:7, fin_width:0.5, fin_sharp:0.4, fin_start:0.05, fin_end:0.45, fin_fade:0.35, sweep_deg:30, rim_cut:"slant", rim_drop_mm:30},
+  drum: {height_mm:120, base_d_mm:88, belly_d_mm:144, belly_pos:0.45, neck_d_mm:128, neck_pos:0.85, mouth_d_mm:132, shoulder:0.5, fin_count:14, fin_mm:4, fin_width:0.42, fin_sharp:1, fin_end:1, fin_fade:0.15, fin_vary:0.4}
+};
+const SCULPT_LABELS = {
+  pleat:"Pleat", blade:"Blade", wave:"Wave", column:"Column", urn:"Urn", crown:"Crown",
+  spindle:"Spindle", shell:"Shell", bud:"Bud", flare:"Flare", carafe:"Carafe", drum:"Drum"
+};
+const SCULPT_JITTER = {
+  height_mm:["rel",0.14], belly_pos:["abs",0.05], neck_pos:["abs",0.04],
+  shoulder:["abs",0.16], oval:["abs",0.08], fin_mm:["rel",0.22], fin_width:["abs",0.08],
+  fin_sharp:["abs",0.15], fin_start:["abs",0.04], fin_end:["abs",0.06],
+  fin_fade:["abs",0.08], fin_vary:["abs",0.2], sweep_deg:["rel",0.35],
+  sweep_ease:["abs",0.2], rim_drop_mm:["rel",0.25], wall_mm:["abs",0.15]
+};
+const SCULPT_DEFAULTS = {};
+SCULPT_SCHEMA.forEach(f => SCULPT_DEFAULTS[f.k] = f.v);
+
+/* The template's own build123d source, base64'd like the others. */
+const SCULPT_SOURCE_B64 = [
+  "ZnJvbSBidWlsZDEyM2QgaW1wb3J0ICoKCmltcG9ydCBtYXRoCgojIC0tLSBzbGlkZXJzIC0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCkhFSUdIVF9NTSA9IDIwMC4wCkJBU0VfRF9NTSA9",
+  "IDUyLjAKQkVMTFlfRF9NTSA9IDEyMC4wCkJFTExZX1BPUyA9IDAuMzgKTkVDS19EX01NID0gNjIuMApORUNLX1BPUyA9IDAu",
+  "ODIKTU9VVEhfRF9NTSA9IDc0LjAKU0hPVUxERVIgPSAwLjU1Ck9WQUwgPSAwLjAKRklOX0NPVU5UID0gMTQKRklOX01NID0g",
+  "Ni4wCkZJTl9XSURUSCA9IDAuNDUKRklOX1NIQVJQID0gMC42CkZJTl9TVEFSVCA9IDAuMApGSU5fRU5EID0gMC43MgpGSU5f",
+  "RkFERSA9IDAuMjUKRklOX1ZBUlkgPSAwLjAKU1dFRVBfREVHID0gMC4wClNXRUVQX0VBU0UgPSAwLjYKUklNX0NVVCA9ICJm",
+  "bGF0IgpSSU1fRFJPUF9NTSA9IDAuMApXQUxMX01NID0gMS44CkJBU0VfTU0gPSAzLjAKU0VFRCA9IDEKClRBVSA9IDYuMjgz",
+  "MTg1MzA3MTc5NTg2CgojIC0tLSByZXNvbHV0aW9uIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0KIyBUZW4gcG9pbnRzIHBlciByaWIsIHNvIHRoZSBuYXJyb3dlc3QgcmliIHRoZSBzY2hl",
+  "bWEgYWxsb3dzIHN0aWxsIGdldHMgdHdvIG9yCiMgdGhyZWUgc2FtcGxlcyBhY3Jvc3MgaXQgYW5kIHRoZSB3aWRlc3QgZ2V0",
+  "cyBuaW5lLiBCb3RoIHNraW5zIGFyZSBsb2Z0ZWQKIyB0aHJvdWdoIFNFQ1RJT05TIHggUE9JTlRTIHBvaW50cyBhbmQgdGhl",
+  "biBjdXQgYWdhaW5zdCBlYWNoIG90aGVyLCBzbyB0aGVpcgojIHByb2R1Y3QgaXMgd2hhdCBhIGJ1aWxkIGNvc3RzIC0tIGFu",
+  "ZCwgbW9yZSB0byB0aGUgcG9pbnQsIHdoYXQgaXQgY29zdHMgdG8KIyAqbWVzaCogYWZ0ZXJ3YXJkcywgYmVjYXVzZSBhIHJp",
+  "YiBpcyB3aGVyZSB0aGUgc3VyZmFjZSBub3JtYWwgc3dpbmdzIGhhcmRlc3QKIyBhbmQgdGhlIG1lc2hlciBmb2xsb3dzIGl0",
+  "IHdoZXRoZXIgdGhlIGxvZnQgd2FzIGNoZWFwIG9yIG5vdC4KRklOU19PTiA9IEZJTl9DT1VOVCA+PSAzIGFuZCBGSU5fTU0g",
+  "PiAwLjE1IGFuZCBGSU5fRU5EID4gRklOX1NUQVJUICsgMC4wMgpQT0lOVFMgPSBpbnQobWluKDE2MCwgbWF4KDk2LCBGSU5f",
+  "Q09VTlQgKiAxMCkpKSBpZiBGSU5TX09OIGVsc2UgOTYKIyBBIHJ1bGVkIGJhbmQgaXMgYSBzdHJhaWdodCBsaW5lIHVwIHRo",
+  "ZSB3YWxsLCBzbyB0aGUgZmFkZSBhdCBlYWNoIGVuZCBvZiBhIGZpbgojIGJhbmQgbmVlZHMgc2V2ZXJhbCBvZiB0aGVtIHRv",
+  "IGJlIGEgcmFtcCByYXRoZXIgdGhhbiBhIHN0ZXAsIGFuZCBhIHN3ZXB0IGZpbgojIG5lZWRzIGVub3VnaCB0aGF0IGNvbnNl",
+  "Y3V0aXZlIHNlY3Rpb25zIHN0YXkgYSBmcmFjdGlvbiBvZiBhIGZpbiBhcGFydC4KU1dFRVBfU0FNUExFID0gYWJzKFNXRUVQ",
+  "X0RFRykgKiBtYXgoRklOX0NPVU5ULCAxKSAvIDYwLjAKU0VDVElPTlMgPSBpbnQobWluKDUyLCBtYXgoMzAsIFNXRUVQX1NB",
+  "TVBMRSkpKQojIEJvdGggc2tpbnMgbGl2ZSBpbiBtZW1vcnkgYXQgb25jZSB3aGlsZSB0aGUgYm9vbGVhbiBydW5zLCBhbmQg",
+  "dGhlIHNhbmRib3gKIyBnaXZlcyB0aGUgd2hvbGUgam9iIHR3byBnaWdhYnl0ZXMgb2YgYWRkcmVzcyBzcGFjZS4gQSBzZWN0",
+  "aW9uIHNwbGluZQojIGNhcnJ5aW5nIGEgZmluIHBhdHRlcm4gY29zdHMgZmFyIG1vcmUgb2YgdGhhdCB0aGFuIGEgcGxhaW4g",
+  "b25lOiB0aGUgc2FtZQojIHJlc29sdXRpb24gdGhhdCBkcmF3cyBhIHNtb290aCB2YXNlIGluIDc0MCBNQiBkcmF3cyBhIHNp",
+  "eHRlZW4tcmliYmVkIG9uZSBpbgojIDEuOSBHQiwgYW5kIHRoZSBrZXJuZWwgZG9lcyBub3QgZmFpbCBncmFjZWZ1bGx5IHdo",
+  "ZW4gaXQgcnVucyBvdXQuIFBhc3QgdGhpcwojIGNlaWxpbmcgdGhlIHJlc29sdXRpb24gZ2l2ZXMgd2F5IHJhdGhlciB0aGFu",
+  "IHRoZSBkZXNpZ24uCkJVREdFVCA9IDM5MDAKaWYgU0VDVElPTlMgKiBQT0lOVFMgPiBCVURHRVQ6CiAgICBzaHJpbmsgPSAo",
+  "QlVER0VUIC8gKFNFQ1RJT05TICogUE9JTlRTKSkgKiogMC41CiAgICBQT0lOVFMgPSBtYXgoOTYsIGludChQT0lOVFMgKiBz",
+  "aHJpbmspKQogICAgU0VDVElPTlMgPSBpbnQobWF4KDI2LCBtaW4oU0VDVElPTlMsIG1heChTV0VFUF9TQU1QTEUsIEJVREdF",
+  "VCAvIFBPSU5UUykpKSkKIyBUaGUgY2F2aXR5IG5ldmVyIHNlZXMgYSBmaW4gLS0gdGhlIGZpbnMgYXJlIHNvbGlkIHJpYnMg",
+  "c3RhbmRpbmcgb24gdGhlIHdhbGwsCiMgbm90IGNvcnJ1Z2F0aW9ucyBpbiBpdCAtLSBzbyBpdCBpcyBsb2Z0ZWQgYXQgaXRz",
+  "IG93biBtdWNoIGNvYXJzZXIgcmVzb2x1dGlvbi4KQ0FWX1BPSU5UUyA9IDU2CkNBVl9TRUNUSU9OUyA9IG1pbihTRUNUSU9O",
+  "UywgMjIpCgoKZGVmIGhhc2gwMShpbmRleCwgc2FsdCk6CiAgICAiIiJEZXRlcm1pbmlzdGljIHBzZXVkby1yYW5kb20gaW4g",
+  "WzAsMSk6IHRoZSBzYW1lIHNlZWQsIHRoZSBzYW1lIHZhc2UuIiIiCiAgICB4ID0gbWF0aC5zaW4oKGluZGV4ICsgMSkgKiAx",
+  "Mi45ODk4ICsgKFNFRUQgKyAxKSAqIDc4LjIzMyArIHNhbHQgKiAzNy43MTkpICogNDM3NTguNTQ1MwogICAgcmV0dXJuIHgg",
+  "LSBtYXRoLmZsb29yKHgpCgoKIyAtLS0gMS4gdGhlIHNpbGhvdWV0dGUgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCkNPTlRST0wgPSBbCiAgICAoMC4wLCBCQVNFX0RfTU0gLyAyKSwKICAgIChCRUxM",
+  "WV9QT1MsIEJFTExZX0RfTU0gLyAyKSwKICAgIChORUNLX1BPUywgTkVDS19EX01NIC8gMiksCiAgICAoMS4wLCBNT1VUSF9E",
+  "X01NIC8gMiksCl0KCgpkZWYgbW9ub3RvbmVfc2xvcGVzKHhzLCB5cyk6CiAgICAiIiJGcml0c2NoLUNhcmxzb24gdGFuZ2Vu",
+  "dHM6IGEgY3VydmUgdGhyb3VnaCB0aGUgY29udHJvbCBwb2ludHMgdGhhdCBuZXZlcgogICAgb3ZlcnNob290cyB0aGVtLCBz",
+  "byB0aGUgc2lsaG91ZXR0ZSBpcyB0aGUgb25lIHRoZSBzbGlkZXJzIGRlc2NyaWJlLiIiIgogICAgbiA9IGxlbih4cykKICAg",
+  "IGRlbHRhcyA9IFsoeXNbaSArIDFdIC0geXNbaV0pIC8gKHhzW2kgKyAxXSAtIHhzW2ldKSBmb3IgaSBpbiByYW5nZShuIC0g",
+  "MSldCiAgICBzbG9wZXMgPSBbZGVsdGFzWzBdXSArIFswLjBdICogKG4gLSAyKSArIFtkZWx0YXNbLTFdXQogICAgZm9yIGkg",
+  "aW4gcmFuZ2UoMSwgbiAtIDEpOgogICAgICAgIGlmIGRlbHRhc1tpIC0gMV0gKiBkZWx0YXNbaV0gPD0gMDoKICAgICAgICAg",
+  "ICAgc2xvcGVzW2ldID0gMC4wCiAgICAgICAgZWxzZToKICAgICAgICAgICAgdzEgPSAyICogKHhzW2kgKyAxXSAtIHhzW2ld",
+  "KSArICh4c1tpXSAtIHhzW2kgLSAxXSkKICAgICAgICAgICAgdzIgPSAoeHNbaSArIDFdIC0geHNbaV0pICsgMiAqICh4c1tp",
+  "XSAtIHhzW2kgLSAxXSkKICAgICAgICAgICAgc2xvcGVzW2ldID0gKHcxICsgdzIpIC8gKHcxIC8gZGVsdGFzW2kgLSAxXSAr",
+  "IHcyIC8gZGVsdGFzW2ldKQogICAgcmV0dXJuIHNsb3BlcwoKCkNYID0gW2NbMF0gZm9yIGMgaW4gQ09OVFJPTF0KQ1kgPSBb",
+  "Y1sxXSBmb3IgYyBpbiBDT05UUk9MXQpDTSA9IG1vbm90b25lX3Nsb3BlcyhDWCwgQ1kpCgoKZGVmIHJhZGl1c19hdCh0KToK",
+  "ICAgICIiIkhhbGYgdGhlIGNvbnRyb2wgZGlhbWV0ZXIgYXQgaGVpZ2h0IGZyYWN0aW9uIHQsIHRoZSB3aWRlIHdheSBhY3Jv",
+  "c3MuIiIiCiAgICB0ID0gbWluKDEuMCwgbWF4KDAuMCwgdCkpCiAgICBmb3IgaSBpbiByYW5nZShsZW4oQ1gpIC0gMSk6CiAg",
+  "ICAgICAgaWYgQ1hbaV0gPD0gdCA8PSBDWFtpICsgMV06CiAgICAgICAgICAgIGggPSBDWFtpICsgMV0gLSBDWFtpXQogICAg",
+  "ICAgICAgICBzID0gKHQgLSBDWFtpXSkgLyBoCiAgICAgICAgICAgIG0wLCBtMSA9IENNW2ldICogaCAqIFNIT1VMREVSICog",
+  "MiwgQ01baSArIDFdICogaCAqIFNIT1VMREVSICogMgogICAgICAgICAgICByZXR1cm4gKAogICAgICAgICAgICAgICAgKDIg",
+  "KiBzKiozIC0gMyAqIHMqKjIgKyAxKSAqIENZW2ldCiAgICAgICAgICAgICAgICArIChzKiozIC0gMiAqIHMqKjIgKyBzKSAq",
+  "IG0wCiAgICAgICAgICAgICAgICArICgtMiAqIHMqKjMgKyAzICogcyoqMikgKiBDWVtpICsgMV0KICAgICAgICAgICAgICAg",
+  "ICsgKHMqKjMgLSBzKioyKSAqIG0xCiAgICAgICAgICAgICkKICAgIHJldHVybiBDWVstMV0KCgpkZWYgc2xvcGVfYXQodCk6",
+  "CiAgICBzdGVwID0gMWUtMwogICAgbG8sIGhpID0gbWF4KDAuMCwgdCAtIHN0ZXApLCBtaW4oMS4wLCB0ICsgc3RlcCkKICAg",
+  "IHJldHVybiAocmFkaXVzX2F0KGhpKSAtIHJhZGl1c19hdChsbykpIC8gKChoaSAtIGxvKSAqIEhFSUdIVF9NTSkKCgojIC0t",
+  "LSAyLiB0aGUgcGxhbjogYW4gZWxsaXBzZSwgbm90IGEgY2lyY2xlIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tCiMgRXZlcnkgY29udHJvbCBkaWFtZXRlciBpcyBtZWFzdXJlZCB0aGUgd2lkZSB3YXkgYWNyb3NzLCBzbyBzcXVhc2hp",
+  "bmcgb25seSBldmVyCiMgdGFrZXMgZGVwdGggYXdheS4gSXQgaXMgYnVpbHQgaW50byB0aGUgc2VjdGlvbnMgcmF0aGVyIHRo",
+  "YW4gYXBwbGllZCB0byB0aGUKIyBmaW5pc2hlZCBzb2xpZDogYSB0cmFuc2Zvcm0gYXQgdGhlIGVuZCB0dXJucyBldmVyeSBh",
+  "bmFseXRpYyBmYWNlIGludG8gYQojIGJzcGxpbmUgb25lLCBhbmQgdGhlIGN1dCBtb3V0aCB0aGVuIGNvc3RzIHRlbiB0aW1l",
+  "cyBhcyBtdWNoLgpBU1BFQ1QgPSBtYXgoMC4zNSwgMS4wIC0gT1ZBTCkKCgpkZWYgcGxhbihhbmdsZSk6CiAgICBjLCBzID0g",
+  "bWF0aC5jb3MoYW5nbGUpLCBtYXRoLnNpbihhbmdsZSkgLyBBU1BFQ1QKICAgIHJldHVybiAxLjAgLyBtYXRoLnNxcnQoYyAq",
+  "IGMgKyBzICogcykKCgpkZWYgcGxhbl9sZWFuKGFuZ2xlKToKICAgICIiIihkci9kYW5nbGUpL3IgZm9yIHRoZSBwbGFuOiBo",
+  "b3cgbXVjaCBvZiBpdHMgdGhpY2tuZXNzIGEgcmFkaWFsIGluc2V0CiAgICBnaXZlcyB1cCB3aGVyZSB0aGUgcGxhbiBpcyB0",
+  "dXJuaW5nLCB3aGljaCBvbiBhIHNxdWFzaGVkIG92YWwgaXMgbW9zdCBvZgogICAgdGhlIHdhbGwuIiIiCiAgICBzdGVwID0g",
+  "MWUtMwogICAgaGVyZSA9IG1heChwbGFuKGFuZ2xlKSwgMWUtNikKICAgIHJldHVybiAocGxhbihhbmdsZSArIHN0ZXApIC0g",
+  "cGxhbihhbmdsZSAtIHN0ZXApKSAvICgyICogc3RlcCAqIGhlcmUpCgoKIyAtLS0gMy4gdGhlIGZpbnMgLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tClBJVENIID0gVEFVIC8gbWF4KEZJTl9D",
+  "T1VOVCwgMSkKSEFMRiA9IEZJTl9XSURUSCAqIFBJVENIIC8gMgojIDAgaXMgYSBzb2Z0IHN3ZWxsIGluIHRoZSB3YWxsLCAx",
+  "IGEgcmliIHN0YW5kaW5nIG9mZiBpdCB3aXRoIHN0ZWVwIHNpZGVzLgpGSU5fRyA9IDAuNCArIDEuMSAqICgxLjAgLSBGSU5f",
+  "U0hBUlApCgoKZGVmIHNtb290aHN0ZXAoeCk6CiAgICB4ID0gbWluKDEuMCwgbWF4KDAuMCwgeCkpCiAgICByZXR1cm4geCAq",
+  "IHggKiAoMy4wIC0gMi4wICogeCkKCgpkZWYgZmluX2JhbmQodCk6CiAgICAiIiJIb3cgbXVjaCBmaW4gdGhlcmUgaXMgYXQg",
+  "aGVpZ2h0IHQsIGFuZCBub25lIG91dHNpZGUgdGhlIGJhbmQuCgogICAgVGhlIGZhZGUgaXMgd2hhdCBsZXRzIGEgZmluIHN0",
+  "YXJ0IGFuZCBzdG9wIG1pZC13YWxsOiBvbmUgdGhhdCBhcnJpdmVzIGF0CiAgICBmdWxsIGRlcHRoIG92ZXIgYSBzaW5nbGUg",
+  "bGF5ZXIgaXMgYSBsZWRnZSwgYW5kIHRoZSBwcmludGVyIGJyaWRnZXMgaXQgb3IKICAgIGRyb29wcyBpdC4gT3ZlciBhIGZl",
+  "dyBtaWxsaW1ldHJlcyBpdCBpcyBhIHJhbXAgaW5zdGVhZC4KICAgICIiIgogICAgaWYgbm90IEZJTlNfT04gb3IgdCA8PSBG",
+  "SU5fU1RBUlQgb3IgdCA+PSBGSU5fRU5EOgogICAgICAgIHJldHVybiAwLjAKICAgIHUgPSAodCAtIEZJTl9TVEFSVCkgLyBt",
+  "YXgoRklOX0VORCAtIEZJTl9TVEFSVCwgMWUtNikKICAgIGZhZGUgPSBtYXgoRklOX0ZBREUsIDFlLTYpCiAgICByZXR1cm4g",
+  "c21vb3Roc3RlcChtaW4odSAvIGZhZGUsICgxLjAgLSB1KSAvIGZhZGUsIDEuMCkpCgoKZGVmIHN3ZWVwX2F0KHQpOgogICAg",
+  "IiIiSG93IGZhciB0aGUgZmlucyBoYXZlIHdvdW5kIHJvdW5kIGJ5IGhlaWdodCB0LgoKICAgIFRoZSBlYXNlIGlzIHRoZSBk",
+  "aWZmZXJlbmNlIGJldHdlZW4gYSBoZWxpeCBhbmQgdGhlIFMgdGhlIGV5ZSByZWFkcyBhcyBkcmF3bgogICAgcmF0aGVyIHRo",
+  "YW4gbWFjaGluZWQ6IGF0IDEgdGhlIGZpbnMgbGVhdmUgdGhlIGJhc2UgYW5kIG1lZXQgdGhlIHJpbSBydW5uaW5nCiAgICBz",
+  "dHJhaWdodCB1cCwgYW5kIGRvIGFsbCB0aGVpciB0dXJuaW5nIGFjcm9zcyB0aGUgYmVsbHkuCiAgICAiIiIKICAgIGVhc2Ug",
+  "PSB0ICogKDEuMCAtIFNXRUVQX0VBU0UpICsgU1dFRVBfRUFTRSAqICgzICogdCAqIHQgLSAyICogdCoqMykKICAgIHJldHVy",
+  "biBtYXRoLnJhZGlhbnMoU1dFRVBfREVHKSAqIGVhc2UKCgpkZWYgZmluX2F0KGFuZ2xlLCB0KToKICAgICIiIkZpbiBkZXB0",
+  "aCBpbiBtaWxsaW1ldHJlcywgYXQgYW4gYW5nbGUgaW4gdGhlIGZpbnMnIG93biBmcmFtZS4iIiIKICAgIGJhbmQgPSBmaW5f",
+  "YmFuZCh0KQogICAgaWYgYmFuZCA8PSAwLjA6CiAgICAgICAgcmV0dXJuIDAuMAogICAgb2Zmc2V0ID0gKChhbmdsZSArIFBJ",
+  "VENIIC8gMikgJSBQSVRDSCkgLSBQSVRDSCAvIDIKICAgIHUgPSBhYnMob2Zmc2V0KSAvIEhBTEYKICAgIGlmIHUgPj0gMS4w",
+  "OgogICAgICAgIHJldHVybiAwLjAKICAgIGRlcHRoID0gRklOX01NCiAgICBpZiBGSU5fVkFSWSA+IDA6CiAgICAgICAgaW5k",
+  "ZXggPSBpbnQocm91bmQoYW5nbGUgLyBQSVRDSCkpICUgbWF4KEZJTl9DT1VOVCwgMSkKICAgICAgICBkZXB0aCAqPSAxLjAg",
+  "LSBGSU5fVkFSWSAqIDAuNCAqIGhhc2gwMShpbmRleCwgMS4wKQogICAgcmV0dXJuIGRlcHRoICogYmFuZCAqICgwLjUgKyAw",
+  "LjUgKiBtYXRoLmNvcyhtYXRoLnBpICogdSkpICoqIEZJTl9HCgoKZGVmIG91dGVyX3JhZGl1cyhhbmdsZSwgdCk6CiAgICBy",
+  "ZXR1cm4gcmFkaXVzX2F0KHQpICogcGxhbihhbmdsZSkgKyBmaW5fYXQoYW5nbGUgKyBzd2VlcF9hdCh0KSwgdCkKCgojIC0t",
+  "LSA0LiB0aGUgc2tpbnMgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0KZGVmIHNlY3Rpb24odCwgeiwgaW5zZXQ9MC4wLCBmaW5uZWQ9VHJ1ZSk6CiAgICBjb3VudCA9IFBPSU5UUyBpZiBmaW5u",
+  "ZWQgZWxzZSBDQVZfUE9JTlRTCiAgICBwb2ludHMgPSBbXQogICAgZm9yIGkgaW4gcmFuZ2UoY291bnQpOgogICAgICAgIGFu",
+  "Z2xlID0gVEFVICogaSAvIGNvdW50CiAgICAgICAgaWYgZmlubmVkOgogICAgICAgICAgICByID0gb3V0ZXJfcmFkaXVzKGFu",
+  "Z2xlLCB0KQogICAgICAgIGVsc2U6CiAgICAgICAgICAgICMgUGVycGVuZGljdWxhciB0byB0aGUgc3VyZmFjZSwgbm90IHJh",
+  "ZGlhbDogb24gYSBzbG9wZWQgc2hvdWxkZXIsCiAgICAgICAgICAgICMgYW5kIGFyb3VuZCB0aGUgdGlnaHQgZW5kcyBvZiBh",
+  "biBvdmFsLCBhIHJhZGlhbCBpbnNldCBpcyB0aGlubmVyCiAgICAgICAgICAgICMgdGhhbiBpdCBsb29rcy4gQ2FwcGVkLCBi",
+  "ZWNhdXNlIHRoZSBjb3JyZWN0aW9uIHJ1bnMgYXdheSBvbiBhCiAgICAgICAgICAgICMgbmVhci1ob3Jpem9udGFsIGZsYXJl",
+  "IGFuZCB3b3VsZCBpbnNldCB0aGUgY2F2aXR5IHBhc3QgdGhlIGZhciB3YWxsLgogICAgICAgICAgICBsZWFuID0gcGxhbl9s",
+  "ZWFuKGFuZ2xlKQogICAgICAgICAgICByID0gcmFkaXVzX2F0KHQpICogcGxhbihhbmdsZSkgLSBpbnNldCAqIG1pbigyLjIs",
+  "IG1hdGguc3FydCgxLjAgKyBsZWFuICogbGVhbikpCiAgICAgICAgciA9IG1heCgwLjQsIHIpCiAgICAgICAgcG9pbnRzLmFw",
+  "cGVuZCgociAqIG1hdGguY29zKGFuZ2xlKSwgciAqIG1hdGguc2luKGFuZ2xlKSkpCiAgICB3aXRoIEJ1aWxkTGluZShQbGFu",
+  "ZS5YWS5vZmZzZXQoeikpIGFzIGxpbmU6CiAgICAgICAgU3BsaW5lKCpwb2ludHMsIHBvaW50c1swXSkKICAgIHJldHVybiBt",
+  "YWtlX2ZhY2UobGluZS5saW5lKQoKCm91dGVyID0gbG9mdCgKICAgIFtzZWN0aW9uKGkgLyBTRUNUSU9OUywgSEVJR0hUX01N",
+  "ICogaSAvIFNFQ1RJT05TKSBmb3IgaSBpbiByYW5nZShTRUNUSU9OUyArIDEpXSwKICAgIHJ1bGVkPVRydWUsCikKCiMgVGhl",
+  "IHdhbGwgaXMgbWVhc3VyZWQgYWdhaW5zdCB0aGUgYm9keSwgYW5kIHRoZSBib2R5IGlzIHdoYXQgdGhlIGNhdml0eQojIGZv",
+  "bGxvd3M6IGEgZmluIGhlcmUgaXMgYSBzb2xpZCByaWIgc3RhbmRpbmcgb24gdGhlIHdhbGwgcmF0aGVyIHRoYW4gYSBmb2xk",
+  "IGluCiMgaXQsIGFuZCBob2xsb3dpbmcgb25lIDMgbW0gd2lkZSB3b3VsZCBsZWF2ZSB0d28gc2tpbnMgd2l0aCBub3RoaW5n",
+  "IGJldHdlZW4uCmlubmVyX3NlY3Rpb25zID0gW10KZm9yIGkgaW4gcmFuZ2UoQ0FWX1NFQ1RJT05TICsgMSk6CiAgICB6ID0g",
+  "QkFTRV9NTSArIChIRUlHSFRfTU0gKyA0LjAgLSBCQVNFX01NKSAqIGkgLyBDQVZfU0VDVElPTlMKICAgIHQgPSBtaW4oMS4w",
+  "LCB6IC8gSEVJR0hUX01NKQogICAgc2xvcGUgPSBzbG9wZV9hdCh0KQogICAgd2FsbCA9IFdBTExfTU0gKiBtaW4oMi4yLCBt",
+  "YXRoLnNxcnQoMS4wICsgc2xvcGUgKiBzbG9wZSkpCiAgICBpbm5lcl9zZWN0aW9ucy5hcHBlbmQoc2VjdGlvbih0LCB6LCBp",
+  "bnNldD13YWxsLCBmaW5uZWQ9RmFsc2UpKQpjYXZpdHkgPSBsb2Z0KGlubmVyX3NlY3Rpb25zLCBydWxlZD1UcnVlKQoKcmVz",
+  "dWx0ID0gb3V0ZXIgLSBjYXZpdHkKCiMgLS0tIDUuIHRoZSBtb3V0aCAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQojIFRoZSByaW0gaXMgY3V0LCBub3QgbG9mdGVkOiBhIHRpbHRlZCBwbGFu",
+  "ZSBnaXZlcyB0aGUgYmVhaywgYSBjeWxpbmRlciBseWluZwojIGFjcm9zcyB0aGUgbW91dGggZ2l2ZXMgdGhlIHNhZGRsZS4g",
+  "Qm90aCBhcmUgYW5hbHl0aWMgc3VyZmFjZXMgYW5kIGNvc3QgYWxtb3N0CiMgbm90aGluZy4gTG9mdGluZyBhIHdhdnkgcmlt",
+  "IGN1cnZlIGluc3RlYWQgbmVlZHMgYSBjYXAgZmFjZSBvdmVyIGEgbm9uLXBsYW5hcgojIHdpcmUsIHdoaWNoIGlzIHRoZSBm",
+  "cmFnaWxlLCBleHBlbnNpdmUgcGFydCBvZiBldmVyeSB3YXZ5LXJpbSBtb2RlbCAtLSBhbmQKIyBjdXR0aW5nIHJ1bnMgdGhl",
+  "IHNhbWUgZWRnZSB0aHJvdWdoIHRoZSBmaW5zLCB3aGljaCBpcyB3aGVyZSB0aGUgc2VycmF0aW9uCiMgYWxvbmcgdGhlIHJp",
+  "bSBjb21lcyBmcm9tLgppZiBSSU1fQ1VUICE9ICJmbGF0IiBhbmQgUklNX0RST1BfTU0gPiAwLjE6CiAgICAjIEJvdGggY3V0",
+  "dGVycyBhcmUgcGxhY2VkIGFnYWluc3QgaG93IGZhciB0aGUgbW91dGggcmVhY2hlcyBhbG9uZyArWCwgd2hpY2gKICAgICMg",
+  "aXMgd2hlcmUgdGhleSBhcmUgbWVhbnQgdG8gdG91Y2ggdGhlIHZhc2UgYXQgZXhhY3RseSBIRUlHSFRfTU0uLi4KICAgIFJJ",
+  "TV9SRUYgPSBtYXgoCiAgICAgICAgb3V0ZXJfcmFkaXVzKFRBVSAqIGkgLyAzNjAsIDEuMCkgKiBtYXRoLmNvcyhUQVUgKiBp",
+  "IC8gMzYwKSBmb3IgaSBpbiByYW5nZSgzNjApCiAgICApCiAgICAjIC4uLiBhbmQgbGlmdGVkIGEgZnJhY3Rpb24gb2YgYSBt",
+  "aWxsaW1ldHJlIGNsZWFyIG9mIGl0IHRoZXJlLiBBIGN1dHRpbmcKICAgICMgc3VyZmFjZSB0YW5nZW50IHRvIHRoZSByaW0g",
+  "ZWRnZSBpcyB0aGUgZGVnZW5lcmF0ZSBjYXNlIGZvciBhIGJvb2xlYW46IHRoZQogICAgIyBrZXJuZWwgcmV0dXJucyBhIHNv",
+  "bGlkIHdpdGggYSBzbGl2ZXIgb2YgYSBmYWNlIGFsb25nIHRoZSB0YW5nZW5jeSwgYW5kIHRoZQogICAgIyBtZXNoIGNvbWVz",
+  "IG91dCB3aXRoIGEgaG9sZSBpbiBpdC4gQ3Jvc3NpbmcgdGhlIGVkZ2UgY2xlYW5seSBjb3N0cyAwLjYgbW0uCiAgICBDTEVB",
+  "UiA9IDAuNgogICAgaWYgUklNX0NVVCA9PSAic2xhbnQiOgogICAgICAgIHJlc3VsdCA9IHNwbGl0KAogICAgICAgICAgICBy",
+  "ZXN1bHQsCiAgICAgICAgICAgIGJpc2VjdF9ieT1QbGFuZSgKICAgICAgICAgICAgICAgIG9yaWdpbj0oMCwgMCwgSEVJR0hU",
+  "X01NICsgQ0xFQVIgLSBSSU1fRFJPUF9NTSAvIDIpLAogICAgICAgICAgICAgICAgel9kaXI9KC1SSU1fRFJPUF9NTSAvICgy",
+  "ICogUklNX1JFRiksIDAsIDEpLAogICAgICAgICAgICApLAogICAgICAgICAgICBrZWVwPUtlZXAuQk9UVE9NLAogICAgICAg",
+  "ICkKICAgIGVsc2U6CiAgICAgICAgIyBUaGUgY2lyY2xlIHRocm91Z2ggKCstUklNX1JFRiwgSEVJR0hUX01NKSBhbmQgKDAs",
+  "IEhFSUdIVF9NTSAtIGRyb3ApLgogICAgICAgICMgSXQgY2FuIG9ubHkgZXZlciBzY29vcCBvdXQgYSBoYWxmIGNpcmNsZSwg",
+  "c28gdGhlIGRyb3AgY2Fubm90IGV4Y2VlZAogICAgICAgICMgdGhlIHJlYWNoOiBwYXN0IHRoYXQgdGhlcmUgaXMgbm8gY2ly",
+  "Y2xlIHRocm91Z2ggYm90aCBwb2ludHMuCiAgICAgICAgZHJvcCA9IG1pbihSSU1fRFJPUF9NTSwgUklNX1JFRiAqIDAuOTUp",
+  "CiAgICAgICAgcmFkaXVzID0gKFJJTV9SRUYqKjIgKyBkcm9wKioyKSAvICgyICogZHJvcCkKICAgICAgICBjZW50cmUgPSBI",
+  "RUlHSFRfTU0gKyBDTEVBUiAtIGRyb3AgKyByYWRpdXMKICAgICAgICByZXN1bHQgPSByZXN1bHQgLSBQb3MoMCwgMCwgY2Vu",
+  "dHJlKSAqIFJvdCg5MCwgMCwgMCkgKiBDeWxpbmRlcigKICAgICAgICAgICAgcmFkaXVzLCBIRUlHSFRfTU0gKiAzICsgMjAw",
+  "CiAgICAgICAgKQo="
+].join("");
+
+function sculptProfile(p) {
+  return monotoneProfile([0, p.belly_pos, p.neck_pos, 1],
+    [p.base_d_mm / 2, p.belly_d_mm / 2, p.neck_d_mm / 2, p.mouth_d_mm / 2],
+    p.shoulder, p.height_mm);
+}
+/* The plan is an ellipse: every control diameter is the wide way across, so
+   the squash only ever takes depth away. */
+function sculptAspect(p) { return Math.max(0.35, 1 - p.oval); }
+function sculptPlan(p, angle) {
+  const c = Math.cos(angle), s = Math.sin(angle) / sculptAspect(p);
+  return 1 / Math.sqrt(c * c + s * s);
+}
+function sculptFinsOn(p) {
+  return p.fin_count >= 3 && p.fin_mm > 0.15 && p.fin_end > p.fin_start + 0.02;
+}
+function sculptBand(p, t) {
+  if (!sculptFinsOn(p) || t <= p.fin_start || t >= p.fin_end) return 0;
+  const u = (t - p.fin_start) / Math.max(p.fin_end - p.fin_start, 1e-6);
+  const fade = Math.max(p.fin_fade, 1e-6);
+  const x = Math.min(1, Math.max(0, Math.min(u / fade, (1 - u) / fade, 1)));
+  return x * x * (3 - 2 * x);
+}
+function sculptSweep(p, t) {
+  const ease = t * (1 - p.sweep_ease) + p.sweep_ease * (3 * t * t - 2 * t ** 3);
+  return p.sweep_deg * Math.PI / 180 * ease;
+}
+/* One rib: a cosine bump filling fin_width of its own pitch, raised to a power
+   that runs it from a soft swell to a steep-sided rib. */
+function sculptFin(p, angle, t) {
+  const band = sculptBand(p, t);
+  if (band <= 0) return 0;
+  const pitch = TAU / Math.max(p.fin_count, 1);
+  const half = p.fin_width * pitch / 2;
+  const offset = ((angle + pitch / 2) % pitch + pitch) % pitch - pitch / 2;
+  const u = Math.abs(offset) / half;
+  if (u >= 1) return 0;
+  let depth = p.fin_mm;
+  if (p.fin_vary > 0) {
+    const index = Math.round(angle / pitch) % Math.max(p.fin_count, 1);
+    depth *= 1 - p.fin_vary * 0.4 * hash01(index, 1, p.seed);
+  }
+  const g = 0.4 + 1.1 * (1 - p.fin_sharp);
+  return depth * band * (0.5 + 0.5 * Math.cos(Math.PI * u)) ** g;
+}
+function sculptRadius(p, prof, angle, t) {
+  return prof.radiusAt(t) * sculptPlan(p, angle) + sculptFin(p, angle + sculptSweep(p, t), t);
+}
+
+/* Where the mouth is cut. Both cutters are analytic, and both are lifted
+   0.6 mm clear of the rim where they would otherwise be tangent to it -- the
+   same clearance the template uses, for the same reason. */
+function sculptRim(p, prof) {
+  const H = p.height_mm;
+  if (p.rim_cut === "flat" || p.rim_drop_mm <= 0.1) return () => H;
+  let ref = 0;
+  for (let i = 0; i < 360; i++) {
+    const a = TAU * i / 360;
+    ref = Math.max(ref, sculptRadius(p, prof, a, 1) * Math.cos(a));
+  }
+  const clear = 0.6;
+  if (p.rim_cut === "slant") {
+    const slope = p.rim_drop_mm / (2 * ref);
+    return x => Math.min(H, H + clear - p.rim_drop_mm / 2 + slope * x);
+  }
+  const drop = Math.min(p.rim_drop_mm, ref * 0.95);
+  const radius = (ref * ref + drop * drop) / (2 * drop);
+  const centre = H + clear - drop + radius;
+  return x => Math.abs(x) >= radius ? H
+    : Math.min(H, centre - Math.sqrt(radius * radius - x * x));
+}
+/* The height where one column of the wall meets the cut. The cut is a function
+   of x and x depends on the height, so it is solved rather than evaluated. */
+function sculptTop(p, prof, zrim, angle) {
+  const H = p.height_mm;
+  const at = t => H * t - zrim(sculptRadius(p, prof, angle, t) * Math.cos(angle));
+  if (at(1) <= 0) return 1;
+  let lo = 0.2, hi = 1;
+  for (let i = 0; i < 14; i++) {
+    const mid = (lo + hi) / 2;
+    if (at(mid) > 0) hi = mid; else lo = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+/* One closed shell -- outer skin, rim, cavity, floor. The cavity follows the
+   body and not the ribs, which is what makes them solid ribs rather than
+   corrugations, and what the material readout measures. */
+function sculptMesh(p, quality) {
+  const prof = sculptProfile(p);
+  const zrim = sculptRim(p, prof);
+  const aspect = sculptAspect(p);
+  const H = p.height_mm;
+  const build = new Builder();
+  const fins = sculptFinsOn(p);
+  let cols = fins ? Math.min(288, Math.max(96, p.fin_count * 14)) : 96;
+  let rows = quality === "export" ? 52 : 34;
+  if (quality !== "export") cols = Math.min(cols, 216);
+
+  const outer = [], inner = [];
+  for (let j = 0; j < cols; j++) {
+    const angle = TAU * j / cols;
+    const top = sculptTop(p, prof, zrim, angle);
+    const oc = [], ic = [];
+    for (let i = 0; i <= rows; i++) {
+      const t = top * i / rows;
+      const r = sculptRadius(p, prof, angle, t);
+      oc.push([r * Math.cos(angle), r * Math.sin(angle) * aspect, H * t]);
+      const zi = p.base_mm + (H * top - p.base_mm) * i / rows;
+      const ti = Math.min(1, zi / H);
+      const slope = prof.slopeAt(ti);
+      const wall = p.wall_mm * Math.min(2.2, Math.sqrt(1 + slope * slope));
+      const ri = Math.max(0.5, prof.radiusAt(ti) * sculptPlan(p, angle) - wall);
+      ic.push([ri * Math.cos(angle), ri * Math.sin(angle) * aspect, zi]);
+    }
+    outer.push(oc); inner.push(ic);
+  }
+  for (let j = 0; j < cols; j++) {
+    const k = (j + 1) % cols;
+    for (let i = 0; i < rows; i++) {
+      build.quad(outer[j][i], outer[k][i], outer[k][i + 1], outer[j][i + 1]);
+      build.quad(inner[k][i], inner[j][i], inner[j][i + 1], inner[k][i + 1]);
+    }
+    build.quad(outer[j][rows], outer[k][rows], inner[k][rows], inner[j][rows]);
+    build.tri([0, 0, 0], outer[k][0], outer[j][0]);
+    build.tri([0, 0, p.base_mm], inner[j][0], inner[k][0]);
+  }
+  const positions = new Float32Array(build.pos);
+  positions.materialVolume = Math.abs(build.volume());
+  return positions;
+}
+
+/* The template's preconditions, checked as you drag. */
+function sculptCheck(p) {
+  const out = [];
+  const room = 1 - p.oval;
+  const H = p.height_mm;
+  const arc = p.fin_width * Math.PI * p.belly_d_mm / Math.max(p.fin_count, 1);
+  const steep = 2 * p.fin_mm / Math.max(arc, 1e-6);
+  if (!(p.neck_pos > p.belly_pos + 0.05))
+    out.push(["The neck sits at or below the belly.", "raise the neck, or drop the belly"]);
+  if (!(p.fin_end > p.fin_start + 0.1))
+    out.push(["The fins stop before they start.", "widen the band"]);
+  if (!(p.base_mm < H * 0.25))
+    out.push(["The floor is a quarter of the whole vase.", "thin the floor"]);
+  if (!(Math.min(p.base_d_mm, p.belly_d_mm, p.neck_d_mm, p.mouth_d_mm) * room > p.wall_mm * 2 + 6))
+    out.push(["The cavity does not fit inside the narrowest diameter.",
+              "widen that diameter, thin the wall, or squash it less"]);
+  const spans = [
+    [p.belly_d_mm - p.base_d_mm, p.belly_pos, "belly"],
+    [p.neck_d_mm - p.belly_d_mm, p.neck_pos - p.belly_pos, "neck"],
+    [p.mouth_d_mm - p.neck_d_mm, 1 - p.neck_pos, "mouth"]
+  ];
+  for (const [delta, span, where] of spans) {
+    if (Math.abs(delta) / 2 > span * H) {
+      out.push([`The ${where} turns faster than 45°, which needs support.`,
+                delta > 0 ? "flare it less, or raise it further up" : "close it in more gently"]);
+      break;
+    }
+  }
+  if (p.rim_cut !== "flat" && !(p.rim_drop_mm <= (1 - p.neck_pos) * H * 0.9))
+    out.push(["The cut runs below the neck: that is a section, not a mouth.",
+              "a shallower drop, or a lower neck"]);
+  if (p.rim_cut === "saddle" && !(p.rim_drop_mm <= p.mouth_d_mm * 0.45))
+    out.push(["No cylinder dips that far across a mouth that narrow.",
+              "a shallower scoop, or a wider mouth"]);
+  if (p.fin_count >= 3) {
+    if (!(p.fin_mm <= p.fin_fade * (p.fin_end - p.fin_start) * H))
+      out.push(["The ribs arrive at full depth faster than 45°, which is a ledge.",
+                "a longer fade, a wider band, or shallower ribs"]);
+    if (!(arc * room >= 2.0))
+      out.push(["The ribs come out narrower than two beads.",
+                "wider or fewer ribs, or less squash"]);
+    if (!(p.fin_count * steep * (1 + 2 * p.oval) <= 50))
+      out.push(["That surface costs more to mesh than the pipeline allows.",
+                "shallower or wider ribs, fewer of them, or less squash"]);
+    if (!(p.fin_count * p.fin_count * Math.abs(p.sweep_deg) * (1 + 2 * p.oval)
+          * Math.max(0.5, steep) <= 15000))
+      out.push(["Swept ribs cross the mesher's grid diagonally, and this many cost too much.",
+                "less sweep, fewer ribs, or shallower ones"]);
+  }
+  if (!(p.wall_mm * room >= 0.9))
+    out.push(["The squash leaves the wall too thin to print.", "a thicker wall, or less squash"]);
+  if (!(p.base_d_mm * p.base_d_mm * room >= 470))
+    out.push(["The footprint is too small to hold the plate.", "a wider base, or less squash"]);
+  return out;
+}
+
+/* Chip icon: the outer envelope, ribs included, so the icon is the vase. */
+function sculptSilhouette(preset) {
+  const p = Object.assign({}, SCULPT_DEFAULTS, preset, {seed: 3});
+  const prof = sculptProfile(p);
+  const zrim = sculptRim(p, prof);
+  const right = [];
+  for (let i = 0; i <= 44; i++) {
+    const t = i / 44;
+    if (p.height_mm * t > zrim(prof.radiusAt(t)) + 0.01) break;
+    right.push([prof.radiusAt(t) + (sculptFinsOn(p) ? p.fin_mm * sculptBand(p, t) * 0.8 : 0),
+                p.height_mm * t]);
+  }
+  if (right.length < 2) right.push([prof.radiusAt(0), p.height_mm]);
+  const maxR = Math.max(...right.map(q => q[0])) || 1;
+  const k = Math.min(12 / maxR, 27 / p.height_mm);
+  const put = ([r, z]) => `${(16 + r * k).toFixed(1)},${(30 - z * k).toFixed(1)}`;
+  return `<svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><path d="M` +
+    right.map(put).join("L") + "L" +
+    right.slice().reverse().map(([r, z]) =>
+      `${(16 - r * k).toFixed(1)},${(30 - z * k).toFixed(1)}`).join("L") +
+    `Z"/></svg>`;
+}
+
+/* Shuffle: the proportion and feasibility nodes, as the generator runs them. */
+function sculptShuffle(next, base, seed) {
+  const height = next.height_mm;
+  const reference = base.height_mm;
+  ["base_d_mm", "belly_d_mm", "neck_d_mm", "mouth_d_mm"].forEach(name => {
+    const wobble = 1 + 0.07 * (hash01(name.length, name.charCodeAt(1), seed) * 2 - 1);
+    next[name] = height * (base[name] / reference) * wobble;
+  });
+  if (base.fin_count >= 3) {
+    const pitch = base.belly_d_mm / base.fin_count;
+    next.fin_count = Math.max(4, Math.round(next.belly_d_mm / pitch));
+  }
+  next.oval = Math.min(Math.max(next.oval, 0), 0.55);
+  const room = 1 - next.oval;
+  next.wall_mm = Math.max(next.wall_mm, 0.95 / room);
+  next.belly_pos = Math.min(Math.max(next.belly_pos, 0.16), 0.72);
+  next.neck_pos = Math.min(Math.max(next.neck_pos, next.belly_pos + 0.08), 0.95);
+
+  const floor = (next.wall_mm * 2 + 7) / room;
+  ["base_d_mm", "belly_d_mm", "neck_d_mm", "mouth_d_mm"].forEach(n => {
+    next[n] = Math.max(next[n], floor);
+  });
+  next.base_d_mm = Math.max(next.base_d_mm, Math.sqrt(480 / room));
+  [["base_d_mm", "belly_d_mm", next.belly_pos],
+   ["belly_d_mm", "neck_d_mm", next.neck_pos - next.belly_pos],
+   ["neck_d_mm", "mouth_d_mm", 1 - next.neck_pos]].forEach(([lower, upper, span]) => {
+    const allowed = span * next.height_mm * 1.92;
+    const delta = next[upper] - next[lower];
+    if (Math.abs(delta) > allowed) next[upper] = next[lower] + (delta > 0 ? allowed : -allowed);
+    next[upper] = Math.max(next[upper], floor);
+  });
+
+  next.fin_start = Math.min(Math.max(next.fin_start, 0), 0.78);
+  next.fin_end = Math.min(Math.max(next.fin_end, next.fin_start + 0.12), 1);
+  if (next.fin_count >= 3) {
+    next.fin_count = Math.min(next.fin_count, 14);
+    next.fin_width = Math.min(Math.max(next.fin_width, 0.25), 0.9);
+    while (next.fin_count > 4 &&
+           next.fin_width * Math.PI * next.belly_d_mm / next.fin_count * room < 2.2) {
+      next.fin_count -= 1;
+    }
+    next.fin_mm = Math.min(next.fin_mm,
+      next.fin_fade * (next.fin_end - next.fin_start) * next.height_mm);
+    const arc = () => next.fin_width * Math.PI * next.belly_d_mm / Math.max(next.fin_count, 1);
+    const squash = 1 + 2 * next.oval;
+    const budget = 46 / (next.fin_count * squash);
+    if (2 * next.fin_mm / arc() > budget) next.fin_mm = Math.max(0, budget * arc() / 2);
+    const load = next.fin_count * next.fin_count * squash
+      * Math.max(0.5, 2 * next.fin_mm / arc());
+    if (Math.abs(next.sweep_deg) * load > 14000)
+      next.sweep_deg = (next.sweep_deg >= 0 ? 1 : -1) * (14000 / load);
+  } else {
+    next.fin_count = 0;
+  }
+  if (next.rim_cut !== "flat") {
+    next.rim_drop_mm = Math.min(next.rim_drop_mm,
+      (1 - next.neck_pos) * next.height_mm * 0.85);
+    if (next.rim_cut === "saddle")
+      next.rim_drop_mm = Math.min(next.rim_drop_mm, next.mouth_d_mm * 0.42);
+  }
+  next.base_mm = Math.min(next.base_mm, next.height_mm * 0.22);
+  return next;
+}
+
+/* =================================================================
+   5. Three.js stage
    ================================================================= */
 const canvas = document.getElementById("view");
 const renderer = new THREE.WebGLRenderer({canvas, antialias: true, alpha: true, preserveDrawingBuffer: false});
@@ -1798,7 +2305,7 @@ function paintTheme() {
 }
 
 /* =================================================================
-   5. Rebuild + readouts
+   6. Rebuild + readouts
    ================================================================= */
 let lastPositions = null;
 let refit = true;
@@ -1858,7 +2365,7 @@ function command() {
 }
 
 /* =================================================================
-   6. Controls
+   7. Controls
    ================================================================= */
 let inputs = {};
 function fmt(f, value) {
@@ -2039,7 +2546,7 @@ document.getElementById("reset").addEventListener("click", () => {
 });
 
 /* =================================================================
-   7. Export
+   8. Export
    ================================================================= */
 let downloads = null;
 if (window.claude && typeof window.claude.use === "function") {
@@ -2187,12 +2694,12 @@ document.getElementById("copy-cmd").addEventListener("click", async () => {
 });
 
 /* =================================================================
-   8. The two models, and the switch between them
+   9. The three models, and the switch between them
 
       Everything above this point is either shared machinery or one
       model's own port of its template. A model is the pairing: its
       schema, its presets, the three functions that draw it, and the
-      strings that name its parts. Adding a third is adding an entry.
+      strings that name its parts. Adding a fourth is adding an entry.
    ================================================================= */
 const MODELS = {
   mushroom: {
@@ -2250,6 +2757,35 @@ const MODELS = {
     check: vaseCheck,
     shuffle: vaseShuffle,
     silhouette: vaseSilhouette
+  },
+  sculpt: {
+    title: "Sculpt Vase",
+    noun: "sculpt-vase",
+    templateId: "vessel_sculpt_vase",
+    presetHeading: "Styles",
+    variantKey: "style",
+    sizeKey: "height_mm",
+    seed: 1,
+    tagline: "Every slider below is a parameter of the <code>vessel_sculpt_vase</code> " +
+      "template. A turned wall wearing solid ribs that start and stop where you put them, " +
+      "squashed to an oval if you want it flat to a shelf, with the mouth cut on a slant " +
+      "or scooped into a saddle.",
+    seedNote: "The seed varies the depth of individual ribs and wobbles the proportions " +
+      "around the style. The same seed rebuilds the same vase here, in the CAD kernel, and " +
+      "on anyone else&rsquo;s machine.",
+    stepDetail: "whose wall is a lofted surface you can re-thicken and whose silhouette is " +
+      "still four diameters on a curve",
+    groups: [["form", "Silhouette"], ["fins", "Fins"], ["rim", "Rim and wall"]],
+    schema: SCULPT_SCHEMA,
+    presets: SCULPT_PRESETS,
+    labels: SCULPT_LABELS,
+    jitter: SCULPT_JITTER,
+    defaults: SCULPT_DEFAULTS,
+    sourceB64: SCULPT_SOURCE_B64,
+    mesh: sculptMesh,
+    check: sculptCheck,
+    shuffle: sculptShuffle,
+    silhouette: sculptSilhouette
   }
 };
 
@@ -2275,7 +2811,7 @@ function useModel(name) {
 }
 
 /* =================================================================
-   8. Boot
+   10. Boot
    ================================================================= */
 function buildTabs() {
   const host = document.getElementById("tabs");

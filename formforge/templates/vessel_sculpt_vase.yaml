@@ -1,0 +1,586 @@
+id: vessel_sculpt_vase
+version: 1
+category: vessel
+display_name: "Sculptural Fin Vase"
+description: >
+  The other half of the vase shelf: a turned silhouette wearing standing fins
+  rather than a fluted wall. Blades of a set thickness rise off the body, start
+  and stop where you put them up the height, and wind round it as they go; the
+  plan can be squashed to an oval so the vase sits flat against a shelf; and the
+  mouth can be cut on a slant into a beak or scooped by a cylinder into a
+  saddle, with the cut running through the fins to leave the rim serrated.
+tags: [vase, vessel, fin, finned, ribbed, blade, sculptural, oval, decor, homeware, generative, parametric]
+embedding_text: >
+  finned vase ribbed vase bladed vase sculptural vase designer vase fin blades
+  standing ribs oval vase flat vase slanted rim angled mouth beak vase saddle
+  rim scalloped rim pleated vase twisted fins swept ribs modern vase statement
+  vase table centrepiece home decor vase
+language: build123d
+
+print_test:
+  # No model in this repository has been physically printed. The target machine
+  # and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    Everything about this shape is chosen so it prints standing up with no
+    support. The wall is a turned surface no steeper than 45 degrees anywhere.
+    Each fin is a solid plate at least 1.6 mm thick with a tip at least 0.8 mm
+    across -- two beads and one bead at a 0.4 mm nozzle -- and it fades in and
+    out over a ramp rather than appearing at full depth on one layer, which is
+    the only way a fin that starts halfway up the wall is not an overhang. The
+    cut mouth is the one feature that changes how it slices: a slanted or
+    scooped rim leaves the last few layers as small islands, so it wants a
+    slower top-layer speed rather than supports. Unlike the fluted vase this
+    one is not a vase-mode print -- the fins are solid ribs standing off the
+    wall, so it needs real perimeters.
+
+expected_solids: 1
+
+dimension_map:
+  height_mm: height
+
+
+param_schema:
+  type: object
+  required: [height_mm, belly_d_mm]
+  properties:
+    height_mm:
+      type: number
+      minimum: 80
+      maximum: 240
+      default: 200
+      description: >
+        Base to the highest point of the rim. The ceiling is the build volume,
+        not the geometry: 240 mm leaves room under the 250 mm a P1S-class
+        printer can reach.
+      ui: { widget: slider, step: 5, label: "Height" }
+    base_d_mm:
+      type: number
+      minimum: 25
+      maximum: 140
+      default: 52
+      description: "Diameter where it meets the plate. This is the whole footprint."
+      ui: { widget: slider, step: 2, label: "Base" }
+    belly_d_mm:
+      type: number
+      minimum: 40
+      maximum: 190
+      default: 120
+      description: >
+        Diameter at belly_pos, measured the wide way across. Wider than the base
+        and the mouth gives an urn; narrower gives a waist.
+      ui: { widget: slider, step: 2, label: "Belly" }
+    belly_pos:
+      type: number
+      minimum: 0.15
+      maximum: 0.75
+      default: 0.38
+      description: "Height fraction of the belly. Low reads as a jug, high as an egg."
+      ui: { widget: slider, step: 0.01, label: "Belly height" }
+    neck_d_mm:
+      type: number
+      minimum: 18
+      maximum: 170
+      default: 62
+      description: "Diameter at neck_pos, the narrow point below the mouth."
+      ui: { widget: slider, step: 2, label: "Neck" }
+    neck_pos:
+      type: number
+      minimum: 0.55
+      maximum: 0.95
+      default: 0.82
+      description: "Height fraction of the neck. Must sit above the belly."
+      ui: { widget: slider, step: 0.01, label: "Neck height" }
+    mouth_d_mm:
+      type: number
+      minimum: 20
+      maximum: 180
+      default: 74
+      description: "Diameter at the mouth, before any rim cut."
+      ui: { widget: slider, step: 2, label: "Mouth" }
+    shoulder:
+      type: number
+      minimum: 0
+      maximum: 1
+      default: 0.55
+      description: >
+        How roundly the profile passes through its control diameters. 0 runs the
+        segments nearly straight for a hard-shouldered, turned look; 1 rounds
+        them fully.
+      ui: { widget: slider, step: 0.05, label: "Roundness" }
+    oval:
+      type: number
+      minimum: 0
+      maximum: 0.55
+      default: 0
+      description: >
+        How far the whole vase is squashed across. 0 is round; 0.5 makes it half
+        as deep as it is wide, which is the shape that sits flat against a wall.
+        Every diameter above is the wide way, so this only takes depth away --
+        and it takes it out of the wall and the fins too, which is what the
+        printability rules on those are measured against.
+      ui: { widget: slider, step: 0.05, label: "Squash" }
+    fin_count:
+      type: integer
+      minimum: 0
+      maximum: 14
+      default: 14
+      description: >
+        Ribs standing off the wall. 0, 1 or 2 leaves it plain. The ceiling is
+        what the surface costs the kernel: a section spline carrying fourteen
+        ribs and the cavity it is cut against both live in memory at once, and
+        the sandbox gives the whole job two gigabytes.
+      ui: { widget: slider, step: 1, label: "Fins" }
+    fin_mm:
+      type: number
+      minimum: 0
+      maximum: 14
+      default: 6
+      description: "How far a rib stands off the wall at its deepest."
+      ui: { widget: slider, step: 0.5, label: "Fin depth" }
+    fin_width:
+      type: number
+      minimum: 0.25
+      maximum: 0.9
+      default: 0.45
+      description: >
+        How much of the gap between ribs each one fills. 0.25 is a narrow blade
+        with a wide flat between; 0.9 is a pleated wall with barely a valley.
+      ui: { widget: slider, step: 0.05, label: "Fin width" }
+    fin_sharp:
+      type: number
+      minimum: 0
+      maximum: 1
+      default: 0.6
+      description: >
+        0 is a soft swell in the wall, 1 a rib standing off it with steep sides
+        and a flat crest.
+      ui: { widget: slider, step: 0.05, label: "Fin edge" }
+    fin_start:
+      type: number
+      minimum: 0
+      maximum: 0.8
+      default: 0
+      description: "Height fraction where the ribs begin."
+      ui: { widget: slider, step: 0.02, label: "Fin start" }
+    fin_end:
+      type: number
+      minimum: 0.2
+      maximum: 1
+      default: 0.72
+      description: >
+        Height fraction where they stop. At 1 they run into the rim, and a cut
+        mouth then leaves the rim serrated where it crosses them.
+      ui: { widget: slider, step: 0.02, label: "Fin end" }
+    fin_fade:
+      type: number
+      minimum: 0.05
+      maximum: 0.6
+      default: 0.25
+      description: >
+        How much of the band each rib spends ramping in and out. This is what
+        keeps a rib that starts mid-wall from being an overhang.
+      ui: { widget: slider, step: 0.05, label: "Fin fade" }
+    fin_vary:
+      type: number
+      minimum: 0
+      maximum: 1
+      default: 0
+      description: "How much the seed varies the depth of individual ribs."
+      ui: { widget: slider, step: 0.05, label: "Fin variation" }
+    sweep_deg:
+      type: number
+      minimum: -360
+      maximum: 360
+      default: 0
+      description: >
+        How far the ribs wind round between the bottom of the band and the top.
+        Negative winds the other way.
+      ui: { widget: slider, step: 5, label: "Sweep" }
+    sweep_ease:
+      type: number
+      minimum: 0
+      maximum: 1
+      default: 0.6
+      description: >
+        0 winds at a constant rate, like a helix. 1 leaves the base and meets
+        the rim running straight up and does all the turning in between, which
+        is the S-curve rather than the screw.
+      ui: { widget: slider, step: 0.05, label: "Sweep ease" }
+    rim_cut:
+      type: string
+      enum: [flat, slant, saddle]
+      default: flat
+      description: >
+        How the mouth is finished. `slant` cuts it with a tilted plane, which on
+        a narrow neck is a beak; `saddle` scoops it with a cylinder laid across,
+        which dips in the middle and rises at both ends.
+      ui: { widget: segmented, label: "Rim" }
+    rim_drop_mm:
+      type: number
+      minimum: 0
+      maximum: 60
+      default: 0
+      description: "How far the low side of the cut falls below the high side."
+      ui: { widget: slider, step: 2, label: "Rim drop" }
+    wall_mm:
+      type: number
+      minimum: 1.2
+      maximum: 4
+      default: 1.8
+      description: >
+        Wall thickness, measured perpendicular to the surface on the wide axis.
+        A squashed vase carries proportionally less of it across the flanks.
+      ui: { widget: slider, step: 0.1, label: "Wall" }
+    base_mm:
+      type: number
+      minimum: 1.5
+      maximum: 8
+      default: 3
+      description: "Floor thickness."
+      ui: { widget: slider, step: 0.5, label: "Floor" }
+    seed:
+      type: integer
+      minimum: 0
+      maximum: 9999
+      default: 1
+      description: "Places the per-rib depth variation. The same seed is the same vase."
+      ui: { widget: number, label: "Seed" }
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "trapped_volumes == 0"
+  - "min_wall >= 0.7"
+  - "com_inside_footprint"
+  # The rim cut is placed to leave the high side of the mouth at exactly the
+  # height asked for, so a cut vase is no shorter than a flat one.
+  - "bbox.z <= height_mm + 1.5"
+  - "bbox.z >= height_mm - 1.5"
+  - "bbox.x <= max(base_d_mm, belly_d_mm, neck_d_mm, mouth_d_mm) + fin_mm * 2 + 4"
+  # It has to stand on the plate long enough to finish printing.
+  - "plate_contact_mm2 >= 300"
+
+preconditions:
+  - "neck_pos > belly_pos + 0.05"
+  - "fin_end > fin_start + 0.1"
+  - "base_mm < height_mm * 0.25"
+  # The cavity has to fit inside the narrowest part of the silhouette, and the
+  # squash takes that width away before the wall gets its share.
+  - "min(base_d_mm, belly_d_mm, neck_d_mm, mouth_d_mm) * (1 - oval) > wall_mm * 2 + 6"
+  # No segment of the silhouette may change radius faster than 45 degrees, in
+  # either direction. Flaring out that fast is an overhang; closing in that fast
+  # is a bridge across the mouth.
+  - "abs(belly_d_mm - base_d_mm) / 2 <= belly_pos * height_mm"
+  - "abs(neck_d_mm - belly_d_mm) / 2 <= (neck_pos - belly_pos) * height_mm"
+  - "abs(mouth_d_mm - neck_d_mm) / 2 <= (1 - neck_pos) * height_mm"
+  # A cut mouth stays above the neck: below that it stops being a mouth and
+  # starts being a section through the vase.
+  - "rim_cut != \"flat\" implies rim_drop_mm <= (1 - neck_pos) * height_mm * 0.9"
+  # The saddle is a cylinder through both ends of the mouth and its middle, and
+  # the deepest such circle is the half one. Past that there is no cylinder.
+  - "rim_cut == \"saddle\" implies rim_drop_mm <= mouth_d_mm * 0.45"
+  # A rib arriving at full depth over one layer is a ledge the printer has to
+  # bridge. Ramped over its own depth or more, it is a 45 degree run-out.
+  - "fin_count >= 3 implies fin_mm <= fin_fade * (fin_end - fin_start) * height_mm"
+  # A rib narrower than two beads, once the squash has had its share, is not a
+  # rib the nozzle can lay.
+  - "fin_count >= 3 implies fin_width * 3.14159 * belly_d_mm / max(fin_count, 1) * (1 - oval) >= 2.0"
+  # What the surface costs to mesh. A rib is where the normal swings hardest,
+  # and the mesher subdivides until it can follow it: the steeper the rib
+  # against its own width, the more ribs, and the further the squash pushes the
+  # curvature, the more triangles -- and the STL and the DFM pass that has to
+  # read it grow with them. Both numbers are measured: at the first limit a
+  # vase meshes in about 125,000 triangles and seven seconds, and a fifth past
+  # it, in 750,000 and forty.
+  - "fin_count >= 3 implies fin_count * (2 * fin_mm * max(fin_count, 1) / (fin_width * 3.14159 * belly_d_mm)) * (1 + 2 * oval) <= 50"
+  # And the same, for a rib that also winds round as it climbs: a swept rib
+  # crosses the mesher's grid diagonally, so it cannot be followed by one row
+  # of triangles however fine the row is.
+  - "fin_count >= 3 implies fin_count * fin_count * abs(sweep_deg) * (1 + 2 * oval) * max(0.5, 2 * fin_mm * max(fin_count, 1) / (fin_width * 3.14159 * belly_d_mm)) <= 15000"
+  # The footprint has to be enough to hold the plate.
+  - "base_d_mm * base_d_mm * (1 - oval) >= 470"
+  - "wall_mm * (1 - oval) >= 0.9"
+
+source: |
+  from build123d import *
+
+  import math
+
+  # --- sliders --------------------------------------------------------------
+  HEIGHT_MM = 200.0
+  BASE_D_MM = 52.0
+  BELLY_D_MM = 120.0
+  BELLY_POS = 0.38
+  NECK_D_MM = 62.0
+  NECK_POS = 0.82
+  MOUTH_D_MM = 74.0
+  SHOULDER = 0.55
+  OVAL = 0.0
+  FIN_COUNT = 14
+  FIN_MM = 6.0
+  FIN_WIDTH = 0.45
+  FIN_SHARP = 0.6
+  FIN_START = 0.0
+  FIN_END = 0.72
+  FIN_FADE = 0.25
+  FIN_VARY = 0.0
+  SWEEP_DEG = 0.0
+  SWEEP_EASE = 0.6
+  RIM_CUT = "flat"
+  RIM_DROP_MM = 0.0
+  WALL_MM = 1.8
+  BASE_MM = 3.0
+  SEED = 1
+
+  TAU = 6.283185307179586
+
+  # --- resolution -------------------------------------------------------------
+  # Ten points per rib, so the narrowest rib the schema allows still gets two or
+  # three samples across it and the widest gets nine. Both skins are lofted
+  # through SECTIONS x POINTS points and then cut against each other, so their
+  # product is what a build costs -- and, more to the point, what it costs to
+  # *mesh* afterwards, because a rib is where the surface normal swings hardest
+  # and the mesher follows it whether the loft was cheap or not.
+  FINS_ON = FIN_COUNT >= 3 and FIN_MM > 0.15 and FIN_END > FIN_START + 0.02
+  POINTS = int(min(160, max(96, FIN_COUNT * 10))) if FINS_ON else 96
+  # A ruled band is a straight line up the wall, so the fade at each end of a fin
+  # band needs several of them to be a ramp rather than a step, and a swept fin
+  # needs enough that consecutive sections stay a fraction of a fin apart.
+  SWEEP_SAMPLE = abs(SWEEP_DEG) * max(FIN_COUNT, 1) / 60.0
+  SECTIONS = int(min(52, max(30, SWEEP_SAMPLE)))
+  # Both skins live in memory at once while the boolean runs, and the sandbox
+  # gives the whole job two gigabytes of address space. A section spline
+  # carrying a fin pattern costs far more of that than a plain one: the same
+  # resolution that draws a smooth vase in 740 MB draws a sixteen-ribbed one in
+  # 1.9 GB, and the kernel does not fail gracefully when it runs out. Past this
+  # ceiling the resolution gives way rather than the design.
+  BUDGET = 3900
+  if SECTIONS * POINTS > BUDGET:
+      shrink = (BUDGET / (SECTIONS * POINTS)) ** 0.5
+      POINTS = max(96, int(POINTS * shrink))
+      SECTIONS = int(max(26, min(SECTIONS, max(SWEEP_SAMPLE, BUDGET / POINTS))))
+  # The cavity never sees a fin -- the fins are solid ribs standing on the wall,
+  # not corrugations in it -- so it is lofted at its own much coarser resolution.
+  CAV_POINTS = 56
+  CAV_SECTIONS = min(SECTIONS, 22)
+
+
+  def hash01(index, salt):
+      """Deterministic pseudo-random in [0,1): the same seed, the same vase."""
+      x = math.sin((index + 1) * 12.9898 + (SEED + 1) * 78.233 + salt * 37.719) * 43758.5453
+      return x - math.floor(x)
+
+
+  # --- 1. the silhouette ------------------------------------------------------
+  CONTROL = [
+      (0.0, BASE_D_MM / 2),
+      (BELLY_POS, BELLY_D_MM / 2),
+      (NECK_POS, NECK_D_MM / 2),
+      (1.0, MOUTH_D_MM / 2),
+  ]
+
+
+  def monotone_slopes(xs, ys):
+      """Fritsch-Carlson tangents: a curve through the control points that never
+      overshoots them, so the silhouette is the one the sliders describe."""
+      n = len(xs)
+      deltas = [(ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]) for i in range(n - 1)]
+      slopes = [deltas[0]] + [0.0] * (n - 2) + [deltas[-1]]
+      for i in range(1, n - 1):
+          if deltas[i - 1] * deltas[i] <= 0:
+              slopes[i] = 0.0
+          else:
+              w1 = 2 * (xs[i + 1] - xs[i]) + (xs[i] - xs[i - 1])
+              w2 = (xs[i + 1] - xs[i]) + 2 * (xs[i] - xs[i - 1])
+              slopes[i] = (w1 + w2) / (w1 / deltas[i - 1] + w2 / deltas[i])
+      return slopes
+
+
+  CX = [c[0] for c in CONTROL]
+  CY = [c[1] for c in CONTROL]
+  CM = monotone_slopes(CX, CY)
+
+
+  def radius_at(t):
+      """Half the control diameter at height fraction t, the wide way across."""
+      t = min(1.0, max(0.0, t))
+      for i in range(len(CX) - 1):
+          if CX[i] <= t <= CX[i + 1]:
+              h = CX[i + 1] - CX[i]
+              s = (t - CX[i]) / h
+              m0, m1 = CM[i] * h * SHOULDER * 2, CM[i + 1] * h * SHOULDER * 2
+              return (
+                  (2 * s**3 - 3 * s**2 + 1) * CY[i]
+                  + (s**3 - 2 * s**2 + s) * m0
+                  + (-2 * s**3 + 3 * s**2) * CY[i + 1]
+                  + (s**3 - s**2) * m1
+              )
+      return CY[-1]
+
+
+  def slope_at(t):
+      step = 1e-3
+      lo, hi = max(0.0, t - step), min(1.0, t + step)
+      return (radius_at(hi) - radius_at(lo)) / ((hi - lo) * HEIGHT_MM)
+
+
+  # --- 2. the plan: an ellipse, not a circle -----------------------------------
+  # Every control diameter is measured the wide way across, so squashing only ever
+  # takes depth away. It is built into the sections rather than applied to the
+  # finished solid: a transform at the end turns every analytic face into a
+  # bspline one, and the cut mouth then costs ten times as much.
+  ASPECT = max(0.35, 1.0 - OVAL)
+
+
+  def plan(angle):
+      c, s = math.cos(angle), math.sin(angle) / ASPECT
+      return 1.0 / math.sqrt(c * c + s * s)
+
+
+  def plan_lean(angle):
+      """(dr/dangle)/r for the plan: how much of its thickness a radial inset
+      gives up where the plan is turning, which on a squashed oval is most of
+      the wall."""
+      step = 1e-3
+      here = max(plan(angle), 1e-6)
+      return (plan(angle + step) - plan(angle - step)) / (2 * step * here)
+
+
+  # --- 3. the fins ------------------------------------------------------------
+  PITCH = TAU / max(FIN_COUNT, 1)
+  HALF = FIN_WIDTH * PITCH / 2
+  # 0 is a soft swell in the wall, 1 a rib standing off it with steep sides.
+  FIN_G = 0.4 + 1.1 * (1.0 - FIN_SHARP)
+
+
+  def smoothstep(x):
+      x = min(1.0, max(0.0, x))
+      return x * x * (3.0 - 2.0 * x)
+
+
+  def fin_band(t):
+      """How much fin there is at height t, and none outside the band.
+
+      The fade is what lets a fin start and stop mid-wall: one that arrives at
+      full depth over a single layer is a ledge, and the printer bridges it or
+      droops it. Over a few millimetres it is a ramp instead.
+      """
+      if not FINS_ON or t <= FIN_START or t >= FIN_END:
+          return 0.0
+      u = (t - FIN_START) / max(FIN_END - FIN_START, 1e-6)
+      fade = max(FIN_FADE, 1e-6)
+      return smoothstep(min(u / fade, (1.0 - u) / fade, 1.0))
+
+
+  def sweep_at(t):
+      """How far the fins have wound round by height t.
+
+      The ease is the difference between a helix and the S the eye reads as drawn
+      rather than machined: at 1 the fins leave the base and meet the rim running
+      straight up, and do all their turning across the belly.
+      """
+      ease = t * (1.0 - SWEEP_EASE) + SWEEP_EASE * (3 * t * t - 2 * t**3)
+      return math.radians(SWEEP_DEG) * ease
+
+
+  def fin_at(angle, t):
+      """Fin depth in millimetres, at an angle in the fins' own frame."""
+      band = fin_band(t)
+      if band <= 0.0:
+          return 0.0
+      offset = ((angle + PITCH / 2) % PITCH) - PITCH / 2
+      u = abs(offset) / HALF
+      if u >= 1.0:
+          return 0.0
+      depth = FIN_MM
+      if FIN_VARY > 0:
+          index = int(round(angle / PITCH)) % max(FIN_COUNT, 1)
+          depth *= 1.0 - FIN_VARY * 0.4 * hash01(index, 1.0)
+      return depth * band * (0.5 + 0.5 * math.cos(math.pi * u)) ** FIN_G
+
+
+  def outer_radius(angle, t):
+      return radius_at(t) * plan(angle) + fin_at(angle + sweep_at(t), t)
+
+
+  # --- 4. the skins -----------------------------------------------------------
+  def section(t, z, inset=0.0, finned=True):
+      count = POINTS if finned else CAV_POINTS
+      points = []
+      for i in range(count):
+          angle = TAU * i / count
+          if finned:
+              r = outer_radius(angle, t)
+          else:
+              # Perpendicular to the surface, not radial: on a sloped shoulder,
+              # and around the tight ends of an oval, a radial inset is thinner
+              # than it looks. Capped, because the correction runs away on a
+              # near-horizontal flare and would inset the cavity past the far wall.
+              lean = plan_lean(angle)
+              r = radius_at(t) * plan(angle) - inset * min(2.2, math.sqrt(1.0 + lean * lean))
+          r = max(0.4, r)
+          points.append((r * math.cos(angle), r * math.sin(angle)))
+      with BuildLine(Plane.XY.offset(z)) as line:
+          Spline(*points, points[0])
+      return make_face(line.line)
+
+
+  outer = loft(
+      [section(i / SECTIONS, HEIGHT_MM * i / SECTIONS) for i in range(SECTIONS + 1)],
+      ruled=True,
+  )
+
+  # The wall is measured against the body, and the body is what the cavity
+  # follows: a fin here is a solid rib standing on the wall rather than a fold in
+  # it, and hollowing one 3 mm wide would leave two skins with nothing between.
+  inner_sections = []
+  for i in range(CAV_SECTIONS + 1):
+      z = BASE_MM + (HEIGHT_MM + 4.0 - BASE_MM) * i / CAV_SECTIONS
+      t = min(1.0, z / HEIGHT_MM)
+      slope = slope_at(t)
+      wall = WALL_MM * min(2.2, math.sqrt(1.0 + slope * slope))
+      inner_sections.append(section(t, z, inset=wall, finned=False))
+  cavity = loft(inner_sections, ruled=True)
+
+  result = outer - cavity
+
+  # --- 5. the mouth -----------------------------------------------------------
+  # The rim is cut, not lofted: a tilted plane gives the beak, a cylinder lying
+  # across the mouth gives the saddle. Both are analytic surfaces and cost almost
+  # nothing. Lofting a wavy rim curve instead needs a cap face over a non-planar
+  # wire, which is the fragile, expensive part of every wavy-rim model -- and
+  # cutting runs the same edge through the fins, which is where the serration
+  # along the rim comes from.
+  if RIM_CUT != "flat" and RIM_DROP_MM > 0.1:
+      # Both cutters are placed against how far the mouth reaches along +X, which
+      # is where they are meant to touch the vase at exactly HEIGHT_MM...
+      RIM_REF = max(
+          outer_radius(TAU * i / 360, 1.0) * math.cos(TAU * i / 360) for i in range(360)
+      )
+      # ... and lifted a fraction of a millimetre clear of it there. A cutting
+      # surface tangent to the rim edge is the degenerate case for a boolean: the
+      # kernel returns a solid with a sliver of a face along the tangency, and the
+      # mesh comes out with a hole in it. Crossing the edge cleanly costs 0.6 mm.
+      CLEAR = 0.6
+      if RIM_CUT == "slant":
+          result = split(
+              result,
+              bisect_by=Plane(
+                  origin=(0, 0, HEIGHT_MM + CLEAR - RIM_DROP_MM / 2),
+                  z_dir=(-RIM_DROP_MM / (2 * RIM_REF), 0, 1),
+              ),
+              keep=Keep.BOTTOM,
+          )
+      else:
+          # The circle through (+-RIM_REF, HEIGHT_MM) and (0, HEIGHT_MM - drop).
+          # It can only ever scoop out a half circle, so the drop cannot exceed
+          # the reach: past that there is no circle through both points.
+          drop = min(RIM_DROP_MM, RIM_REF * 0.95)
+          radius = (RIM_REF**2 + drop**2) / (2 * drop)
+          centre = HEIGHT_MM + CLEAR - drop + radius
+          result = result - Pos(0, 0, centre) * Rot(90, 0, 0) * Cylinder(
+              radius, HEIGHT_MM * 3 + 200
+          )

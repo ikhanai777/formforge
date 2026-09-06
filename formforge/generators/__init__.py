@@ -107,6 +107,13 @@ CATALOG: tuple[Generator, ...] = (
         variant_noun="style",
         summary="generate variations of a printable vase and export them",
     ),
+    Generator(
+        name="sculpt",
+        module_name="formforge.generators.sculpt",
+        variant_flag="style",
+        variant_noun="style",
+        summary="generate variations of a finned, cut-rim sculptural vase",
+    ),
 )
 
 

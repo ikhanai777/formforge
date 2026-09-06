@@ -30,9 +30,9 @@ nature_mushroom --set cap_d_mm=70 --set seed=42`.
 
 `web/studio.html` is a single file with no build step and no server: open it in
 a browser and you have the definitions with a face on them -- a tab per
-generator, **Mushroom** and **Vase**, sharing one shell. What follows describes
-the mushroom tab; `docs/vase-generator.md` covers what is different about the
-other.
+generator, **Mushroom**, **Vase** and **Sculpt Vase**, sharing one shell. What
+follows describes the mushroom tab; `docs/vase-generator.md` and
+`docs/sculpt-vase-generator.md` cover what is different about the other two.
 
 * every parameter in the template, grouped by the part of the mushroom it
   belongs to, stopping exactly where the schema stops
