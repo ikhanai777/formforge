@@ -86,14 +86,14 @@ fit on it at a fixed feature size, not how big each one is.
 | `keep` | square, heavily coursed, one battlemented deck under a low dome |
 | `lighthouse` | twelve-sided and strongly tapered, with the gallery near the top |
 | `lancet` | tall and narrow, gothic windows, a steep spire |
-| `pagoda` | four storeys, wide eaves, a galleried deck at every level |
+| `pagoda` | four six-sided storeys, wide eaves, a galleried deck at every level |
 | `bastion` | squat and six-sided, two rows of loopholes, no gallery at all |
 | `spindle` | very tall, very thin, and mostly roof |
 | `gatehouse` | one wide storey around a big arched door |
 | `belfry` | two storeys under tall mullioned openings |
 | `obelisk` | heavily tapered, smooth-roofed, nothing hanging off it |
 | `roundhouse` | twelve-sided and squat, galleried at both levels, domed |
-| `rookery` | four storeys of small windows under a tall spire |
+| `rookery` | four six-sided storeys of small windows under a tall spire |
 
 ## The windows
 
@@ -132,7 +132,7 @@ The railing is the same trick once more: a ring standing on the deck with
 `rail_gaps` openings cut through it, capped top and bottom so a rail runs
 round. `rail_open` at 0.4 is a pierced parapet; at 0.75 it is a row of
 balusters. What is left between the openings is a printed wall and gets a
-printed wall's floor of 1.2 mm, which is why turning the openness up eventually
+printed wall's floor of 1.4 mm, which is why turning the openness up eventually
 takes openings away rather than making posts you cannot print.
 
 ## The courses
@@ -147,6 +147,40 @@ narrower than the one under it is a layer that is already supported.
 
 The roof shingles are the same thing read upside down: each course stays proud
 of the cone it belongs to and steps in at its own line.
+
+## What the range sweep found
+
+Building every parameter at both ends of its declared range turned up four
+things the styles alone never would have, and all four are the same shape of
+mistake -- a rule stated where it was easy to state rather than where it
+binds.
+
+**A slot is not a wedge.** The railing openings and the bracket slots were
+straight-sided tools taking a fixed number of millimetres out at every radius
+they passed through, while the pitch they were taking them out of grows with
+the radius. So at `rail_open` 0.85 the arithmetic said 1.5 mm of post and the
+DFM pass measured 0.39, and on a four-sided tower a slot near a corner left a
+wedge that tapered away to nothing. Both are cut as wedges now, bounded by two
+planes through the axis, so what they leave is the same fraction of the pitch
+all the way through. The precondition is still stated on the outside, where it
+is legible, at 1.4 rather than 1.2 -- because the narrowest point is at the
+inside of the ring, about a tenth less.
+
+**An opening is sized against its own face.** The schema states the window
+width against `width_mm`, which is the plinth. A storey that has stepped in
+three times is a great deal narrower, and at `storey_step` 0.35 the top
+storey's windows ran off the sides of their faces: eight slivers where the
+corners used to be. The template now sizes each opening against the face it is
+being cut into and drops mullions that no longer fit.
+
+**A tool face on a solid's face leaves slivers.** The bracket slots started
+exactly on the drum's face plane, which is the degenerate case for a boolean.
+They start inside it now; the drum is fused on afterwards and fills it back.
+
+**Twenty-six windows, not forty.** The cost ceiling was a guess. Twenty-four
+window cuts build in fourteen seconds and thirty-six do not build at all, so
+the ceiling now sits where the sandbox's thirty seconds run out. A twelve-sided
+tower gets two storeys of windows rather than three.
 
 ## Printing
 

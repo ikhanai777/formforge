@@ -56,12 +56,14 @@ param_schema:
     height_mm:
       type: number
       minimum: 60
-      maximum: 260
+      maximum: 245
       default: 150
       description: >
         Base to the tip of the finial. Everything else divides this up: the
         base, the roof and the finial take their own heights and the storeys
-        share what is left.
+        share what is left. The ceiling is the build volume rather than the
+        geometry: 245 mm leaves room under the 250 mm a P1S-class printer can
+        reach, and the DFM pass rejects anything past it anyway.
       ui: { widget: slider, step: 5, label: "Height" }
     width_mm:
       type: number
@@ -316,7 +318,10 @@ preconditions:
   - "gallery_mm + gallery_t_mm + rail_h_mm <= height_mm / max(storeys, 1) * 0.7"
   # The railing is a run of posts. What is left between the openings is a
   # printed wall and gets a printed wall's floor.
-  - "rail_h_mm > 0 implies (1 - rail_open) * 3.14159 * (width_mm + gallery_mm * 2) / max(rail_gaps, 1) >= 1.2"
+  # Measured on the outside, where it is easy to state; the wedge above makes
+  # the post a constant fraction of the pitch, so the narrowest it gets is at
+  # the inside of the ring -- about a tenth less. Hence 1.4 rather than 1.2.
+  - "rail_h_mm > 0 implies (1 - rail_open) * 3.14159 * (width_mm + gallery_mm * 2) / max(rail_gaps, 1) >= 1.4"
   # So are the brackets in the skirt.
   - "bracket_count >= 1 implies 3.14159 * width_mm / max(bracket_count, 1) * 0.45 >= 1.5"
   # A course that rises further than it is tall is steeper than 45 degrees.
@@ -335,8 +340,11 @@ preconditions:
   - "base_style != \"none\" implies base_d_mm >= width_mm + gallery_mm"
   - "width_mm * width_mm >= 600"
   # What the whole thing costs the kernel: every window on every face of every
-  # storey is a tool, and the count is what the sandbox's thirty seconds buy.
-  - "max(window_rows, 0) * sides * storeys <= 40"
+  # storey is a tool. Measured rather than guessed -- twenty-four of them build
+  # in fourteen seconds and thirty-six do not build at all, so the ceiling sits
+  # where the sandbox's thirty seconds run out rather than where the design
+  # would like it to.
+  - "max(window_rows, 0) * sides * storeys <= 26"
 
 source: |
   from build123d import *
@@ -408,6 +416,28 @@ source: |
   # window. Everything below that talks about an angle means a face's angle.
   PHASE = -math.pi / max(SIDES, 3)
   APOTHEM = math.cos(math.pi / max(SIDES, 3))
+  HALF_SIDE = math.sin(math.pi / max(SIDES, 3))
+  # How much of a face an opening may take, and the narrowest one worth cutting.
+  WIN_FIT = 0.72
+  WIN_MIN = 1.8
+
+
+  def opening_fit(width, bars, radius):
+      """The width an opening may actually be on a face this size, and how many
+      mullions still fit inside it.
+
+      The schema states this against `width_mm`, which is the plinth. A storey
+      that has stepped in three times is a great deal narrower than the plinth,
+      and a window sized against the plinth runs off the sides of its face --
+      which is not a wide window, it is eight slivers where the corners were.
+      """
+      allowed = min(width, 2.0 * radius * HALF_SIDE * WIN_FIT)
+      count = max(int(bars), 0)
+      for _ in range(4):
+          if count < 1 or allowed >= (count + 1) * 1.6 + count * 1.2:
+              break
+          count -= 1
+      return allowed, max(count, 0)
 
 
   def hash01(index, salt):
@@ -534,13 +564,26 @@ source: |
       return extrude(make_face(line.line), amount=depth)
 
 
-  def slot(width, z0, z1, back, depth):
-      """A plain rectangular tool: rail openings and skirt brackets."""
-      half = width / 2
-      points = [(-half, z0), (half, z0), (half, z1), (-half, z1)]
-      with BuildLine(Plane.YZ.offset(back)) as line:
-          Polyline(*points, points[0])
-      return extrude(make_face(line.line), amount=depth)
+  def slot(frac, z0, z1, r0, r1):
+      """A rail opening or a skirt bracket, cut as a wedge rather than a slot.
+
+      A straight-sided tool takes a fixed number of millimetres out at every
+      radius it passes through, while the pitch it is taking them out of grows
+      with the radius. So a slot sized against the outside leaves far less than
+      it looks like against the inside -- 0.39 mm of railing post where the
+      arithmetic said 1.5 -- and a slot near the corner of a polygon leaves a
+      wedge that tapers away to nothing. Lofted between a narrow face at r0 and
+      a wide one at r1 it is bounded by two planes through the axis instead,
+      and what it leaves is the same fraction of the pitch all the way through.
+      """
+
+      def face(radius, half):
+          points = [(-half, z0), (half, z0), (half, z1), (-half, z1)]
+          with BuildLine(Plane.YZ.offset(radius)) as line:
+              Polyline(*points, points[0])
+          return make_face(line.line)
+
+      return loft([face(r0, frac * r0), face(r1, frac * r1)], ruled=True)
 
 
   # --- 3. the storeys ---------------------------------------------------------
@@ -603,6 +646,9 @@ source: |
               )
               back = high * APOTHEM - WINDOW_DEPTH_MM
               reach = low * APOTHEM + OVER - back
+              wide, bars = opening_fit(WINDOW_W_MM, WINDOW_BARS, high)
+              if wide < WIN_MIN:
+                  continue
               for face in range(SIDES):
                   if storey == 0 and face == 0 and DOOR_W_MM > 0.5:
                       continue
@@ -610,10 +656,10 @@ source: |
                       Rot(0, 0, math.degrees(TAU * face / SIDES))
                       * Pos(0, 0, sill)
                       * opening(
-                          WINDOW_W_MM,
+                          wide,
                           WINDOW_H_MM,
                           WINDOW_STYLE,
-                          WINDOW_BARS,
+                          bars,
                           back,
                           reach,
                       )
@@ -625,10 +671,12 @@ source: |
           door_h = min(DOOR_W_MM * GOTHIC_RISE + DOOR_W_MM, (wall_top - z) * 0.8)
           door_r = radius + (wall_r - radius) * door_h / max(wall_top - z, 1e-6)
           back = door_r * APOTHEM - WINDOW_DEPTH_MM
-          drum = drum - Pos(0, 0, z) * opening(
-              DOOR_W_MM, door_h, WINDOW_STYLE if WINDOW_STYLE != "none" else "arch",
-              0, back, radius * APOTHEM + OVER - back
-          )
+          door_w, _ = opening_fit(DOOR_W_MM, 0, door_r)
+          if door_w >= WIN_MIN:
+              drum = drum - Pos(0, 0, z) * opening(
+                  door_w, door_h, WINDOW_STYLE if WINDOW_STYLE != "none" else "arch",
+                  0, back, radius * APOTHEM + OVER - back
+              )
       parts.append(drum)
 
       if gallery_here:
@@ -638,16 +686,18 @@ source: |
           # is the thing that looks like a bracket and does its job.
           skirt = band([(wall_top - LAP, wall_r), (wall_top + SKIRT_H, deck_r)])
           if BRACKET_COUNT >= 1:
-              gap = TAU * deck_r / BRACKET_COUNT * BRACKET_FRAC
+              # Started inside the drum's own face rather than on it: a tool
+              # face coincident with the solid it is cutting is what leaves
+              # slivers behind, and the drum is fused on afterwards anyway.
               skirt = skirt.cut(
                   *[
                       Rot(0, 0, math.degrees(TAU * k / BRACKET_COUNT))
                       * slot(
-                          gap,
+                          TAU / BRACKET_COUNT * BRACKET_FRAC / 2,
                           wall_top - LAP,
                           wall_top + SKIRT_H - GALLERY_T_MM,
-                          wall_r * APOTHEM,
-                          deck_r + OVER - wall_r * APOTHEM,
+                          wall_r * APOTHEM - OVER,
+                          deck_r + OVER,
                       )
                       for k in range(int(BRACKET_COUNT))
                   ]
@@ -663,17 +713,16 @@ source: |
               rail = rail - band(
                   [(rail_z - LAP - OVER, deck_r - rail_t), (rail_z + RAIL_H_MM + OVER, deck_r - rail_t)]
               )
-              gap = TAU * deck_r / max(RAIL_GAPS, 1) * RAIL_OPEN
               cap = min(RAIL_H_MM * BRACKET_FRAC, 1.6)
               rail = rail.cut(
                   *[
                       Rot(0, 0, math.degrees(TAU * k / max(RAIL_GAPS, 1)))
                       * slot(
-                          gap,
+                          TAU / max(RAIL_GAPS, 1) * RAIL_OPEN / 2,
                           rail_z + cap,
                           rail_z + RAIL_H_MM - cap,
                           (deck_r - rail_t) * APOTHEM - OVER,
-                          deck_r + OVER + OVER - (deck_r - rail_t) * APOTHEM,
+                          deck_r + OVER,
                       )
                       for k in range(int(RAIL_GAPS))
                   ]

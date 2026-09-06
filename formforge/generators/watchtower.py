@@ -75,7 +75,7 @@ STYLES: dict[str, dict[str, Any]] = {
         "roof_courses": 10, "finial_mm": 12, "base_style": "disc", "base_d_mm": 86,
     },
     "pagoda": {
-        "height_mm": 170, "width_mm": 70, "sides": 8, "storeys": 4,
+        "height_mm": 170, "width_mm": 70, "sides": 6, "storeys": 4,
         "taper": 0.1, "storey_step": 0.14, "gallery": "all", "gallery_mm": 10,
         "rail_h_mm": 7, "rail_gaps": 28, "rail_open": 0.62, "bracket_count": 8,
         "course_mm": 2.4, "course_depth_mm": 0.4, "window_style": "square",
@@ -138,7 +138,7 @@ STYLES: dict[str, dict[str, Any]] = {
         "roof_courses": 6, "finial_mm": 5, "base_style": "disc", "base_d_mm": 104,
     },
     "rookery": {
-        "height_mm": 195, "width_mm": 64, "sides": 8, "storeys": 4,
+        "height_mm": 195, "width_mm": 64, "sides": 6, "storeys": 4,
         "taper": 0.12, "storey_step": 0.1, "gallery": "all", "gallery_mm": 6,
         "rail_h_mm": 7, "rail_gaps": 22, "rail_open": 0.6, "bracket_count": 8,
         "course_mm": 2.0, "course_depth_mm": 0.35, "window_style": "arch",
@@ -153,14 +153,14 @@ STYLE_NOTE = {
     "keep": "square, heavily coursed, one battlemented deck under a low dome",
     "lighthouse": "twelve-sided and strongly tapered, with the gallery near the top",
     "lancet": "tall and narrow, gothic windows, a steep spire",
-    "pagoda": "four storeys, wide eaves, a galleried deck at every level",
+    "pagoda": "four six-sided storeys, wide eaves, a deck at every level",
     "bastion": "squat and six-sided, two rows of loopholes, no gallery at all",
     "spindle": "very tall, very thin, and mostly roof",
     "gatehouse": "one wide storey around a big arched door",
     "belfry": "two storeys under tall mullioned openings",
     "obelisk": "heavily tapered, smooth-roofed, nothing hanging off it",
     "roundhouse": "twelve-sided and squat, galleried at both levels, domed",
-    "rookery": "four storeys of small windows under a tall spire",
+    "rookery": "four six-sided storeys of small windows under a tall spire",
 }
 
 # How far each slider may wander from its style.
@@ -328,7 +328,7 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
     out = dict(params)
     out["sides"] = int(min(max(out["sides"], 4), 12))
     out["storeys"] = int(min(max(out["storeys"], 1), 4))
-    out["height_mm"] = min(max(out["height_mm"], 60.0), 260.0)
+    out["height_mm"] = min(max(out["height_mm"], 60.0), 245.0)
     out["width_mm"] = min(max(out["width_mm"], 26.0), 120.0)
     out["taper"] = min(max(out["taper"], 0.0), 0.45)
     out["storey_step"] = min(max(out["storey_step"], 0.0), 0.35)
@@ -359,8 +359,8 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
             out["roof_h_mm"] = max(4.0, out["roof_h_mm"] * (1.0 - share))
             out["finial_mm"] = max(0.0, out["finial_mm"] * (1.0 - share))
             continue
-        if out["height_mm"] < 260.0:
-            out["height_mm"] = min(260.0, out["height_mm"] + want + 2.0)
+        if out["height_mm"] < 245.0:
+            out["height_mm"] = min(245.0, out["height_mm"] + want + 2.0)
             continue
         out["storeys"] = max(1, out["storeys"] - 1)
     if out["roof_style"] != "dome":
@@ -395,11 +395,11 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
         deck = out["width_mm"] + out["gallery_mm"] * 2
         while (
             out["rail_gaps"] > 4
-            and (1 - out["rail_open"]) * math.pi * deck / out["rail_gaps"] < 1.4
+            and (1 - out["rail_open"]) * math.pi * deck / out["rail_gaps"] < 1.6
         ):
             out["rail_gaps"] -= 1
-        if (1 - out["rail_open"]) * math.pi * deck / max(out["rail_gaps"], 1) < 1.4:
-            out["rail_open"] = max(0.2, 1.0 - 1.4 * out["rail_gaps"] / (math.pi * deck))
+        if (1 - out["rail_open"]) * math.pi * deck / max(out["rail_gaps"], 1) < 1.6:
+            out["rail_open"] = max(0.2, 1.0 - 1.6 * out["rail_gaps"] / (math.pi * deck))
     else:
         out["rail_h_mm"] = 0.0
     if out["bracket_count"] >= 1:
@@ -415,10 +415,10 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
         # One window per face per row, and every one of them is a tool the
         # kernel has to cut. Rows give way before faces do: a tower with fewer
         # sides is a different tower, one with fewer rows is the same tower.
-        while out["window_rows"] > 1 and out["window_rows"] * out["sides"] * out["storeys"] > 40:
+        while out["window_rows"] > 1 and out["window_rows"] * out["sides"] * out["storeys"] > 26:
             out["window_rows"] -= 1
-        if out["window_rows"] * out["sides"] * out["storeys"] > 40:
-            out["storeys"] = max(1, int(40 / max(out["sides"], 1)))
+        if out["window_rows"] * out["sides"] * out["storeys"] > 26:
+            out["storeys"] = max(1, int(26 / max(out["sides"], 1)))
         # A window fits on its face with a jamb either side, and its mullions
         # come out of its own width.
         widest = face_width(out["width_mm"], out["sides"]) * 0.66
