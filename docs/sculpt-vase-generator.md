@@ -50,9 +50,17 @@ shelf, and a mouth that is *cut* rather than left level.
 
 ## The fins
 
-Each rib fills `fin_width` of the gap between it and the next -- 0.25 is a
+Each rib fills `fin_width` of the gap between it and the next -- 0.3 is a
 narrow blade with a wide flat between, 0.9 a pleated wall with barely a valley
--- and stands `fin_mm` off the wall. `fin_sharp` runs it from a soft swell to a
+-- and stands `fin_mm` off the wall.
+
+The floor is 0.3 and not lower for a reason the range sweep found rather than
+one anybody predicted. A section carries at most 160 points, so a rib filling a
+quarter of its own pitch gets two and a half of them across it, and a spline
+pushed through that few overshoots the crest into itself: the kernel returns a
+solid with no volume. Three points across a rib is the fewest that draws, and
+the resolution now takes `fin_width` into account so a narrow rib gets a few
+more points rather than the same ten per rib a wide one gets. `fin_sharp` runs it from a soft swell to a
 rib with steep sides and a flat crest.
 
 Two sliders decide *where* the ribs are, and they are what most of the styles
