@@ -354,6 +354,42 @@ class TestLayout:
             footprint = mount_footprint(wide_plan.spec, mount.x_mm, mount.y_mm)
             assert plate.contains(footprint.buffer(MOUNT_MARGIN_MM * 0.99))
 
+    @staticmethod
+    def _lattice() -> bytes:
+        """A window frame: every bar too narrow to take a keyhole."""
+        canvas = _canvas(400, 520)
+        _rect(canvas, 30, 30, 370, 490)
+        _rect(canvas, 42, 42, 358, 478, colour=(255, 255, 255))
+        _rect(canvas, 195, 42, 205, 478)
+        _rect(canvas, 42, 250, 358, 260)
+        return _png(canvas)
+
+    def test_a_lattice_gets_two_fixings_in_a_widened_rail(self):
+        """Two fixings that hold it flat beat one that lets it swing.
+
+        Lettering, a window frame, a branch -- anything drawn as lines has no
+        region wide enough for a keyhole, and the old answer was a single
+        fixing the piece could rotate around. The rail is the one part of the
+        plate this module drew itself, so it grows to take the pair.
+        """
+        built, _, _ = plan_from_image(self._lattice(), KeyHolderSpec(width_mm=140.0))
+        assert len(built.mounts) == 2
+        assert built.spec.rail_h_mm > KeyHolderSpec().rail_h_mm
+        assert any("widened the hook rail" in note for note in built.notes)
+        # Both fixings sit inside the rail, which spans the full width.
+        for mount in built.mounts:
+            assert mount.y_mm < built.spec.rail_h_mm
+        plate = Polygon(built.outline, built.holes)
+        for mount in built.mounts:
+            footprint = mount_footprint(built.spec, mount.x_mm, mount.y_mm)
+            assert plate.contains(footprint.buffer(MOUNT_MARGIN_MM * 0.99))
+
+    def test_a_shape_with_room_for_two_keeps_the_rail_it_asked_for(self, wide_blob_png):
+        """The widening fires only when nothing else works."""
+        built, _, _ = plan_from_image(wide_blob_png, KeyHolderSpec(width_mm=200.0))
+        assert built.spec.rail_h_mm == KeyHolderSpec().rail_h_mm
+        assert not any("widened" in note for note in built.notes)
+
     def test_no_mount_is_asked_for_no_mount_is_cut(self, wide_blob_png):
         built, _, _ = plan_from_image(
             wide_blob_png, KeyHolderSpec(width_mm=200.0, mount="none")

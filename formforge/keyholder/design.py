@@ -406,6 +406,72 @@ def _simplify(geometry, tolerance: float):
 # ---------------------------------------------------------------------------
 
 
+def _assemble(silhouette, spec: KeyHolderSpec, rail_h_mm: float):
+    """Union the silhouette with a hook rail and normalise the result.
+
+    Returns the plate, the rail, the rail's top edge and anything the caller
+    should warn about. Separated out because the mount search can send this
+    back for a second pass with a taller rail, and duplicating the union, the
+    connectivity prune and the normalisation is how those two passes would
+    quietly stop agreeing.
+    """
+    warnings: list[str] = []
+    minx, miny, maxx, _ = silhouette.bounds
+
+    rail_rect: Polygon | None = None
+    rail_top_y: float | None = None
+    if spec.rail and rail_h_mm > 0:
+        inset = max(0.0, min(spec.rail_inset_mm, (maxx - minx) / 2 - 10.0))
+        rail_top = miny + spec.rail_overlap_mm
+        rail_rect = _rounded_box(
+            minx + inset,
+            rail_top - rail_h_mm,
+            maxx - inset,
+            rail_top,
+            spec.rail_corner_r_mm,
+        )
+        rail_top_y = rail_top
+
+    if rail_rect is not None:
+        plate = unary_union([silhouette, rail_rect])
+        plate, dropped = _connected_to(plate, rail_rect)
+        if dropped > 0.005:
+            warnings.append(
+                f"{dropped:.0%} of the silhouette does not touch the rail and was "
+                "dropped; it would have printed as a loose piece. Raise "
+                "--rail-overlap to reach it, or add a --border."
+            )
+    else:
+        plate = _largest(silhouette)
+        loose = 1.0 - plate.area / max(silhouette.area, 1e-9)
+        if loose > 0.005:
+            warnings.append(
+                f"{loose:.0%} of the silhouette is not joined to the largest "
+                "piece and was dropped. With no rail there is nothing to join "
+                "it to: add --border, or drop --no-rail."
+            )
+
+    plate = orient(_largest(plate), sign=1.0)
+    # Normalise last, once the rail has pushed the outline below the silhouette's
+    # own bottom edge: the finished plate sits with its lower-left corner on the
+    # origin, so "y = 0" means the bottom of the part in the script, in the
+    # renders and in the slicer alike.
+    minx, miny = plate.bounds[0], plate.bounds[1]
+    plate = affinity.translate(plate, xoff=-minx, yoff=-miny)
+    if rail_rect is not None and rail_top_y is not None:
+        rail_rect = affinity.translate(rail_rect, xoff=-minx, yoff=-miny)
+        rail_top_y -= miny
+    return plate, rail_rect, rail_top_y, warnings
+
+
+def _rail_height_for_mounts(spec: KeyHolderSpec) -> float:
+    """How tall the rail has to be to hold a fixing entirely inside itself."""
+    span = 2 * mount_radius(spec) + 2 * MOUNT_MARGIN_MM
+    if spec.mount == "keyhole":
+        span += spec.keyhole_slot_len_mm
+    return round(span, 1)
+
+
 def mount_radius(spec: KeyHolderSpec) -> float:
     """Half the width of the widest part of a fixing cut-out."""
     if spec.mount == "keyhole":
@@ -509,16 +575,18 @@ def _place_mounts(
         spread, left, y = best_pair
         return [MountPoint(left, y), MountPoint(left + spread, y)], notes
 
-    if best_single is not None:
-        notes.append(
-            "only one fixing fits inside the silhouette, so the piece hangs on a "
-            "single screw and can rotate; a second screw or a blob of putty at "
-            "one corner stops it"
-        )
-        return [best_single], notes
-
+    # No pair in the silhouette. The rail is solid across the whole width by
+    # construction, so try a pair there before settling for one fixing higher
+    # up: two points anywhere hold the piece flat, and one lets it swing. A
+    # lattice -- a window frame, lettering, anything drawn as lines -- is the
+    # shape this happens to, and it is exactly the shape that looks worst hanging
+    # crooked.
     if rail_top_y is not None:
-        rail_y = rail_top_y - spec.keyhole_slot_len_mm - spec.keyhole_head_d_mm / 2.0 - 2.0
+        # As high in the rail as the fixing's own footprint allows: a keyhole
+        # hangs its slot above the head opening, a screw hole is just a disc.
+        rail_y = rail_top_y - mount_radius(spec) - MOUNT_MARGIN_MM
+        if spec.mount == "keyhole":
+            rail_y -= spec.keyhole_slot_len_mm
         inset = max(15.0, width * 0.12)
         pair = [
             MountPoint(minx + inset, rail_y),
@@ -526,10 +594,19 @@ def _place_mounts(
         ]
         if all(fits(m.x_mm, m.y_mm) for m in pair):
             notes.append(
-                "the silhouette has no region solid enough for a fixing, so both "
-                "keyholes went into the hook rail"
+                "nothing in the silhouette is solid enough for two fixings, so "
+                "both keyholes went into the hook rail; the piece hangs from its "
+                "bottom edge and rests flat against the wall above it"
             )
             return pair, notes
+
+    if best_single is not None:
+        notes.append(
+            "only one fixing fits anywhere on this shape, so the piece hangs on a "
+            "single screw and can rotate; a second screw or a blob of putty at "
+            "one corner stops it"
+        )
+        return [best_single], notes
 
     notes.append(
         "no fixing fits anywhere in this shape with "
@@ -581,55 +658,41 @@ def plan(
     notes.extend(clean_notes)
     silhouette = _simplify(silhouette, spec.simplify_mm)
 
-    minx, miny, maxx, maxy = silhouette.bounds
-    rail_rect: Polygon | None = None
-    rail_top_y: float | None = None
-    if spec.rail and spec.rail_h_mm > 0:
-        inset = min(spec.rail_inset_mm, (maxx - minx) / 2 - 10.0)
-        inset = max(0.0, inset)
-        rail_top = miny + spec.rail_overlap_mm
-        rail_rect = _rounded_box(
-            minx + inset,
-            rail_top - spec.rail_h_mm,
-            maxx - inset,
-            rail_top,
-            spec.rail_corner_r_mm,
-        )
-        rail_top_y = rail_top
-
-    if rail_rect is not None:
-        plate = unary_union([silhouette, rail_rect])
-        plate, dropped = _connected_to(plate, rail_rect)
-        if dropped > 0.005:
-            warnings.append(
-                f"{dropped:.0%} of the silhouette does not touch the rail and was "
-                "dropped; it would have printed as a loose piece. Raise "
-                "--rail-overlap to reach it, or add a --border."
-            )
-    else:
-        plate = _largest(silhouette)
-        loose = 1.0 - plate.area / max(silhouette.area, 1e-9)
-        if loose > 0.005:
-            warnings.append(
-                f"{loose:.0%} of the silhouette is not joined to the largest "
-                "piece and was dropped. With no rail there is nothing to join "
-                "it to: add --border, or drop --no-rail."
-            )
-
-    plate = orient(_largest(plate), sign=1.0)
-    # Normalise last, once the rail has pushed the outline below the silhouette's
-    # own bottom edge: the finished plate sits with its lower-left corner on the
-    # origin, so "y = 0" means the bottom of the part in the script, in the
-    # renders and in the slicer alike.
-    minx, miny = plate.bounds[0], plate.bounds[1]
-    plate = affinity.translate(plate, xoff=-minx, yoff=-miny)
-    if rail_rect is not None and rail_top_y is not None:
-        rail_rect = affinity.translate(rail_rect, xoff=-minx, yoff=-miny)
-        rail_top_y -= miny
+    plate, rail_rect, rail_top_y, assembly_warnings = _assemble(
+        silhouette, spec, spec.rail_h_mm
+    )
+    warnings.extend(assembly_warnings)
 
     # The mount search runs on the plate as it will be built, holes included:
     # a keyhole that lands in the middle of a cut-out window is not a mount.
     mounts, mount_notes = _place_mounts(plate, spec, rail_top_y=rail_top_y)
+
+    # A lattice -- a window frame, lettering, a branch -- has no region wide
+    # enough for two fixings, and one fixing lets the piece swing. The rail is
+    # the one part of the plate this module drew itself, so when it is the only
+    # candidate left it is grown to fit them, once, and said out loud.
+    needed_rail = _rail_height_for_mounts(spec)
+    if (
+        len(mounts) < 2
+        and rail_rect is not None
+        and spec.rail_h_mm < needed_rail <= PARAM_RANGES["rail_h_mm"][1]
+    ):
+        taller, taller_rail, taller_top, taller_warnings = _assemble(
+            silhouette, spec, needed_rail
+        )
+        retry, retry_notes = _place_mounts(taller, spec, rail_top_y=taller_top)
+        if len(retry) > len(mounts):
+            notes.append(
+                f"widened the hook rail to {needed_rail:g} mm: nothing in the "
+                "silhouette is wide enough for a fixing, and two in the rail hold "
+                "the piece flat where one higher up would let it swing"
+            )
+            plate, rail_rect, rail_top_y = taller, taller_rail, taller_top
+            mounts, mount_notes = retry, retry_notes
+            warnings = [w for w in warnings if w not in assembly_warnings]
+            warnings.extend(taller_warnings)
+            spec = replace(spec, rail_h_mm=needed_rail)
+
     notes.extend(mount_notes)
     mount_mode = spec.mount if mounts else "none"
 
