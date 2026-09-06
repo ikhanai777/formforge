@@ -168,4 +168,5 @@ validator.
 
 The other generators on the same solver are covered by
 `docs/mushroom-generator.md`, `docs/vase-generator.md`,
-`docs/sculpt-vase-generator.md` and `docs/candle-holder-generator.md`.
+`docs/sculpt-vase-generator.md`, `docs/candle-holder-generator.md` and
+`docs/watchtower-generator.md`.

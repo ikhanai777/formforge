@@ -237,3 +237,8 @@ One entry in `STYLES` in `formforge/generators/holder.py`, one line in
 `web/studio.html` generates its preset list from `STYLES` -- as a chip in the
 studio. `tests/test_generators.py` builds every style at every variation, so a
 style that cannot be made feasible fails there rather than in someone's slicer.
+
+The other generators on the same solver are covered by
+`docs/mushroom-generator.md`, `docs/vase-generator.md`,
+`docs/sculpt-vase-generator.md`, `docs/candle-holder-generator.md` and
+`docs/watchtower-generator.md`.

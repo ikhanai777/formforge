@@ -1,0 +1,731 @@
+id: terrain_watchtower
+version: 1
+category: terrain
+display_name: "Watchtower"
+description: >
+  A tabletop watchtower, built the way a real one is: a base, a plinth, one or
+  more storeys stepping in as they rise, a galleried deck on brackets between
+  them, and a spire on top. The walls carry horizontal courses -- clapboard or
+  coursed stone at the same slider -- each face carries an arched, gothic,
+  square or slit window with as many mullions as you ask for, one face carries
+  a door, and the gallery railings are pierced with as many openings as fit.
+tags: [watchtower, tower, terrain, wargame, miniature, tabletop, scenery, dnd, warhammer, lighthouse, keep, turret, gothic, generative, parametric]
+embedding_text: >
+  watchtower guard tower lookout tower wooden tower stone tower wizard tower
+  lighthouse keep turret bastion tabletop terrain wargame scenery miniature
+  scenery dungeons and dragons terrain 28mm terrain warhammer terrain d&d
+  building model railway tower diorama building gothic tower octagonal tower
+language: build123d
+
+print_test:
+  # No model in this repository has been physically printed. The target machine
+  # and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    The reference this is drawn from is a resin print with supports under every
+    gallery. This one is meant to come off an FDM plate with none, and every
+    part of it is shaped for that rather than decorated and then apologised
+    for. A gallery deck does not project into thin air: it sits on a conical
+    skirt that opens at 45 degrees, and the brackets are slots cut into that
+    skirt rather than struts hung off nothing. The wall courses ramp outward
+    over their own height -- a fraction of a millimetre over two -- and step
+    back in at the course line, which is an upward-facing ledge and not an
+    overhang. Window heads are arched or pointed; the arch leaves the printer a
+    bridge no longer than the window is wide, and the pointed one leaves it
+    nothing at all. The roof is a cone steeper than 45 degrees, and its eaves
+    reach their overhang through a 45-degree flare instead of a soffit.
+
+    It is a solid model, not a shell. That is deliberate: a hollow tower with
+    windows in it is a trapped volume with holes, the walls come out thinner
+    than the nozzle wants at every taper, and a slicer's infill does the same
+    job better. The windows are recesses, which is what they look like on the
+    reference anyway.
+
+expected_solids: 1
+
+dimension_map:
+  height_mm: height
+
+
+param_schema:
+  type: object
+  required: [height_mm, width_mm, sides]
+  properties:
+    height_mm:
+      type: number
+      minimum: 60
+      maximum: 260
+      default: 150
+      description: >
+        Base to the tip of the finial. Everything else divides this up: the
+        base, the roof and the finial take their own heights and the storeys
+        share what is left.
+      ui: { widget: slider, step: 5, label: "Height" }
+    width_mm:
+      type: number
+      minimum: 26
+      maximum: 120
+      default: 62
+      description: >
+        Across the corners at the bottom of the plinth. This is the tower
+        itself; a gallery reaches past it and the base sits under it.
+      ui: { widget: slider, step: 2, label: "Width" }
+    sides:
+      type: integer
+      minimum: 4
+      maximum: 12
+      default: 8
+      description: >
+        Faces in plan. Eight is the reference. One window goes on each face, so
+        this is also how many windows a storey carries.
+      ui: { widget: slider, step: 1, label: "Sides" }
+    storeys:
+      type: integer
+      minimum: 1
+      maximum: 4
+      default: 3
+      description: "How many drums are stacked between the base and the roof."
+      ui: { widget: slider, step: 1, label: "Storeys" }
+    taper:
+      type: number
+      minimum: 0
+      maximum: 0.45
+      default: 0.16
+      description: "How much narrower each storey is at its top than at its foot."
+      ui: { widget: slider, step: 0.02, label: "Taper" }
+    storey_step:
+      type: number
+      minimum: 0
+      maximum: 0.35
+      default: 0.1
+      description: >
+        How far the next storey steps in from the top of the one below. Always
+        inward, so a storey never overhangs the one it stands on.
+      ui: { widget: slider, step: 0.02, label: "Storey step" }
+    gallery:
+      type: string
+      enum: [none, top, all]
+      default: all
+      description: >
+        Where the galleried decks go. `top` puts one under the roof storey;
+        `all` puts one at every storey boundary.
+      ui: { widget: segmented, label: "Galleries" }
+    gallery_mm:
+      type: number
+      minimum: 0
+      maximum: 20
+      default: 7
+      description: >
+        How far a deck reaches past the wall. The skirt under it opens at 45
+        degrees over the same distance, which is what holds it up.
+      ui: { widget: slider, step: 0.5, label: "Deck reach" }
+    gallery_t_mm:
+      type: number
+      minimum: 1.5
+      maximum: 6
+      default: 2.5
+      description: "How thick the deck plate is."
+      ui: { widget: slider, step: 0.5, label: "Deck thickness" }
+    rail_h_mm:
+      type: number
+      minimum: 0
+      maximum: 24
+      default: 9
+      description: "How tall the railing round a deck stands. 0 leaves the deck bare."
+      ui: { widget: slider, step: 0.5, label: "Rail height" }
+    rail_gaps:
+      type: integer
+      minimum: 4
+      maximum: 40
+      default: 24
+      description: "Openings round the railing. What is left between them are the posts."
+      ui: { widget: slider, step: 1, label: "Rail openings" }
+    rail_open:
+      type: number
+      minimum: 0.2
+      maximum: 0.85
+      default: 0.5
+      description: >
+        How much of each opening's pitch is opening rather than post. Low is a
+        pierced parapet; high is a row of thin balusters.
+      ui: { widget: slider, step: 0.05, label: "Rail openness" }
+    bracket_count:
+      type: integer
+      minimum: 0
+      maximum: 16
+      default: 8
+      description: >
+        Slots cut up the skirt under a deck. What is left between them reads as
+        the brackets carrying it. 0 leaves the skirt solid.
+      ui: { widget: slider, step: 1, label: "Brackets" }
+    course_mm:
+      type: number
+      minimum: 0
+      maximum: 5
+      default: 2.2
+      description: >
+        Height of one course of siding. 0 leaves the walls smooth. Small is
+        clapboard, large is coursed stone.
+      ui: { widget: slider, step: 0.2, label: "Course height" }
+    course_depth_mm:
+      type: number
+      minimum: 0
+      maximum: 1.2
+      default: 0.45
+      description: >
+        How far a course stands proud. It ramps out over its own height and
+        steps back in at the course line, so nothing here is an overhang.
+      ui: { widget: slider, step: 0.05, label: "Course relief" }
+    window_style:
+      type: string
+      enum: [none, square, arch, gothic, slit]
+      default: arch
+      description: >
+        The head of the window. `arch` is round, `gothic` pointed, `slit` a
+        narrow pointed loophole.
+      ui: { widget: segmented, label: "Windows" }
+    window_w_mm:
+      type: number
+      minimum: 2
+      maximum: 18
+      default: 7
+      description: "How wide a window opening is, mullions included."
+      ui: { widget: slider, step: 0.5, label: "Window width" }
+    window_h_mm:
+      type: number
+      minimum: 4
+      maximum: 34
+      default: 12
+      description: "Sill to the top of the head."
+      ui: { widget: slider, step: 0.5, label: "Window height" }
+    window_depth_mm:
+      type: number
+      minimum: 0.6
+      maximum: 4
+      default: 1.6
+      description: "How deep the recess is cut into the wall."
+      ui: { widget: slider, step: 0.2, label: "Window depth" }
+    window_rows:
+      type: integer
+      minimum: 0
+      maximum: 3
+      default: 1
+      description: >
+        Rows of windows per storey. Every face carries one per row, so this
+        times `sides` times `storeys` is what the kernel has to cut.
+      ui: { widget: slider, step: 1, label: "Window rows" }
+    window_bars:
+      type: integer
+      minimum: 0
+      maximum: 3
+      default: 1
+      description: >
+        Mullions left standing across each window. They come out of the same
+        outline rather than a second cut, so they cost nothing to make -- but
+        each one is a strip of wall and has to stay wide enough to print.
+      ui: { widget: slider, step: 1, label: "Mullions" }
+    door_w_mm:
+      type: number
+      minimum: 0
+      maximum: 24
+      default: 9
+      description: "A door on one face of the bottom storey. 0 leaves it out."
+      ui: { widget: slider, step: 0.5, label: "Door width" }
+    roof_style:
+      type: string
+      enum: [spire, bell, dome]
+      default: spire
+      description: >
+        `spire` is a straight cone, `bell` sweeps concave in the way a lantern
+        roof does, `dome` swells convex.
+      ui: { widget: segmented, label: "Roof" }
+    roof_h_mm:
+      type: number
+      minimum: 4
+      maximum: 70
+      default: 26
+      description: "Eaves to the point the finial starts from."
+      ui: { widget: slider, step: 1, label: "Roof height" }
+    eave_mm:
+      type: number
+      minimum: 0
+      maximum: 14
+      default: 4
+      description: >
+        How far the eaves reach past the wall. Reached through a 45-degree
+        flare rather than a flat soffit, so it needs no support.
+      ui: { widget: slider, step: 0.5, label: "Eaves" }
+    roof_courses:
+      type: integer
+      minimum: 0
+      maximum: 24
+      default: 8
+      description: "Shingle courses stepped down the roof. 0 leaves it smooth."
+      ui: { widget: slider, step: 1, label: "Roof courses" }
+    finial_mm:
+      type: number
+      minimum: 0
+      maximum: 24
+      default: 8
+      description: "The spike on top, measured from where the roof ends."
+      ui: { widget: slider, step: 0.5, label: "Finial" }
+    base_style:
+      type: string
+      enum: [none, disc, rock]
+      default: disc
+      description: >
+        `disc` is a bevelled round plinth, `rock` the same with a broken edge
+        the seed places. `none` stands the tower on its own footprint.
+      ui: { widget: segmented, label: "Base" }
+    base_d_mm:
+      type: number
+      minimum: 30
+      maximum: 170
+      default: 96
+      description: "Across the base. It has to be wider than the tower stands."
+      ui: { widget: slider, step: 2, label: "Base width" }
+    seed:
+      type: integer
+      minimum: 0
+      maximum: 9999
+      default: 1
+      description: "Places the broken edge of a rock base. The same seed is the same tower."
+      ui: { widget: number, label: "Seed" }
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "trapped_volumes == 0"
+  - "min_wall >= 0.7"
+  - "com_inside_footprint"
+  - "bbox.z <= height_mm + 1.5"
+  - "bbox.z >= height_mm - 1.5"
+  - "bbox.x <= max(base_d_mm, width_mm + gallery_mm * 2) + 3"
+  - "bbox.y <= max(base_d_mm, width_mm + gallery_mm * 2) + 3"
+  - "plate_contact_mm2 >= 400"
+
+preconditions:
+  # The storeys share what the base, the eaves, the roof and the finial leave,
+  # and a storey shorter than this has nowhere to put a window or a gallery.
+  - "height_mm - roof_h_mm - finial_mm - eave_mm - base_d_mm * 0.06 >= storeys * 16"
+  # A deck is carried by a skirt that opens at 45 degrees over its own reach,
+  # and that skirt has to fit inside the storey it grows out of.
+  - "gallery == \"none\" implies gallery_mm >= 0"
+  - "gallery_mm + gallery_t_mm + rail_h_mm <= height_mm / max(storeys, 1) * 0.7"
+  # The railing is a run of posts. What is left between the openings is a
+  # printed wall and gets a printed wall's floor.
+  - "rail_h_mm > 0 implies (1 - rail_open) * 3.14159 * (width_mm + gallery_mm * 2) / max(rail_gaps, 1) >= 1.2"
+  # So are the brackets in the skirt.
+  - "bracket_count >= 1 implies 3.14159 * width_mm / max(bracket_count, 1) * 0.45 >= 1.5"
+  # A course that rises further than it is tall is steeper than 45 degrees.
+  - "course_mm > 0 implies course_depth_mm <= course_mm"
+  # A window has to fit on the face it is cut into, with a jamb either side.
+  - "window_style != \"none\" implies window_w_mm <= width_mm * 0.9 * 3.14159 / max(sides, 3) * 0.72"
+  # ...and the mullions it leaves have to be wide enough to print.
+  - "window_bars >= 1 implies window_w_mm >= (window_bars + 1) * 1.6 + window_bars * 1.2"
+  # The recess cannot go past the middle of the wall.
+  - "window_depth_mm <= width_mm * 0.14"
+  # Rows of windows have to fit inside a storey with something between them.
+  - "window_rows >= 1 implies window_rows * (window_h_mm + 4) <= (height_mm - roof_h_mm - finial_mm - eave_mm) / max(storeys, 1) * 0.9"
+  # The roof is steeper than 45 degrees, measured to the eaves it starts from.
+  - "roof_style != \"dome\" implies roof_h_mm >= width_mm * 0.3"
+  # The base holds the tower, and the tower holds the plate.
+  - "base_style != \"none\" implies base_d_mm >= width_mm + gallery_mm"
+  - "width_mm * width_mm >= 600"
+  # What the whole thing costs the kernel: every window on every face of every
+  # storey is a tool, and the count is what the sandbox's thirty seconds buy.
+  - "max(window_rows, 0) * sides * storeys <= 40"
+
+source: |
+  from build123d import *
+
+  import math
+
+  # --- sliders --------------------------------------------------------------
+  HEIGHT_MM = 150.0
+  WIDTH_MM = 62.0
+  SIDES = 8
+  STOREYS = 3
+  TAPER = 0.16
+  STOREY_STEP = 0.10
+  GALLERY = "all"
+  GALLERY_MM = 7.0
+  GALLERY_T_MM = 2.5
+  RAIL_H_MM = 9.0
+  RAIL_GAPS = 24
+  RAIL_OPEN = 0.50
+  BRACKET_COUNT = 8
+  COURSE_MM = 2.2
+  COURSE_DEPTH_MM = 0.45
+  WINDOW_STYLE = "arch"
+  WINDOW_W_MM = 7.0
+  WINDOW_H_MM = 12.0
+  WINDOW_DEPTH_MM = 1.6
+  WINDOW_ROWS = 1
+  WINDOW_BARS = 1
+  DOOR_W_MM = 9.0
+  ROOF_STYLE = "spire"
+  ROOF_H_MM = 26.0
+  EAVE_MM = 4.0
+  ROOF_COURSES = 8
+  FINIAL_MM = 8.0
+  BASE_STYLE = "disc"
+  BASE_D_MM = 96.0
+  SEED = 1
+
+  TAU = 6.283185307179586
+  # A cutter has to cross the surface it cuts rather than stop on it: a tool
+  # face coincident with a solid's face is the degenerate case for a boolean.
+  OVER = 1.5
+  # The step back in at a course line, given a height so the loft has a segment
+  # to make it out of rather than two sections at the same z.
+  NICK = 0.06
+  # Parts are fused, so they are built to overlap rather than to touch.
+  LAP = 0.3
+  ARC_STEPS = 7
+  GOTHIC_RISE = 1.1
+  # A lancet is a gothic head drawn twice as tall; that is the whole difference.
+  SLIT_RISE = 2.2
+  # A mullion is a strip of wall the cut leaves standing, so it gets a printed
+  # wall's floor rather than a fraction of the window it divides.
+  BAR_MM = 1.2
+  HEAD_FRAC = 0.16
+  BELL_POWER = 1.8
+  TIP_R = 0.7
+  BASE_H_FRAC = 0.06
+  BASE_BEVEL = 0.45
+  ROCK_SIDES = 44
+  ROCK_NOISE = 0.09
+  RAIL_T_FRAC = 0.42
+  BRACKET_FRAC = 0.45
+  SILL_FRAC = 0.18
+
+  # --- the plan ---------------------------------------------------------------
+  # Vertices are placed so that a *face* is centred on +X, not a corner: the door
+  # and the windows are cut into faces, and a window straddling a corner is not a
+  # window. Everything below that talks about an angle means a face's angle.
+  PHASE = -math.pi / max(SIDES, 3)
+  APOTHEM = math.cos(math.pi / max(SIDES, 3))
+
+
+  def hash01(index, salt):
+      """Deterministic pseudo-random in [0,1): the same seed, the same tower."""
+      x = math.sin((index + 1) * 12.9898 + (SEED + 1) * 78.233 + salt * 37.719) * 43758.5453
+      return x - math.floor(x)
+
+
+  def ring(radius, z, sides=SIDES, noise=0.0, phase=PHASE):
+      """One closed polygon at height z, as a face ready to loft."""
+      points = []
+      for i in range(sides):
+          angle = TAU * i / sides + phase
+          r = radius
+          if noise > 0:
+              r = radius * (1.0 - noise * hash01(i, 5.0))
+          points.append((r * math.cos(angle), r * math.sin(angle)))
+      with BuildLine(Plane.XY.offset(z)) as line:
+          Polyline(*points, points[0])
+      return make_face(line.line)
+
+
+  def band(stations, sides=SIDES, noise=0.0):
+      """Loft a list of (z, radius) stations. Ruled, because every section has
+      the same vertex count in the same order and a ruled loft between two such
+      polygons is a set of flat quads -- which is both what a faceted tower is
+      made of and the cheapest thing the mesher can be handed."""
+      return loft([ring(r, z, sides, noise) for z, r in stations], ruled=True)
+
+
+  # --- 1. the courses ---------------------------------------------------------
+  COURSED = COURSE_MM > 0.4 and COURSE_DEPTH_MM > 0.05
+
+
+  def wall_stations(z0, z1, r0, r1):
+      """A tapered drum, divided into courses.
+
+      Each course ramps outward over its own height and then steps back in at
+      the course line. Both halves of that are printable and only one of them is
+      obvious: the ramp is a few degrees off vertical, and the step is a ledge
+      that faces *up*, because the material above it is narrower than the
+      material below. A clapboard done the other way round -- proud at the
+      bottom of each board, as real siding is -- would put that ledge face down.
+      """
+      span = max(z1 - z0, 1e-6)
+      if not COURSED:
+          return [(z0, r0), (z1, r1)]
+      count = int(min(90, max(1, round(span / COURSE_MM))))
+      out = []
+      for k in range(count):
+          low = k / count
+          high = (k + 1) / count
+          out.append((z0 + span * low, r0 + (r1 - r0) * low - COURSE_DEPTH_MM))
+          top = z0 + span * high
+          if k < count - 1:
+              top = top - NICK
+          out.append((top, r0 + (r1 - r0) * high))
+      return out
+
+
+  # --- 2. the openings --------------------------------------------------------
+  def opening_points(width, height, style, bars):
+      """One window outline, mullions included, as a single closed polygon.
+
+      The mullions are teeth in the outline rather than a second solid added
+      back: the cutter dips to the sill between lights and rises over them, so
+      what the cut leaves standing is a strip of the wall that was never
+      touched. One face, one extrusion, one tool, however many bars.
+      """
+      half = width / 2
+      lights = max(int(bars), 0) + 1
+      bar = 0.0 if lights == 1 else BAR_MM
+      light = (width - bar * (lights - 1)) / lights
+      if style == "square":
+          # A square window has no head to hang the mullions from, so it is
+          # given a lintel band instead: without one the outline would close
+          # across the top of the bars at zero height, which is not a polygon.
+          spring = height * (1.0 - HEAD_FRAC)
+      elif style == "arch":
+          spring = height - half
+      elif style == "slit":
+          spring = height - half * SLIT_RISE
+      else:
+          spring = height - half * GOTHIC_RISE
+      spring = max(spring, height * SILL_FRAC)
+      # The head is drawn to the height that is left rather than to the width
+      # it would like, so a wide short window gets a segmental arch instead of
+      # one that runs out through the top of the wall.
+      rise = min(half, height - spring)
+
+      points = []
+      for k in range(lights):
+          left = -half + k * (light + bar)
+          right = left + light
+          if k > 0:
+              points.append((left, spring))
+          points.append((left, 0.0))
+          points.append((right, 0.0))
+          points.append((right, spring))
+      if style == "square":
+          # The head band has to sit *above* the springing line, not on it: a
+          # closing edge drawn at the springing runs straight through the top
+          # of every mullion the loop above just placed, and a polygon that
+          # touches its own vertices is not one the kernel will make a face of.
+          points.append((half, height))
+          points.append((-half, height))
+          points.append((-half, spring))
+          return points
+      if style == "arch":
+          for i in range(1, ARC_STEPS):
+              angle = math.pi * i / ARC_STEPS
+              points.append((half * math.cos(angle), spring + rise * math.sin(angle)))
+      else:
+          points.append((0.0, height))
+      points.append((-half, spring))
+      return points
+
+
+  def opening(width, height, style, bars, back, depth):
+      """The outline above, extruded outward from `back` along +X."""
+      points = opening_points(width, height, style, bars)
+      with BuildLine(Plane.YZ.offset(back)) as line:
+          Polyline(*points, points[0])
+      return extrude(make_face(line.line), amount=depth)
+
+
+  def slot(width, z0, z1, back, depth):
+      """A plain rectangular tool: rail openings and skirt brackets."""
+      half = width / 2
+      points = [(-half, z0), (half, z0), (half, z1), (-half, z1)]
+      with BuildLine(Plane.YZ.offset(back)) as line:
+          Polyline(*points, points[0])
+      return extrude(make_face(line.line), amount=depth)
+
+
+  # --- 3. the storeys ---------------------------------------------------------
+  BASE_H = 0.0 if BASE_STYLE == "none" else max(3.0, BASE_D_MM * BASE_H_FRAC)
+  SHAFT_H = max(STOREYS * 8.0, HEIGHT_MM - BASE_H - EAVE_MM - ROOF_H_MM - FINIAL_MM)
+  STOREY_H = SHAFT_H / max(STOREYS, 1)
+  HAS_GALLERY = [
+      GALLERY == "all" or (GALLERY == "top" and s == STOREYS - 2)
+      for s in range(STOREYS)
+  ]
+  DECK_H = GALLERY_T_MM
+  SKIRT_H = GALLERY_MM
+
+  parts = []
+  tools = []
+
+  if BASE_STYLE != "none":
+      base_r = BASE_D_MM / 2
+      if BASE_STYLE == "rock":
+          parts.append(
+              band(
+                  [(0.0, base_r), (BASE_H, base_r - BASE_H * BASE_BEVEL)],
+                  ROCK_SIDES,
+                  ROCK_NOISE,
+              )
+          )
+      else:
+          parts.append(Pos(0, 0, BASE_H / 2) * Cone(base_r, base_r - BASE_H * BASE_BEVEL, BASE_H))
+
+  z = BASE_H
+  radius = WIDTH_MM / 2
+  for storey in range(STOREYS):
+      gallery_here = HAS_GALLERY[storey] and storey < STOREYS - 1 and GALLERY_MM > 0.2
+      wall_top = z + STOREY_H
+      if gallery_here:
+          wall_top = wall_top - DECK_H - SKIRT_H
+      top_r = radius * (1.0 - TAPER)
+      wall_r = radius + (top_r - radius) * (wall_top - z) / max(STOREY_H, 1e-6)
+
+      drum = band(wall_stations(z - (LAP if storey else 0.0), wall_top, radius, wall_r))
+
+      # Windows: one on every face, in as many rows as asked for, cut out of
+      # the drum on its own rather than out of the finished tower. A boolean
+      # costs in proportion to how many faces the thing being cut has, and the
+      # drum has far fewer of them than the tower will.
+      if WINDOW_STYLE != "none" and WINDOW_ROWS >= 1:
+          cutters = []
+          rows = int(WINDOW_ROWS)
+          run = wall_top - z
+          for row in range(rows):
+              sill = z + run * (row + SILL_FRAC) / (rows + SILL_FRAC)
+              # The wall leans in as it rises, so a recess cut to one depth at
+              # the sill has run out of wall by the head. It is measured at the
+              # head instead and over-cut at the sill, which on a solid tower
+              # costs nothing and is the difference between a window and a
+              # scratch that fades out halfway up.
+              low = radius + (wall_r - radius) * (sill - z) / max(run, 1e-6)
+              high = radius + (wall_r - radius) * min(
+                  1.0, (sill + WINDOW_H_MM - z) / max(run, 1e-6)
+              )
+              back = high * APOTHEM - WINDOW_DEPTH_MM
+              reach = low * APOTHEM + OVER - back
+              for face in range(SIDES):
+                  if storey == 0 and face == 0 and DOOR_W_MM > 0.5:
+                      continue
+                  cutters.append(
+                      Rot(0, 0, math.degrees(TAU * face / SIDES))
+                      * Pos(0, 0, sill)
+                      * opening(
+                          WINDOW_W_MM,
+                          WINDOW_H_MM,
+                          WINDOW_STYLE,
+                          WINDOW_BARS,
+                          back,
+                          reach,
+                      )
+                  )
+          if cutters:
+              drum = drum.cut(*cutters)
+
+      if storey == 0 and DOOR_W_MM > 0.5:
+          door_h = min(DOOR_W_MM * GOTHIC_RISE + DOOR_W_MM, (wall_top - z) * 0.8)
+          door_r = radius + (wall_r - radius) * door_h / max(wall_top - z, 1e-6)
+          back = door_r * APOTHEM - WINDOW_DEPTH_MM
+          drum = drum - Pos(0, 0, z) * opening(
+              DOOR_W_MM, door_h, WINDOW_STYLE if WINDOW_STYLE != "none" else "arch",
+              0, back, radius * APOTHEM + OVER - back
+          )
+      parts.append(drum)
+
+      if gallery_here:
+          deck_r = wall_r + GALLERY_MM
+          # The skirt: a cone opening at 45 degrees, which is what carries the
+          # deck. The brackets are slots cut up it, so what stands between them
+          # is the thing that looks like a bracket and does its job.
+          skirt = band([(wall_top - LAP, wall_r), (wall_top + SKIRT_H, deck_r)])
+          if BRACKET_COUNT >= 1:
+              gap = TAU * deck_r / BRACKET_COUNT * BRACKET_FRAC
+              skirt = skirt.cut(
+                  *[
+                      Rot(0, 0, math.degrees(TAU * k / BRACKET_COUNT))
+                      * slot(
+                          gap,
+                          wall_top - LAP,
+                          wall_top + SKIRT_H - GALLERY_T_MM,
+                          wall_r * APOTHEM,
+                          deck_r + OVER - wall_r * APOTHEM,
+                      )
+                      for k in range(int(BRACKET_COUNT))
+                  ]
+              )
+          parts.append(skirt)
+          deck_z = wall_top + SKIRT_H
+          parts.append(band([(deck_z - LAP, deck_r), (deck_z + DECK_H, deck_r)]))
+
+          if RAIL_H_MM > 0.4:
+              rail_z = deck_z + DECK_H
+              rail_t = max(1.2, GALLERY_MM * RAIL_T_FRAC)
+              rail = band([(rail_z - LAP, deck_r), (rail_z + RAIL_H_MM, deck_r)])
+              rail = rail - band(
+                  [(rail_z - LAP - OVER, deck_r - rail_t), (rail_z + RAIL_H_MM + OVER, deck_r - rail_t)]
+              )
+              gap = TAU * deck_r / max(RAIL_GAPS, 1) * RAIL_OPEN
+              cap = min(RAIL_H_MM * BRACKET_FRAC, 1.6)
+              rail = rail.cut(
+                  *[
+                      Rot(0, 0, math.degrees(TAU * k / max(RAIL_GAPS, 1)))
+                      * slot(
+                          gap,
+                          rail_z + cap,
+                          rail_z + RAIL_H_MM - cap,
+                          (deck_r - rail_t) * APOTHEM - OVER,
+                          deck_r + OVER + OVER - (deck_r - rail_t) * APOTHEM,
+                      )
+                      for k in range(int(RAIL_GAPS))
+                  ]
+              )
+              parts.append(rail)
+
+      z = z + STOREY_H
+      radius = top_r * (1.0 - STOREY_STEP)
+
+  # --- 4. the roof ------------------------------------------------------------
+  # The eaves reach their overhang through a flare at 45 degrees rather than a
+  # flat soffit: a soffit is a ceiling the printer has to bridge all the way
+  # round, and a flare is a wall leaning out at the angle it can already do.
+  TOP_R = radius / max(1.0 - STOREY_STEP, 1e-6) * (1.0 - TAPER)
+  EAVE_R = TOP_R + EAVE_MM
+  if EAVE_MM > 0.2:
+      parts.append(band([(z - LAP, TOP_R), (z + EAVE_MM, EAVE_R)]))
+  ROOF_Z = z + EAVE_MM
+
+  # Every one of the three roofs narrows all the way up, which is the one thing
+  # a printer never has to be told about: a layer smaller than the one under it
+  # is a layer that is already supported. The shingles are the wall's courses
+  # read upside down -- each course stays proud of the cone it belongs to and
+  # steps in at its own line, so the ledge faces up here too.
+  def roof_shape(t):
+      if ROOF_STYLE == "bell":
+          return 1.0 - t**BELL_POWER
+      if ROOF_STYLE == "dome":
+          return math.sqrt(max(0.0, 1.0 - t * t))
+      return 1.0 - t
+
+
+  roof_steps = int(min(40, max(1, ROOF_COURSES))) if ROOF_COURSES >= 1 else 1
+  DROP = (EAVE_R - TIP_R) / roof_steps
+  RELIEF = min(COURSE_DEPTH_MM + NICK, DROP * BASE_BEVEL) if ROOF_COURSES >= 1 else 0.0
+  stations = [(ROOF_Z - LAP, EAVE_R), (ROOF_Z, EAVE_R)]
+  for k in range(roof_steps):
+      low = TIP_R + (EAVE_R - TIP_R) * roof_shape(k / roof_steps)
+      high = TIP_R + (EAVE_R - TIP_R) * roof_shape((k + 1) / roof_steps)
+      top = ROOF_Z + ROOF_H_MM * (k + 1) / roof_steps
+      stations.append((top - NICK, min(high + RELIEF, low)))
+      stations.append((top, high))
+  parts.append(band(stations))
+
+  if FINIAL_MM > 0.3:
+      parts.append(
+          band(
+              [
+                  (ROOF_Z + ROOF_H_MM - LAP, TIP_R + TIP_R),
+                  (ROOF_Z + ROOF_H_MM + FINIAL_MM, TIP_R),
+              ]
+          )
+      )
+
+  result = parts[0] if len(parts) == 1 else parts[0].fuse(*parts[1:])

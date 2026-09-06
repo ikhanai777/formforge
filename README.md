@@ -120,25 +120,31 @@ specimen:
 formforge vase --count 8 --seed 42 --style mixed --out out/vases
 formforge sculpt --count 6 --style blade --render
 formforge holder --count 6 --style moon --render
+formforge watchtower --count 6 --style lighthouse --render
 formforge mushroom --count 8 --seed 42 --species mixed
 formforge vase --explain                        # the definition, as a graph
 formforge vase --params-only --count 12         # the sliders, no geometry
 formforge mushroom --species parasol --set cap_d_mm=90 --render
 ```
 
-Four definitions ship today: a **vase** in twelve silhouettes -- urn, amphora,
+Five definitions ship today: a **vase** in twelve silhouettes -- urn, amphora,
 bottle, bud, tulip, hourglass, cylinder, faceted, crystal, spiral, fluted,
 rippled -- a **sculpt vase** in twelve more, which is the same silhouette
 machinery wearing solid blades, an oval plan and a cut mouth rather than a
 fluted wall -- a **candle holder** in twelve, from a ribbed heart to a pierced
-lantern to a dish with a crescent moon standing behind the flame -- and a
-detailed **mushroom** in seven species. They share a solver, a CLI command and
-one test that every generator in the catalog has to pass.
+lantern to a dish with a crescent moon standing behind the flame -- a tabletop
+**watchtower** in twelve, storeys stepping in under galleried decks and a
+shingled spire -- and a detailed **mushroom** in seven species. They share a
+solver, a CLI command and one test that every generator in the catalog has to
+pass.
 
-The candle holder is the first of them with a job rather than a shape, and it
-shows in one rule: a tealight is 39 mm across whatever size holder you make, so
-the socket is the one dimension that does *not* scale with the body, and when
-the two conflict it is the body that grows.
+The last two are where the domain starts arguing back. A tealight is 39 mm
+across whatever size holder you make, so the candle holder's socket is the one
+dimension that does *not* scale, and when the two conflict it is the body that
+grows. The watchtower is that rule pointing the other way: its structure all
+scales with the height, and what refuses to is the *detail* -- a clapboard
+course, a window recess, a mullion -- because those are measured in nozzles. A
+small tower is not a big one shrunk; it is one with fewer, coarser courses.
 
 Each run writes an STL, a STEP and a 3MF per specimen plus a `variations.json`
 with the parameters, bounding box and DFM verdict of each, so a population is
@@ -154,9 +160,10 @@ slider in that template, with the model rebuilding live, the printability rules
 checked as you move them, and buttons that export the mesh as STL or hand you a
 script that builds the STEP. It also writes the exact `formforge build` command
 for whatever is on screen, which is how a shape you liked in the browser becomes
-the validated, watertight model with STEP and 3MF beside it. All four
-generators are in it -- **Mushroom**, **Vase**, **Sculpt Vase** and **Candle
-Holder** -- and a fifth is an entry in one registry at the bottom of the page.
+the validated, watertight model with STEP and 3MF beside it. All five
+generators are in it -- **Mushroom**, **Vase**, **Sculpt Vase**, **Candle
+Holder** and **Watchtower** -- and a sixth is an entry in one registry at the
+bottom of the page.
 
 The definition follows Grasshopper's rules rather than its interface: sliders
 are the only free values, components are pure functions of their inputs wired
@@ -164,8 +171,8 @@ into a DAG, and a solve is a deterministic walk of it. What that buys is a
 generator you can read a variation out of -- "why did this one come out squat"
 is answered by the node that decided it. `docs/mushroom-generator.md` maps each
 idea to where it lives; `docs/vase-generator.md`,
-`docs/sculpt-vase-generator.md` and `docs/candle-holder-generator.md` are what
-is specific to the other three.
+`docs/sculpt-vase-generator.md`, `docs/candle-holder-generator.md` and
+`docs/watchtower-generator.md` are what is specific to the other four.
 
 ### From Claude, over MCP
 
@@ -322,7 +329,7 @@ formforge/
   api/            the HTTP gateway
   eval/           the template harness and the benchmark
   generators/     dataflow definitions that decide where the sliders go
-  templates/      16 verified parametric definitions
+  templates/      17 verified parametric definitions
 web/
   studio.html     both definitions as a browser front end, no build step
 ```

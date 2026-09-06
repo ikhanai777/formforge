@@ -121,6 +121,13 @@ CATALOG: tuple[Generator, ...] = (
         variant_noun="style",
         summary="generate variations of a candle holder, tealight dish or lantern",
     ),
+    Generator(
+        name="watchtower",
+        module_name="formforge.generators.watchtower",
+        variant_flag="style",
+        variant_noun="style",
+        summary="generate variations of a tabletop watchtower and export them",
+    ),
 )
 
 
