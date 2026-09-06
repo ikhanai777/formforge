@@ -219,6 +219,67 @@ class TestPolicyEvents:
         assert json.loads(rows[0]["matched"]) == ["pokemon"]
 
 
+class TestMigration:
+    """A database created before a route or phase existed still records it.
+
+    `CREATE TABLE IF NOT EXISTS` does nothing to a database that already exists,
+    so a new enum value would be refused by the CHECK baked into every older
+    file -- and refused *silently*, because writes here are swallowed into a
+    counter. The symptom would be the newest feature's telemetry missing from
+    the two tables that cannot be backfilled.
+    """
+
+    @pytest.fixture
+    def legacy_db(self, tmp_path):
+        import sqlite3  # noqa: PLC0415
+
+        from formforge.store import SCHEMA  # noqa: PLC0415
+
+        path = tmp_path / "legacy.db"
+        old = SCHEMA.replace(",\n                                       'image_trace'", "")
+        old = old.replace("'route','trace','codegen'", "'route','codegen'")
+        assert "image_trace" not in old and "'trace'" not in old
+        conn = sqlite3.connect(path)
+        conn.executescript(old)
+        conn.execute(
+            "INSERT INTO models (id, prompt, status, route, created_at) "
+            "VALUES ('old', 'a planter', 'ok', 'template', '2026-01-01T00:00:00Z')"
+        )
+        conn.execute(
+            "INSERT INTO generation_events (model_id, step, phase, ok, created_at) "
+            "VALUES ('old', 1, 'intent', 1, '2026-01-01T00:00:00Z')"
+        )
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_an_older_database_accepts_a_route_it_has_never_seen(self, legacy_db):
+        with Store(legacy_db) as db:
+            db.record_generation(
+                _result("new", route="image_trace", template_id=None,
+                        events=[LoopEvent(step=1, phase="trace", ok=True, message="traced")])
+            )
+            assert db.write_failures == 0
+            assert db.get_model("new") is not None
+
+    def test_the_rows_already_collected_survive_the_rebuild(self, legacy_db):
+        with Store(legacy_db) as db:
+            assert db.get_model("old") is not None
+            phases = [
+                row["phase"]
+                for row in db._conn.execute(
+                    "SELECT phase FROM generation_events ORDER BY id"
+                ).fetchall()
+            ]
+            assert phases == ["intent"]
+
+    def test_a_current_database_is_left_alone(self, tmp_path):
+        from formforge.store import migrate_check_constraints  # noqa: PLC0415
+
+        with Store(tmp_path / "fresh.db") as db:
+            assert migrate_check_constraints(db._conn) == []
+
+
 class TestSchemaParity:
     """The Postgres schema in docs/schema.sql stays the target.
 

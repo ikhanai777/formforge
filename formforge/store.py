@@ -65,11 +65,11 @@ DEFAULT_PATH = Path(
 # as SQL constraints so a bad value is refused with a readable message rather
 # than a sqlite3.IntegrityError from four frames down.
 STATUSES = frozenset({"queued", "running", "ok", "failed", "refused", "needs_clarification"})
-ROUTES = frozenset({"template", "template_seed", "freeform"})
+ROUTES = frozenset({"template", "template_seed", "freeform", "image_trace"})
 PHASES = frozenset(
     {
-        "policy", "intent", "route", "codegen", "execute", "validate", "render",
-        "critique", "escalate", "slice", "failed", "done",
+        "policy", "intent", "route", "trace", "codegen", "execute", "validate",
+        "render", "critique", "escalate", "slice", "failed", "done",
     }
 )
 DECISIONS = frozenset({"allow", "flag", "refuse"})
@@ -110,7 +110,8 @@ CREATE TABLE IF NOT EXISTS models (
                       CHECK (status IN ('queued','running','ok','failed','refused',
                                         'needs_clarification')),
     route             text NOT NULL DEFAULT 'template'
-                      CHECK (route IN ('template','template_seed','freeform')),
+                      CHECK (route IN ('template','template_seed','freeform',
+                                       'image_trace')),
     iterations        integer NOT NULL DEFAULT 1,
     bbox_mm           text,
     volume_mm3        real,
@@ -137,9 +138,9 @@ CREATE TABLE IF NOT EXISTS generation_events (
     model_id    text NOT NULL REFERENCES models(id) ON DELETE CASCADE,
     step        integer NOT NULL,
     phase       text NOT NULL
-                CHECK (phase IN ('policy','intent','route','codegen','execute',
-                                 'validate','render','critique','escalate',
-                                 'slice','failed','done')),
+                CHECK (phase IN ('policy','intent','route','trace','codegen',
+                                 'execute','validate','render','critique',
+                                 'escalate','slice','failed','done')),
     ok          integer NOT NULL,
     error_class text,
     payload     text,
@@ -238,6 +239,62 @@ def _dumps(value: Any) -> str:
         return json.dumps(str(value))
 
 
+def migrate_check_constraints(conn: sqlite3.Connection) -> list[str]:
+    """Rebuild tables whose CHECK constraints predate a new enum value.
+
+    `CREATE TABLE IF NOT EXISTS` does nothing to a database that already exists,
+    so a value added to `ROUTES` or `PHASES` here would be rejected by the
+    constraint baked into every database created before the change. Writes are
+    swallowed into a counter (see `_write`), which means the symptom would be
+    the new feature's telemetry silently going missing -- from the two tables
+    this module exists to fill, and that no amount of later effort can backfill.
+
+    SQLite cannot alter a CHECK, so the fix is the documented rebuild: rename,
+    recreate, copy the columns the two versions share, drop. Returns the names
+    of the tables that were rebuilt, for the tests and for the log.
+    """
+    wanted = {
+        "models": sorted(ROUTES),
+        "generation_events": sorted(PHASES),
+    }
+    rebuilt: list[str] = []
+    for table, values in wanted.items():
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+        if row is None:
+            continue
+        ddl = row[0] or ""
+        missing = [value for value in values if f"'{value}'" not in ddl]
+        if not missing:
+            continue
+
+        columns = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        log.info("store: rebuilding %s to allow %s", table, ", ".join(missing))
+        conn.execute("PRAGMA foreign_keys=OFF")
+        try:
+            conn.execute(f"ALTER TABLE {table} RENAME TO {table}_legacy")
+            conn.executescript(SCHEMA)
+            fresh = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+            shared = [c for c in columns if c in fresh]
+            names = ", ".join(shared)
+            conn.execute(
+                f"INSERT INTO {table} ({names}) SELECT {names} FROM {table}_legacy"  # noqa: S608
+            )
+            conn.execute(f"DROP TABLE {table}_legacy")
+            conn.commit()
+            rebuilt.append(table)
+        except Exception:  # noqa: BLE001
+            # A failed migration must not take the process with it: the old
+            # table is still there and still readable, and the cost is the new
+            # route's rows rather than every row already collected.
+            conn.rollback()
+            log.exception("store: could not rebuild %s; leaving it as it was", table)
+        finally:
+            conn.execute("PRAGMA foreign_keys=ON")
+    return rebuilt
+
+
 class Store:
     """The persistence layer. Thread-safe, and quiet when it fails.
 
@@ -264,6 +321,7 @@ class Store:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(SCHEMA)
+        migrate_check_constraints(self._conn)
         self._conn.executescript(VIEWS)
         self._conn.commit()
 

@@ -93,7 +93,8 @@ CREATE TABLE models (
                      CHECK (status IN ('queued','running','ok','failed','refused',
                                        'needs_clarification')),
     route            text NOT NULL DEFAULT 'template'
-                     CHECK (route IN ('template','template_seed','freeform')),
+                     CHECK (route IN ('template','template_seed','freeform',
+                                      'image_trace')),
     iterations       int NOT NULL DEFAULT 1,
     bbox_mm          real[3],
     volume_mm3       real,
@@ -131,9 +132,9 @@ CREATE TABLE generation_events (
     model_id     uuid NOT NULL REFERENCES models(id) ON DELETE CASCADE,
     step         int NOT NULL,
     phase        text NOT NULL
-                 CHECK (phase IN ('policy','intent','route','codegen','execute',
-                                  'validate','render','critique','escalate',
-                                  'slice','failed','done')),
+                 CHECK (phase IN ('policy','intent','route','trace','codegen',
+                                  'execute','validate','render','critique',
+                                  'escalate','slice','failed','done')),
     ok           boolean NOT NULL,
     error_class  text,
     payload      jsonb,
