@@ -165,3 +165,7 @@ The jitter, the proportions, the feasibility rules, the CLI and the tests pick
 it up: `tests/test_generators.py::TestCatalog` solves every style in the
 catalog across its seed range and hands each result to the template's own
 validator.
+
+The other generators on the same solver are covered by
+`docs/mushroom-generator.md`, `docs/vase-generator.md`,
+`docs/sculpt-vase-generator.md` and `docs/candle-holder-generator.md`.

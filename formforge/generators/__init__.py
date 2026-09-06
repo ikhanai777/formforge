@@ -114,6 +114,13 @@ CATALOG: tuple[Generator, ...] = (
         variant_noun="style",
         summary="generate variations of a finned, cut-rim sculptural vase",
     ),
+    Generator(
+        name="holder",
+        module_name="formforge.generators.holder",
+        variant_flag="style",
+        variant_noun="style",
+        summary="generate variations of a candle holder, tealight dish or lantern",
+    ),
 )
 
 

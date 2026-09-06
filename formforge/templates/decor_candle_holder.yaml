@@ -1,0 +1,733 @@
+id: decor_candle_holder
+version: 1
+category: decor
+display_name: "Candle Holder"
+description: >
+  A holder for a tealight or a pillar: a turned body standing on the plate with
+  a bored socket in its top. The plan it is turned round can be a circle, a
+  heart, a pointed star, a scalloped flower or a rounded polygon; the body can
+  wear vertical ribs, or the same ribs broken into stacked rows so they read as
+  bubbles; the wall can be pierced with arched windows so the flame shows
+  through, which is what turns the same definition into a lantern; and an
+  upright back -- a crescent moon, an arched frame, a plain tablet -- can stand
+  behind the flame.
+tags: [candle, candleholder, tealight, holder, votive, lantern, decor, homeware, heart, moon, snowflake, ribbed, pierced, generative, parametric]
+embedding_text: >
+  candle holder tealight holder votive holder pillar candle holder candle cup
+  ribbed candle holder fluted tealight heart candle holder moon candle holder
+  crescent candle holder snowflake tealight star tealight bubble tealight
+  scalloped candle dish lantern tealight lantern pierced lantern candle
+  centrepiece table decor home decor wedding favour
+language: build123d
+
+print_test:
+  # No model in this repository has been physically printed. The target machine
+  # and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    It prints on its base with no support. The body is a turned surface that
+    never opens outward faster than 45 degrees, and the socket is a flat-
+    bottomed bore, so the one horizontal face inside is the floor the candle
+    sits on. Ribs fade in over the first eighth of the height rather than
+    starting at full depth on one layer, and a rib broken into rows is a cosine
+    bump whose steepest point is its own half-height -- both are the same 45
+    degree rule written for a feature that starts mid-wall. Pierced windows are
+    cut as pointed slots, not round ones: the top of a round hole is a ceiling
+    the printer has to bridge, and the top of a pointed one is two 45 degree
+    faces. A crescent back is the only part that needs thought, and the rule
+    that covers it is in the preconditions: a circle standing on its own bottom
+    opens outward faster than 45 degrees until it is a bit more than a quarter
+    of its radius up, so the body has to be deep enough to bury that much of it.
+
+    PLA is the right material for a flame-adjacent object only with an
+    electric tealight. Nothing here is rated for an open flame -- a real wick
+    at 3 mm from a PLA wall is a puddle -- and the docs say so.
+
+expected_solids: 1
+
+# No dimension_map on purpose. Neither of the two obvious mappings is true of
+# the finished solid: `width_mm` is the widest the *body* gets and ribs stand
+# off it, and `height_mm` is the rim of the socket, which a standing back is
+# meant to reach past. A dimension map is a promise that the bounding box
+# equals the parameter, and the honest statement of what this shape guarantees
+# is the pair of bbox invariants below, which say what it may not exceed.
+
+
+param_schema:
+  type: object
+  required: [width_mm, height_mm, socket_d_mm]
+  properties:
+    width_mm:
+      type: number
+      minimum: 40
+      maximum: 220
+      default: 96
+      description: >
+        The widest the body gets, measured across its largest dimension. Ribs
+        stand off this and a tall back can reach past it; nothing else does.
+      ui: { widget: slider, step: 2, label: "Width" }
+    height_mm:
+      type: number
+      minimum: 14
+      maximum: 120
+      default: 40
+      description: "Plate to the rim of the socket. The back is measured separately."
+      ui: { widget: slider, step: 1, label: "Height" }
+    base_frac:
+      type: number
+      minimum: 0.3
+      maximum: 1.0
+      default: 0.74
+      description: >
+        The diameter where it meets the plate, as a fraction of the width. This
+        is the footprint, and a low number is what makes a body look lifted
+        rather than sat down.
+      ui: { widget: slider, step: 0.02, label: "Base" }
+    top_frac:
+      type: number
+      minimum: 0.25
+      maximum: 1.0
+      default: 0.8
+      description: >
+        The diameter at the rim, as a fraction of the width. Below the belly it
+        closes the body over the socket; equal to the base and the belly it is a
+        straight-sided dish.
+      ui: { widget: slider, step: 0.02, label: "Rim" }
+    belly_pos:
+      type: number
+      minimum: 0.1
+      maximum: 0.9
+      default: 0.45
+      description: >
+        Height fraction of the widest point. The width is always measured there,
+        so this moves the fullness rather than the size.
+      ui: { widget: slider, step: 0.01, label: "Belly height" }
+    shoulder:
+      type: number
+      minimum: 0
+      maximum: 1
+      default: 0.6
+      description: >
+        How roundly the profile passes through the base, belly and rim. 0 runs
+        the two segments nearly straight for a faceted, turned look; 1 rounds
+        them into one continuous swell.
+      ui: { widget: slider, step: 0.05, label: "Roundness" }
+    oval:
+      type: number
+      minimum: 0
+      maximum: 0.5
+      default: 0
+      description: >
+        How far the plan is squashed across. 0 is symmetric; 0.5 makes it half
+        as deep as it is wide. The squash comes out of the wall and the ribs
+        too, which is what the printability rules on both are measured against.
+      ui: { widget: slider, step: 0.05, label: "Squash" }
+    plan:
+      type: string
+      enum: [round, heart, star, petal, polygon]
+      default: round
+      description: >
+        The outline the body is turned round. `heart` is the classic curve with
+        a cleft at the back and a point at the front; `star` gives narrow arms
+        like a snowflake; `petal` gives the same count as broad scallops; and
+        `polygon` is a rounded n-gon.
+      ui: { widget: segmented, label: "Plan" }
+    plan_points:
+      type: integer
+      minimum: 3
+      maximum: 12
+      default: 6
+      description: >
+        Arms for `star`, scallops for `petal`, sides for `polygon`. `round` and
+        `heart` ignore it.
+      ui: { widget: slider, step: 1, label: "Points" }
+    plan_depth:
+      type: number
+      minimum: 0
+      maximum: 0.9
+      default: 0
+      description: >
+        How far the plan departs from a circle. 0 is a circle whatever the plan
+        is set to. The ceiling is 0.9 rather than 1 because the sections are
+        splines, and a spline driven all the way into a cusp overshoots it.
+      ui: { widget: slider, step: 0.05, label: "Plan depth" }
+    rib_count:
+      type: integer
+      minimum: 0
+      maximum: 40
+      default: 0
+      description: >
+        Ribs standing off the body, evenly spaced round it. 0, 1 or 2 leaves it
+        plain. The ceiling is measured, not chosen: triangles come out roughly
+        as the square of this number whatever the holder is, and forty of them
+        is where a build lands near the thirty CPU-seconds the sandbox gives it.
+      ui: { widget: slider, step: 1, label: "Ribs" }
+    rib_mm:
+      type: number
+      minimum: 0
+      maximum: 8
+      default: 2
+      description: "How far a rib stands off the body at its deepest."
+      ui: { widget: slider, step: 0.2, label: "Rib depth" }
+    rib_width:
+      type: number
+      minimum: 0.2
+      maximum: 0.95
+      default: 0.5
+      description: >
+        How much of the gap between ribs each one fills. 0.2 is a fine reed with
+        a wide flat between; 0.95 is a pleated surface with barely a valley.
+      ui: { widget: slider, step: 0.05, label: "Rib width" }
+    rib_sharp:
+      type: number
+      minimum: 0
+      maximum: 1
+      default: 0.7
+      description: "0 is a soft swell in the surface, 1 a reed with steep sides."
+      ui: { widget: slider, step: 0.05, label: "Rib edge" }
+    rib_rows:
+      type: integer
+      minimum: 1
+      maximum: 6
+      default: 1
+      description: >
+        1 runs each rib the whole height. Above 1 the rib breaks into that many
+        stacked bumps, which is the difference between a fluted holder and one
+        that looks blown out of bubbles.
+      ui: { widget: slider, step: 1, label: "Rib rows" }
+    rib_vary:
+      type: number
+      minimum: 0
+      maximum: 1
+      default: 0
+      description: "How much the seed varies the depth of individual ribs."
+      ui: { widget: slider, step: 0.05, label: "Rib variation" }
+    pierce_count:
+      type: integer
+      minimum: 0
+      maximum: 16
+      default: 0
+      description: >
+        Windows cut clean through the wall, so a flame inside shows through
+        them. This is what makes the same body a lantern rather than a dish.
+      ui: { widget: slider, step: 1, label: "Windows" }
+    pierce_w:
+      type: number
+      minimum: 0.1
+      maximum: 0.8
+      default: 0.4
+      description: >
+        How much of the gap between windows each one takes. What is left is the
+        pillar between them, and that has to stay wide enough to print.
+      ui: { widget: slider, step: 0.05, label: "Window width" }
+    pierce_lo:
+      type: number
+      minimum: 0
+      maximum: 0.6
+      default: 0.25
+      description: "Height fraction where the windows start."
+      ui: { widget: slider, step: 0.02, label: "Window base" }
+    pierce_hi:
+      type: number
+      minimum: 0.3
+      maximum: 0.95
+      default: 0.8
+      description: "Height fraction where they stop, below the rim."
+      ui: { widget: slider, step: 0.02, label: "Window top" }
+    socket_d_mm:
+      type: number
+      minimum: 12
+      maximum: 90
+      default: 40.5
+      description: >
+        The bore the candle sits in. A standard metal-cup tealight is 39 mm
+        across, so 40.5 gives it the clearance a printed wall wants.
+      ui: { widget: slider, step: 0.5, label: "Socket" }
+    socket_depth_mm:
+      type: number
+      minimum: 4
+      maximum: 110
+      default: 14
+      description: >
+        How deep the bore goes. About 14 mm holds a tealight with its rim
+        proud; run it nearly the full height and the body becomes a lantern
+        around the candle.
+      ui: { widget: slider, step: 1, label: "Socket depth" }
+    back:
+      type: string
+      enum: [none, crescent, arch, tablet]
+      default: none
+      description: >
+        An upright standing behind the flame. `crescent` is a moon open to one
+        side, `arch` an open frame, `tablet` a plain rounded plaque.
+      ui: { widget: segmented, label: "Back" }
+    back_h_mm:
+      type: number
+      minimum: 20
+      maximum: 160
+      default: 92
+      description: "Plate to the top of the back. It has to clear the body."
+      ui: { widget: slider, step: 2, label: "Back height" }
+    back_t_mm:
+      type: number
+      minimum: 4
+      maximum: 20
+      default: 8
+      description: "How thick the standing back is."
+      ui: { widget: slider, step: 0.5, label: "Back thickness" }
+    wall_mm:
+      type: number
+      minimum: 1.6
+      maximum: 8
+      default: 3
+      description: >
+        The material between the socket and the outside, measured on the wide
+        axis. A squashed plan carries proportionally less of it across the
+        flanks, and a pierced one has only the pillars between the windows.
+      ui: { widget: slider, step: 0.2, label: "Wall" }
+    floor_mm:
+      type: number
+      minimum: 1.5
+      maximum: 10
+      default: 4
+      description: "Material under the socket."
+      ui: { widget: slider, step: 0.5, label: "Floor" }
+    seed:
+      type: integer
+      minimum: 0
+      maximum: 9999
+      default: 1
+      description: "Places the per-rib depth variation. The same seed is the same holder."
+      ui: { widget: number, label: "Seed" }
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "trapped_volumes == 0"
+  - "min_wall >= 0.7"
+  - "com_inside_footprint"
+  # The body is built to its stated height, and a back -- when there is one --
+  # is the only thing that reaches past it.
+  - "bbox.z >= height_mm - 1.0"
+  - "bbox.z <= max(height_mm, back_h_mm) + 1.5"
+  - "bbox.x <= max(width_mm, back_h_mm) + rib_mm * 2 + 4"
+  - "bbox.y <= max(width_mm, back_h_mm) + rib_mm * 2 + 4"
+  # It has to hold the plate while the rest of it prints.
+  - "plate_contact_mm2 >= 200"
+
+preconditions:
+  # The candle has to fit, and there has to be something under it.
+  - "socket_depth_mm + floor_mm <= height_mm"
+  - "socket_d_mm + wall_mm * 2 <= width_mm * (1 - oval)"
+  - "floor_mm <= height_mm * 0.6"
+  # Neither segment of the profile opens outward, or closes in, faster than 45
+  # degrees: the first is an overhang, the second is a bridge over the socket.
+  - "width_mm * (1 - base_frac) / 2 <= belly_pos * height_mm"
+  - "width_mm * (1 - top_frac) / 2 <= (1 - belly_pos) * height_mm"
+  # A rib narrower than two beads, once the squash has had its share, is not a
+  # rib the nozzle can lay.
+  - "rib_count >= 3 implies rib_width * 3.14159 * width_mm / max(rib_count, 1) * (1 - oval) >= 2.0"
+  # A rib that arrives at full depth over one layer is a ledge. Run as one
+  # column it fades in over the first eighth of the height; broken into rows it
+  # is a cosine bump that rises over half a row. Both are the 45 degree rule.
+  - "rib_count >= 3 implies rib_mm <= height_mm * 0.12 * max(rib_rows, 1)"
+  - "rib_count >= 3 implies rib_mm * 2.0 * max(rib_rows, 1) <= height_mm"
+  # What the surface costs to mesh. Measured on this shape rather than carried
+  # over from the finned vase, and the measurement says something the vase's
+  # rule does not: the count dominates. A 90 mm round body and a 128 mm heart
+  # produce almost the same triangle count at the same number of ribs -- about
+  # 25,000 at sixteen, 50,000 at twenty-five, 95,000 at thirty-three, near
+  # enough the square of the count -- and the wall past which a build no longer
+  # fits in thirty CPU-seconds is a little over thirty ribs, whichever body it
+  # is on. So the count carries a floor term of its own: a shallow rib is
+  # cheaper than a deep one, but it is not free, because the mesher still has
+  # to follow every crest. The plan is in here for the same reason -- a heart
+  # or a star needs more points round the section before the ribs are drawn at
+  # all, and the ribs are then paid for on top of them.
+  - "rib_count >= 3 implies rib_count * max(2 * rib_mm * max(rib_count, 1) / (rib_width * 3.14159 * width_mm), 0.6) * (1 + 2 * oval) * (1 + plan_depth) <= 40"
+  # Windows: a band with something left of it, and a pillar between each pair
+  # wide enough to be a printed wall rather than a seam.
+  - "pierce_count >= 1 implies pierce_hi >= pierce_lo + 0.15"
+  - "pierce_count >= 1 implies (1 - pierce_w) * 3.14159 * width_mm / max(pierce_count, 1) * (1 - oval) >= 2.5"
+  # And the same pillar measured where it is narrowest, at the bore: a window
+  # is a wedge, so what it leaves is a constant fraction of the pitch, and a
+  # fraction of a small circle is a smaller number of millimetres.
+  - "pierce_count >= 1 implies (1 - pierce_w) * 3.14159 * socket_d_mm / max(pierce_count, 1) >= 2.0"
+  - "pierce_count >= 1 implies pierce_lo * height_mm >= floor_mm"
+  # A window cut across a near-sharp corner of the plan leaves a wedge of wall
+  # that tapers away to nothing beside it -- the DFM pass finds it at half a
+  # millimetre, which is not a thin wall but a sliver. The window is a wedge
+  # rather than a straight slot for the same reason, and that fixes most of it;
+  # what is left is fixed by not letting the plan come to a point at all when
+  # the wall is going to be cut through.
+  - "pierce_count >= 1 implies plan_depth <= 0.6"
+  # A back stands clear of the body, and the socket has to fit in front of it.
+  - "back != \"none\" implies back_h_mm >= height_mm + 12"
+  - "back != \"none\" implies socket_d_mm / 2 + back_t_mm + 4 <= width_mm * base_frac * (1 - oval) / 2"
+  # A circle standing on its own lowest point opens outward faster than 45
+  # degrees until it is (1 - 1/sqrt2) of its radius up. Below that the body has
+  # to be there to hold it, so the body has to be that deep.
+  - "back == \"crescent\" implies height_mm >= back_h_mm * 0.15"
+  # The plan is squashed before the wall gets its share of what is left.
+  - "wall_mm * (1 - oval) >= 1.2"
+  - "width_mm * width_mm * (1 - oval) >= 900"
+
+source: |
+  from build123d import *
+
+  import math
+
+  # --- sliders --------------------------------------------------------------
+  WIDTH_MM = 96.0
+  HEIGHT_MM = 40.0
+  BASE_FRAC = 0.74
+  TOP_FRAC = 0.80
+  BELLY_POS = 0.45
+  SHOULDER = 0.60
+  OVAL = 0.0
+  PLAN = "round"
+  PLAN_POINTS = 6
+  PLAN_DEPTH = 0.0
+  RIB_COUNT = 0
+  RIB_MM = 2.0
+  RIB_WIDTH = 0.50
+  RIB_SHARP = 0.70
+  RIB_ROWS = 1
+  RIB_VARY = 0.0
+  PIERCE_COUNT = 0
+  PIERCE_W = 0.40
+  PIERCE_LO = 0.25
+  PIERCE_HI = 0.80
+  SOCKET_D_MM = 40.5
+  SOCKET_DEPTH_MM = 14.0
+  BACK = "none"
+  BACK_H_MM = 92.0
+  BACK_T_MM = 8.0
+  WALL_MM = 3.0
+  FLOOR_MM = 4.0
+  SEED = 1
+
+  TAU = 6.283185307179586
+  HALF_W = WIDTH_MM / 2
+
+  # --- resolution -------------------------------------------------------------
+  # Three things want points round the section, and the coarsest answer that
+  # satisfies all three is the one to use: eight per rib, so the narrowest rib
+  # the schema allows still gets two samples across it; sixteen per arm or side
+  # of the plan, so a star's valley is a curve rather than a chord; and a fixed
+  # floor for the plain round case, where a circle drawn through 72 points is
+  # already finer than the mesher will keep.
+  RIBS_ON = RIB_COUNT >= 3 and RIB_MM > 0.15
+  PLAN_ON = PLAN != "round" and PLAN_DEPTH > 0.02
+  if PLAN == "heart" and PLAN_ON:
+      PLAN_SAMPLE = 192
+  elif PLAN_ON:
+      PLAN_SAMPLE = max(3, int(PLAN_POINTS)) * 16
+  else:
+      PLAN_SAMPLE = 72
+  RIB_SAMPLE = int(RIB_COUNT) * 8 if RIBS_ON else 0
+  POINTS = int(min(320, max(72, PLAN_SAMPLE, RIB_SAMPLE)))
+  # Up the height, the profile is a curve and each loft band is a straight run
+  # between two sections, so a squat dome still wants a couple of dozen. Rows of
+  # bumps want ten or so each, because each row is a full rise and fall.
+  ROWS = max(1, int(RIB_ROWS)) if RIBS_ON else 1
+  SECTIONS = int(min(48, max(20, ROWS * 12)))
+  # Both the lofted skin and the mesh of it live in memory at once, and the
+  # sandbox gives the whole job two gigabytes. Past this ceiling the resolution
+  # gives way rather than the design: a holder with fewer sections is a slightly
+  # more faceted holder, where one that runs out of address space is nothing.
+  BUDGET = 5000
+  if SECTIONS * POINTS > BUDGET:
+      shrink = (BUDGET / (SECTIONS * POINTS)) ** 0.5
+      POINTS = int(max(72, POINTS * shrink))
+      SECTIONS = int(max(14, min(SECTIONS, BUDGET / POINTS)))
+
+
+  def hash01(index, salt):
+      """Deterministic pseudo-random in [0,1): the same seed, the same holder."""
+      x = math.sin((index + 1) * 12.9898 + (SEED + 1) * 78.233 + salt * 37.719) * 43758.5453
+      return x - math.floor(x)
+
+
+  def smoothstep(x):
+      x = min(1.0, max(0.0, x))
+      return x * x * (3.0 - 2.0 * x)
+
+
+  # --- 1. the profile ---------------------------------------------------------
+  # Three control points -- base, belly, rim -- as fractions of the half width.
+  # The belly is the widest by construction, which is what lets `width_mm` mean
+  # the size of the thing rather than the size of one station on it.
+  BELLY = min(0.9, max(0.1, BELLY_POS))
+  CX = [0.0, BELLY, 1.0]
+  CY = [BASE_FRAC, 1.0, TOP_FRAC]
+
+
+  def monotone_slopes(xs, ys):
+      """Fritsch-Carlson tangents: a curve through the control points that never
+      overshoots them, so the silhouette is the one the sliders describe."""
+      n = len(xs)
+      deltas = [(ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]) for i in range(n - 1)]
+      slopes = [deltas[0]] + [0.0] * (n - 2) + [deltas[-1]]
+      for i in range(1, n - 1):
+          if deltas[i - 1] * deltas[i] <= 0:
+              slopes[i] = 0.0
+          else:
+              w1 = 2 * (xs[i + 1] - xs[i]) + (xs[i] - xs[i - 1])
+              w2 = (xs[i + 1] - xs[i]) + 2 * (xs[i] - xs[i - 1])
+              slopes[i] = (w1 + w2) / (w1 / deltas[i - 1] + w2 / deltas[i])
+      return slopes
+
+
+  CM = monotone_slopes(CX, CY)
+
+
+  def radius_at(t):
+      """The profile as a fraction of the half width, at height fraction t."""
+      t = min(1.0, max(0.0, t))
+      for i in range(len(CX) - 1):
+          if CX[i] <= t <= CX[i + 1]:
+              h = CX[i + 1] - CX[i]
+              s = (t - CX[i]) / h
+              m0, m1 = CM[i] * h * SHOULDER * 2, CM[i + 1] * h * SHOULDER * 2
+              return (
+                  (2 * s**3 - 3 * s**2 + 1) * CY[i]
+                  + (s**3 - 2 * s**2 + s) * m0
+                  + (-2 * s**3 + 3 * s**2) * CY[i + 1]
+                  + (s**3 - s**2) * m1
+              )
+      return CY[-1]
+
+
+  # --- 2. the plan ------------------------------------------------------------
+  # One function per outline, each normalised so its own maximum is 1, then
+  # blended toward a circle by PLAN_DEPTH. Written this way, depth 0 is a circle
+  # whatever the plan says, so the slider is continuous across the choice
+  # rather than jumping when it changes.
+  ASPECT = max(0.5, 1.0 - OVAL)
+  SIDES = max(3, int(PLAN_POINTS))
+
+
+  def plan_raw(angle):
+      if PLAN == "heart":
+          # The standard polar heart: a cusp at the back, a point at the front.
+          s, c = math.sin(angle), math.cos(angle)
+          return 2.0 - 2.0 * s + s * math.sqrt(abs(c)) / (s + 1.4)
+      if PLAN == "polygon":
+          step = TAU / SIDES
+          half = step / 2
+          return math.cos(half) / math.cos(((angle + half) % step) - half)
+      if PLAN == "star" or PLAN == "petal":
+          # The same cosine, read two ways: a high exponent leaves narrow arms
+          # standing out of a wide valley, a low one leaves broad scallops.
+          k = 0.5 + 0.5 * math.cos(SIDES * angle)
+          return k ** (2.2 if PLAN == "star" else 0.55)
+      return 1.0
+
+
+  PLAN_PEAK = max(plan_raw(TAU * i / 720) for i in range(720))
+  PLAN_PEAK = PLAN_PEAK if PLAN_PEAK > 1e-6 else 1.0
+
+
+  def plan_mix(angle):
+      return 1.0 - PLAN_DEPTH + PLAN_DEPTH * plan_raw(angle) / PLAN_PEAK
+
+
+  def ellipse(angle):
+      c, s = math.cos(angle), math.sin(angle) / ASPECT
+      return 1.0 / math.sqrt(c * c + s * s)
+
+
+  # Normalised again after the squash, so `width_mm` is the largest dimension of
+  # the finished plan rather than of the circle it started from.
+  PLAN_NORM = max(plan_mix(TAU * i / 720) * ellipse(TAU * i / 720) for i in range(720))
+  PLAN_NORM = PLAN_NORM if PLAN_NORM > 1e-6 else 1.0
+
+
+  def plan(angle):
+      return plan_mix(angle) * ellipse(angle) / PLAN_NORM
+
+
+  PLAN_LOW = min(plan(TAU * i / 720) for i in range(720))
+
+  # --- 3. the ribs ------------------------------------------------------------
+  PITCH = TAU / max(RIB_COUNT, 1)
+  HALF_PITCH = max(RIB_WIDTH * PITCH / 2, 1e-9)
+  # 0 is a soft swell in the surface, 1 a reed standing off it with steep sides.
+  RIB_G = 0.4 + 1.1 * (1.0 - RIB_SHARP)
+  # One column run the whole height fades in over this much of it at each end.
+  FADE = 0.12
+
+
+  def rib_column(angle):
+      offset = ((angle + PITCH / 2) % PITCH) - PITCH / 2
+      u = abs(offset) / HALF_PITCH
+      if u >= 1.0:
+          return 0.0
+      return (0.5 + 0.5 * math.cos(math.pi * u)) ** RIB_G
+
+
+  def rib_row(t):
+      """How much rib there is at height t.
+
+      At one row this is a fade in and out, which is what keeps the first layer
+      free of a standing ledge. Above one it is a stack of cosine bumps, and the
+      steepest point of a cosine bump is halfway up its own rise -- which is why
+      the preconditions measure the depth against half a row.
+      """
+      if ROWS <= 1:
+          return smoothstep(min(t / FADE, (1.0 - t) / FADE, 1.0))
+      return 0.5 - 0.5 * math.cos(TAU * ((t * ROWS) % 1.0))
+
+
+  def rib_at(angle, t):
+      if not RIBS_ON:
+          return 0.0
+      column = rib_column(angle)
+      if column <= 0.0:
+          return 0.0
+      depth = RIB_MM
+      if RIB_VARY > 0:
+          index = int(round(angle / PITCH)) % max(int(RIB_COUNT), 1)
+          depth *= 1.0 - RIB_VARY * 0.4 * hash01(index, 1.0)
+      return depth * column * rib_row(t)
+
+
+  # --- 4. the body ------------------------------------------------------------
+  def section(t, z):
+      points = []
+      for i in range(POINTS):
+          angle = TAU * i / POINTS
+          radius = max(0.4, HALF_W * radius_at(t) * plan(angle) + rib_at(angle, t))
+          points.append((radius * math.cos(angle), radius * math.sin(angle)))
+      with BuildLine(Plane.XY.offset(z)) as line:
+          Spline(*points, points[0])
+      return make_face(line.line)
+
+
+  result = loft(
+      [section(i / SECTIONS, HEIGHT_MM * i / SECTIONS) for i in range(SECTIONS + 1)],
+      ruled=True,
+  )
+
+  # --- 5. the socket ----------------------------------------------------------
+  # A flat-bottomed bore, not a lofted cavity: a tealight sits on a flat floor,
+  # and a cylinder is an analytic surface the kernel cuts for almost nothing.
+  # What it may not do is come out through the side, so it is clamped against
+  # the narrowest the body gets over the band the bore actually passes through.
+  DEPTH_MM = max(2.0, min(SOCKET_DEPTH_MM, HEIGHT_MM - FLOOR_MM))
+  BORE_LO = max(0.0, (HEIGHT_MM - DEPTH_MM) / max(HEIGHT_MM, 1e-6))
+  BORE_MIN = min(radius_at(BORE_LO + (1.0 - BORE_LO) * i / 16) for i in range(17))
+  ROOM = HALF_W * BORE_MIN * PLAN_LOW
+  SOCKET_R = max(3.0, min(SOCKET_D_MM / 2, ROOM - WALL_MM))
+  # Run the cutter out past the rim so the cut is a clean crossing rather than a
+  # tangency: a cutter that stops exactly on the top face leaves the kernel a
+  # coincident pair, and the mesh comes back with a hole in it.
+  OVERCUT = 6.0
+  result = result - Pos(
+      0, 0, HEIGHT_MM - DEPTH_MM + (DEPTH_MM + OVERCUT) / 2
+  ) * Cylinder(SOCKET_R, DEPTH_MM + OVERCUT)
+
+  # --- 6. the windows ---------------------------------------------------------
+  # Pointed slots, not round ones. The top of a round hole is a ceiling the
+  # printer bridges; the top of this one is two faces at 45 degrees, which it
+  # simply prints. They are cut as one fused tool rather than one at a time:
+  # every boolean against a ribbed shell costs in proportion to how many faces
+  # that shell has, and there is no reason to pay that sixteen times.
+  #
+  # Each slot is a wedge, not a straight prism: it is lofted between a narrow
+  # face at the bore and a wide one out past the wall, so it takes the same
+  # *fraction of the pitch* at every radius it passes through. A straight slot
+  # takes a fixed number of millimetres instead, and where the plan is turning
+  # -- the corner of a polygon, the tip of a star -- what it leaves beside
+  # itself is a wedge that tapers to nothing. That is not a thin wall the
+  # printer can be asked to try harder at; it is a sliver.
+  WIN_LO = max(HEIGHT_MM * PIERCE_LO, FLOOR_MM + 1.0)
+  WIN_HI = min(HEIGHT_MM * PIERCE_HI, HEIGHT_MM - 1.5)
+  if PIERCE_COUNT >= 1 and WIN_HI > WIN_LO + 2.0:
+      WIN_PITCH = TAU / int(PIERCE_COUNT)
+      # Start the tool just inside the bore, so a window always breaks into the
+      # cavity where there is one and leaves the core alone where there is not.
+      WIN_R0 = max(1.0, SOCKET_R - 2.0)
+      WIN_REACH = HALF_W + RIB_MM + OVERCUT
+      WIN_IN = PIERCE_W * WIN_PITCH / 2 * WIN_R0
+      WIN_OUT = PIERCE_W * WIN_PITCH / 2 * WIN_REACH
+      # The 45 degree run-in at each end, kept off both the half width and the
+      # half height so no two corners of the slot land on each other.
+      NOSE = min(WIN_IN * 0.9, (WIN_HI - WIN_LO) * 0.49)
+
+      def slot_face(radius, half):
+          points = [
+              (-half, WIN_LO + NOSE),
+              (-half + NOSE, WIN_LO),
+              (half - NOSE, WIN_LO),
+              (half, WIN_LO + NOSE),
+              (half, WIN_HI - NOSE),
+              (half - NOSE, WIN_HI),
+              (-half + NOSE, WIN_HI),
+              (-half, WIN_HI - NOSE),
+          ]
+          with BuildLine(Plane.YZ.offset(radius)) as slot:
+              Polyline(*points, close=True)
+          return make_face(slot.line)
+
+      tools = []
+      for k in range(int(PIERCE_COUNT)):
+          wedge = loft(
+              [slot_face(WIN_R0, WIN_IN), slot_face(WIN_REACH, WIN_OUT)], ruled=True
+          )
+          tools.append(Rot(0, 0, math.degrees(WIN_PITCH * k)) * wedge)
+      cutter = tools[0] if len(tools) == 1 else tools[0].fuse(*tools[1:])
+      result = result - cutter
+
+  # --- 7. the standing back ---------------------------------------------------
+  # One extruded outline, pushed as far back inside the footprint as it will go
+  # and fused into the body. It is a plate rather than a revolve on purpose: a
+  # plate standing on edge has vertical walls, and the only overhang anywhere on
+  # it is the one the crescent's own bottom makes -- which the preconditions
+  # bury in the body.
+  #
+  # The moon is two circles: a bite of this radius, offset by this much of it.
+  # The bite plus the offset comes to more than the whole, which is what opens
+  # the ring into a crescent with horns rather than closing it into an annulus.
+  MOON_BITE = 0.72
+  MOON_OFF_X = 0.30
+  MOON_OFF_Z = 0.10
+  SLAB_ROUND = 0.18
+
+  if BACK != "none" and BACK_H_MM > HEIGHT_MM + 2.0:
+      REAR = HALF_W * radius_at(0.0) * plan(TAU * 3 / 4)
+      BACK_Y = -max(SOCKET_R + BACK_T_MM / 2 + 1.0, REAR - BACK_T_MM / 2 - 2.0)
+      if BACK == "crescent":
+          MOON_R = BACK_H_MM / 2
+          shape = Circle(MOON_R) - Pos(
+              MOON_R * MOON_OFF_X, MOON_R * MOON_OFF_Z
+          ) * Circle(MOON_R * MOON_BITE)
+          LIFT = MOON_R
+      elif BACK == "arch":
+          ARCH_W = min(BACK_H_MM * 0.62, HALF_W * 1.5)
+          ARCH_R = ARCH_W / 2
+          ARCH_STEM = max(1.0, BACK_H_MM - ARCH_R)
+          shape = Pos(0, ARCH_STEM / 2) * Rectangle(ARCH_W, ARCH_STEM) + Pos(
+              0, ARCH_STEM
+          ) * Circle(ARCH_R)
+          HOLE_W = ARCH_W - BACK_T_MM * 2.2
+          if HOLE_W > 4.0:
+              HOLE_R = HOLE_W / 2
+              HOLE_BASE = BACK_T_MM * 1.2
+              HOLE_STEM = max(1.0, ARCH_STEM - HOLE_BASE)
+              shape = shape - (
+                  Pos(0, HOLE_BASE + HOLE_STEM / 2) * Rectangle(HOLE_W, HOLE_STEM)
+                  + Pos(0, HOLE_BASE + HOLE_STEM) * Circle(HOLE_R)
+              )
+          LIFT = 0.0
+      else:
+          SLAB_W = min(BACK_H_MM * 0.72, HALF_W * 1.6)
+          shape = Pos(0, BACK_H_MM / 2) * RectangleRounded(
+              SLAB_W, BACK_H_MM, min(SLAB_W, BACK_H_MM) * SLAB_ROUND
+          )
+          LIFT = 0.0
+      plate = extrude(Plane.XZ * shape, amount=BACK_T_MM / 2, both=True)
+      result = result + Pos(0, BACK_Y, LIFT) * plate

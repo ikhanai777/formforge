@@ -1475,10 +1475,15 @@ const VASE_SOURCE_B64 = [
    undercut where the slider said straight shoulder. Both vases turn their
    profile on this, so it lives here rather than in either of them. */
 function monotoneProfile(cx, cy, shoulder, height) {
+  /* Any number of control points: the vases hand it four, the candle holder
+     three -- base, belly, rim -- because the belly is always its widest. */
+  const n = cx.length - 1;
   const d = [];
-  for (let i = 0; i < 3; i++) d.push((cy[i + 1] - cy[i]) / Math.max(cx[i + 1] - cx[i], 1e-6));
-  const m = [d[0], 0, 0, d[2]];
-  for (let i = 1; i < 3; i++) {
+  for (let i = 0; i < n; i++) d.push((cy[i + 1] - cy[i]) / Math.max(cx[i + 1] - cx[i], 1e-6));
+  const m = [d[0]];
+  for (let i = 1; i < n; i++) m.push(0);
+  m.push(d[n - 1]);
+  for (let i = 1; i < n; i++) {
     if (d[i - 1] * d[i] <= 0) { m[i] = 0; continue; }
     const w1 = 2 * (cx[i + 1] - cx[i]) + (cx[i] - cx[i - 1]);
     const w2 = (cx[i + 1] - cx[i]) + 2 * (cx[i] - cx[i - 1]);
@@ -1486,7 +1491,7 @@ function monotoneProfile(cx, cy, shoulder, height) {
   }
   const radiusAt = t => {
     t = Math.min(1, Math.max(0, t));
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < n; i++) {
       if (cx[i] <= t && t <= cx[i + 1]) {
         const h = cx[i + 1] - cx[i];
         const s = h <= 0 ? 0 : (t - cx[i]) / h;
@@ -1497,7 +1502,7 @@ function monotoneProfile(cx, cy, shoulder, height) {
              + (s ** 3 - s ** 2) * m1;
       }
     }
-    return cy[3];
+    return cy[n];
   };
   const slopeAt = t => {
     const step = 1e-3;
@@ -2227,7 +2232,820 @@ function sculptShuffle(next, base, seed) {
 }
 
 /* =================================================================
-   5. Three.js stage
+   5. The candle holder: the decor_candle_holder template, ported the
+      same way. A turned body with a bored socket in its top -- the
+      plan it is turned round can be a heart, a star, a scallop or a
+      polygon; it can wear ribs, or the same ribs broken into rows of
+      bubbles; the wall can be pierced so the flame shows through; and
+      a crescent, an arch or a tablet can stand behind it.
+   ================================================================= */
+const HOLDER_SCHEMA = [
+  {k:"width_mm",    g:"form", label:"Width",       min:40,  max:220, step:2,   v:96,  unit:"mm",
+   note:"The widest the body gets. Ribs stand off this; a tall back can reach past it."},
+  {k:"height_mm",   g:"form", label:"Height",      min:14,  max:120, step:1,   v:40,  unit:"mm",
+   note:"Plate to the rim of the socket. The back is measured separately."},
+  {k:"base_frac",   g:"form", label:"Base",        min:0.3, max:1,   step:0.02,v:0.74,unit:"",
+   note:"The footprint, as a fraction of the width. Low reads as lifted."},
+  {k:"top_frac",    g:"form", label:"Rim",         min:0.25,max:1,   step:0.02,v:0.8, unit:""},
+  {k:"belly_pos",   g:"form", label:"Belly height",min:0.1, max:0.9, step:0.01,v:0.45,unit:"",
+   note:"Where the widest point sits. The width is always measured there."},
+  {k:"shoulder",    g:"form", label:"Roundness",   min:0,   max:1,   step:0.05,v:0.6, unit:""},
+  {k:"oval",        g:"form", label:"Squash",      min:0,   max:0.5, step:0.05,v:0,   unit:""},
+
+  {k:"plan",        g:"plan", label:"Plan", choices:["round","heart","star","petal","polygon"], v:"round",
+   note:"The outline it is turned round. Star gives snowflake arms, petal broad scallops."},
+  {k:"plan_points", g:"plan", label:"Points",      min:3,   max:12,  step:1,   v:6,   unit:"",
+   note:"Arms, scallops or sides. Round and heart ignore it."},
+  {k:"plan_depth",  g:"plan", label:"Plan depth",  min:0,   max:0.9, step:0.05,v:0,   unit:"",
+   note:"0 is a circle whatever the plan says. The socket has to fit inside the valley."},
+
+  {k:"rib_count",   g:"ribs", label:"Ribs",        min:0,   max:40,  step:1,   v:0,   unit:"",
+   note:"Under 3 leaves it plain. The ceiling is measured: triangles go as the square of this."},
+  {k:"rib_mm",      g:"ribs", label:"Rib depth",   min:0,   max:8,   step:0.2, v:2,   unit:"mm"},
+  {k:"rib_width",   g:"ribs", label:"Rib width",   min:0.2, max:0.95,step:0.05,v:0.5, unit:"",
+   note:"How much of the gap between ribs each fills. 0.2 is a reed, 0.95 a pleat."},
+  {k:"rib_sharp",   g:"ribs", label:"Rib edge",    min:0,   max:1,   step:0.05,v:0.7, unit:""},
+  {k:"rib_rows",    g:"ribs", label:"Rib rows",    min:1,   max:6,   step:1,   v:1,   unit:"",
+   note:"1 runs each rib the whole height. Above 1 it breaks into stacked bubbles."},
+  {k:"rib_vary",    g:"ribs", label:"Rib variation", min:0, max:1,   step:0.05,v:0,   unit:""},
+
+  {k:"pierce_count",g:"windows", label:"Windows",  min:0,   max:16,  step:1,   v:0,   unit:"",
+   note:"Cut clean through, so a flame inside shows. This is what makes it a lantern."},
+  {k:"pierce_w",    g:"windows", label:"Window width", min:0.1, max:0.8, step:0.05, v:0.4, unit:"",
+   note:"How much of the pitch each takes. What is left is the pillar between them."},
+  {k:"pierce_lo",   g:"windows", label:"Window base", min:0, max:0.6, step:0.02, v:0.25, unit:""},
+  {k:"pierce_hi",   g:"windows", label:"Window top",  min:0.3, max:0.95, step:0.02, v:0.8, unit:""},
+
+  {k:"socket_d_mm", g:"candle", label:"Socket",    min:12,  max:90,  step:0.5, v:40.5,unit:"mm",
+   note:"A metal-cup tealight is 39 mm across; 40.5 gives it the clearance a printed wall wants."},
+  {k:"socket_depth_mm", g:"candle", label:"Socket depth", min:4, max:110, step:1, v:14, unit:"mm",
+   note:"Run it nearly the full height and the body becomes a lantern around the candle."},
+  {k:"wall_mm",     g:"candle", label:"Wall",      min:1.6, max:8,   step:0.2, v:3,   unit:"mm"},
+  {k:"floor_mm",    g:"candle", label:"Floor",     min:1.5, max:10,  step:0.5, v:4,   unit:"mm"},
+
+  {k:"back",        g:"back", label:"Back", choices:["none","crescent","arch","tablet"], v:"none",
+   note:"An upright standing behind the flame."},
+  {k:"back_h_mm",   g:"back", label:"Back height", min:20,  max:160, step:2,   v:92,  unit:"mm"},
+  {k:"back_t_mm",   g:"back", label:"Back thickness", min:4, max:20, step:0.5, v:8,   unit:"mm"}
+];
+
+/* Generated from the generator's own STYLES, so the two cannot drift. */
+const HOLDER_PRESETS = {
+  heart: {width_mm:128, height_mm:52, base_frac:0.68, top_frac:0.72, belly_pos:0.42, shoulder:0.75, plan:"heart", plan_depth:0.42, rib_count:30, rib_mm:2.2, rib_width:0.45, rib_sharp:0.85, socket_d_mm:40.5, socket_depth_mm:17, wall_mm:3.2, floor_mm:4},
+  bubble: {width_mm:96, height_mm:34, base_frac:0.68, top_frac:0.78, belly_pos:0.5, shoulder:0.9, plan:"petal", plan_points:9, plan_depth:0.16, rib_count:18, rib_mm:2.6, rib_width:0.9, rib_sharp:0.15, rib_rows:3, socket_d_mm:40.5, socket_depth_mm:14, wall_mm:3.4, floor_mm:4},
+  flake: {width_mm:138, height_mm:22, base_frac:0.98, top_frac:0.94, belly_pos:0.6, shoulder:0.3, plan:"star", plan_points:6, plan_depth:0.42, rib_count:0, socket_d_mm:40.5, socket_depth_mm:13, wall_mm:3.5, floor_mm:5},
+  moon: {width_mm:110, height_mm:22, base_frac:0.96, top_frac:0.9, belly_pos:0.5, shoulder:0.4, plan:"round", rib_count:0, socket_d_mm:42, socket_depth_mm:15, back:"crescent", back_h_mm:132, back_t_mm:9, wall_mm:4, floor_mm:5},
+  lantern: {width_mm:82, height_mm:108, base_frac:1, top_frac:1, belly_pos:0.5, shoulder:0.1, plan:"polygon", plan_points:4, plan_depth:0.55, rib_count:0, pierce_count:8, pierce_w:0.42, pierce_lo:0.16, pierce_hi:0.86, socket_d_mm:52, socket_depth_mm:100, wall_mm:3, floor_mm:4},
+  flute: {width_mm:88, height_mm:44, base_frac:0.66, top_frac:0.82, belly_pos:0.4, shoulder:0.7, plan:"round", rib_count:34, rib_mm:2, rib_width:0.4, rib_sharp:1, socket_d_mm:40.5, socket_depth_mm:16, wall_mm:3, floor_mm:4},
+  bloom: {width_mm:112, height_mm:30, base_frac:0.72, top_frac:0.84, belly_pos:0.62, shoulder:0.85, plan:"petal", plan_points:8, plan_depth:0.3, rib_count:24, rib_mm:1.6, rib_width:0.55, rib_sharp:0.5, socket_d_mm:40.5, socket_depth_mm:13, wall_mm:3.2, floor_mm:4},
+  pillar: {width_mm:92, height_mm:96, base_frac:0.78, top_frac:0.7, belly_pos:0.3, shoulder:0.65, plan:"round", rib_count:30, rib_mm:2.4, rib_width:0.5, rib_sharp:0.7, socket_d_mm:52, socket_depth_mm:60, wall_mm:3.4, floor_mm:5},
+  tower: {width_mm:84, height_mm:118, base_frac:1, top_frac:0.94, belly_pos:0.5, shoulder:0.2, plan:"polygon", plan_points:6, plan_depth:0.55, rib_count:0, pierce_count:12, pierce_w:0.36, pierce_lo:0.2, pierce_hi:0.9, socket_d_mm:48, socket_depth_mm:108, wall_mm:3, floor_mm:4},
+  arcade: {width_mm:104, height_mm:26, base_frac:0.94, top_frac:0.86, belly_pos:0.5, shoulder:0.4, plan:"round", rib_count:36, rib_mm:1.8, rib_width:0.45, rib_sharp:0.9, socket_d_mm:40.5, socket_depth_mm:17, back:"arch", back_h_mm:118, back_t_mm:8, wall_mm:3.4, floor_mm:5},
+  plaque: {width_mm:96, height_mm:24, base_frac:0.95, top_frac:0.88, belly_pos:0.5, shoulder:0.3, plan:"polygon", plan_points:8, plan_depth:0.5, rib_count:0, socket_d_mm:40.5, socket_depth_mm:15, back:"tablet", back_h_mm:96, back_t_mm:8, wall_mm:3.6, floor_mm:5},
+  reef: {width_mm:92, height_mm:46, base_frac:0.55, top_frac:0.74, belly_pos:0.55, shoulder:1, plan:"round", rib_count:20, rib_mm:2.6, rib_width:0.85, rib_sharp:0.1, rib_rows:4, rib_vary:0.55, socket_d_mm:40.5, socket_depth_mm:16, wall_mm:3.4, floor_mm:4}
+};
+const HOLDER_LABELS = {
+  heart:"Heart", bubble:"Bubble", flake:"Flake", moon:"Moon", lantern:"Lantern", flute:"Flute", bloom:"Bloom", pillar:"Pillar", tower:"Tower", arcade:"Arcade", plaque:"Plaque", reef:"Reef"
+};
+const HOLDER_JITTER = {
+  width_mm:["rel",0.12], height_mm:["rel",0.16], base_frac:["abs",0.06], top_frac:["abs",0.06], belly_pos:["abs",0.07], shoulder:["abs",0.18], oval:["abs",0.06], plan_depth:["abs",0.08], rib_mm:["rel",0.2], rib_width:["abs",0.08], rib_sharp:["abs",0.16], rib_vary:["abs",0.2], pierce_w:["abs",0.06], pierce_lo:["abs",0.04], pierce_hi:["abs",0.04], socket_depth_mm:["rel",0.12], back_t_mm:["abs",1.0], wall_mm:["abs",0.2], floor_mm:["abs",0.6]
+};
+const HOLDER_DEFAULTS = {};
+HOLDER_SCHEMA.forEach(f => HOLDER_DEFAULTS[f.k] = f.v);
+
+/* The template's own build123d source, base64'd like the others. */
+const HOLDER_SOURCE_B64 = [
+  "ZnJvbSBidWlsZDEyM2QgaW1wb3J0ICoKCmltcG9ydCBtYXRoCgojIC0tLSBzbGlkZXJzIC0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCldJRFRIX01NID0gOTYuMApIRUlHSFRfTU0gPSA0",
+  "MC4wCkJBU0VfRlJBQyA9IDAuNzQKVE9QX0ZSQUMgPSAwLjgwCkJFTExZX1BPUyA9IDAuNDUKU0hPVUxERVIgPSAwLjYwCk9W",
+  "QUwgPSAwLjAKUExBTiA9ICJyb3VuZCIKUExBTl9QT0lOVFMgPSA2ClBMQU5fREVQVEggPSAwLjAKUklCX0NPVU5UID0gMApS",
+  "SUJfTU0gPSAyLjAKUklCX1dJRFRIID0gMC41MApSSUJfU0hBUlAgPSAwLjcwClJJQl9ST1dTID0gMQpSSUJfVkFSWSA9IDAu",
+  "MApQSUVSQ0VfQ09VTlQgPSAwClBJRVJDRV9XID0gMC40MApQSUVSQ0VfTE8gPSAwLjI1ClBJRVJDRV9ISSA9IDAuODAKU09D",
+  "S0VUX0RfTU0gPSA0MC41ClNPQ0tFVF9ERVBUSF9NTSA9IDE0LjAKQkFDSyA9ICJub25lIgpCQUNLX0hfTU0gPSA5Mi4wCkJB",
+  "Q0tfVF9NTSA9IDguMApXQUxMX01NID0gMy4wCkZMT09SX01NID0gNC4wClNFRUQgPSAxCgpUQVUgPSA2LjI4MzE4NTMwNzE3",
+  "OTU4NgpIQUxGX1cgPSBXSURUSF9NTSAvIDIKCiMgLS0tIHJlc29sdXRpb24gLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQojIFRocmVlIHRoaW5ncyB3YW50IHBvaW50cyByb3VuZCB0aGUg",
+  "c2VjdGlvbiwgYW5kIHRoZSBjb2Fyc2VzdCBhbnN3ZXIgdGhhdAojIHNhdGlzZmllcyBhbGwgdGhyZWUgaXMgdGhlIG9uZSB0",
+  "byB1c2U6IGVpZ2h0IHBlciByaWIsIHNvIHRoZSBuYXJyb3dlc3QgcmliCiMgdGhlIHNjaGVtYSBhbGxvd3Mgc3RpbGwgZ2V0",
+  "cyB0d28gc2FtcGxlcyBhY3Jvc3MgaXQ7IHNpeHRlZW4gcGVyIGFybSBvciBzaWRlCiMgb2YgdGhlIHBsYW4sIHNvIGEgc3Rh",
+  "cidzIHZhbGxleSBpcyBhIGN1cnZlIHJhdGhlciB0aGFuIGEgY2hvcmQ7IGFuZCBhIGZpeGVkCiMgZmxvb3IgZm9yIHRoZSBw",
+  "bGFpbiByb3VuZCBjYXNlLCB3aGVyZSBhIGNpcmNsZSBkcmF3biB0aHJvdWdoIDcyIHBvaW50cyBpcwojIGFscmVhZHkgZmlu",
+  "ZXIgdGhhbiB0aGUgbWVzaGVyIHdpbGwga2VlcC4KUklCU19PTiA9IFJJQl9DT1VOVCA+PSAzIGFuZCBSSUJfTU0gPiAwLjE1",
+  "ClBMQU5fT04gPSBQTEFOICE9ICJyb3VuZCIgYW5kIFBMQU5fREVQVEggPiAwLjAyCmlmIFBMQU4gPT0gImhlYXJ0IiBhbmQg",
+  "UExBTl9PTjoKICAgIFBMQU5fU0FNUExFID0gMTkyCmVsaWYgUExBTl9PTjoKICAgIFBMQU5fU0FNUExFID0gbWF4KDMsIGlu",
+  "dChQTEFOX1BPSU5UUykpICogMTYKZWxzZToKICAgIFBMQU5fU0FNUExFID0gNzIKUklCX1NBTVBMRSA9IGludChSSUJfQ09V",
+  "TlQpICogOCBpZiBSSUJTX09OIGVsc2UgMApQT0lOVFMgPSBpbnQobWluKDMyMCwgbWF4KDcyLCBQTEFOX1NBTVBMRSwgUklC",
+  "X1NBTVBMRSkpKQojIFVwIHRoZSBoZWlnaHQsIHRoZSBwcm9maWxlIGlzIGEgY3VydmUgYW5kIGVhY2ggbG9mdCBiYW5kIGlz",
+  "IGEgc3RyYWlnaHQgcnVuCiMgYmV0d2VlbiB0d28gc2VjdGlvbnMsIHNvIGEgc3F1YXQgZG9tZSBzdGlsbCB3YW50cyBhIGNv",
+  "dXBsZSBvZiBkb3plbi4gUm93cyBvZgojIGJ1bXBzIHdhbnQgdGVuIG9yIHNvIGVhY2gsIGJlY2F1c2UgZWFjaCByb3cgaXMg",
+  "YSBmdWxsIHJpc2UgYW5kIGZhbGwuClJPV1MgPSBtYXgoMSwgaW50KFJJQl9ST1dTKSkgaWYgUklCU19PTiBlbHNlIDEKU0VD",
+  "VElPTlMgPSBpbnQobWluKDQ4LCBtYXgoMjAsIFJPV1MgKiAxMikpKQojIEJvdGggdGhlIGxvZnRlZCBza2luIGFuZCB0aGUg",
+  "bWVzaCBvZiBpdCBsaXZlIGluIG1lbW9yeSBhdCBvbmNlLCBhbmQgdGhlCiMgc2FuZGJveCBnaXZlcyB0aGUgd2hvbGUgam9i",
+  "IHR3byBnaWdhYnl0ZXMuIFBhc3QgdGhpcyBjZWlsaW5nIHRoZSByZXNvbHV0aW9uCiMgZ2l2ZXMgd2F5IHJhdGhlciB0aGFu",
+  "IHRoZSBkZXNpZ246IGEgaG9sZGVyIHdpdGggZmV3ZXIgc2VjdGlvbnMgaXMgYSBzbGlnaHRseQojIG1vcmUgZmFjZXRlZCBo",
+  "b2xkZXIsIHdoZXJlIG9uZSB0aGF0IHJ1bnMgb3V0IG9mIGFkZHJlc3Mgc3BhY2UgaXMgbm90aGluZy4KQlVER0VUID0gNTAw",
+  "MAppZiBTRUNUSU9OUyAqIFBPSU5UUyA+IEJVREdFVDoKICAgIHNocmluayA9IChCVURHRVQgLyAoU0VDVElPTlMgKiBQT0lO",
+  "VFMpKSAqKiAwLjUKICAgIFBPSU5UUyA9IGludChtYXgoNzIsIFBPSU5UUyAqIHNocmluaykpCiAgICBTRUNUSU9OUyA9IGlu",
+  "dChtYXgoMTQsIG1pbihTRUNUSU9OUywgQlVER0VUIC8gUE9JTlRTKSkpCgoKZGVmIGhhc2gwMShpbmRleCwgc2FsdCk6CiAg",
+  "ICAiIiJEZXRlcm1pbmlzdGljIHBzZXVkby1yYW5kb20gaW4gWzAsMSk6IHRoZSBzYW1lIHNlZWQsIHRoZSBzYW1lIGhvbGRl",
+  "ci4iIiIKICAgIHggPSBtYXRoLnNpbigoaW5kZXggKyAxKSAqIDEyLjk4OTggKyAoU0VFRCArIDEpICogNzguMjMzICsgc2Fs",
+  "dCAqIDM3LjcxOSkgKiA0Mzc1OC41NDUzCiAgICByZXR1cm4geCAtIG1hdGguZmxvb3IoeCkKCgpkZWYgc21vb3Roc3RlcCh4",
+  "KToKICAgIHggPSBtaW4oMS4wLCBtYXgoMC4wLCB4KSkKICAgIHJldHVybiB4ICogeCAqICgzLjAgLSAyLjAgKiB4KQoKCiMg",
+  "LS0tIDEuIHRoZSBwcm9maWxlIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLQojIFRocmVlIGNvbnRyb2wgcG9pbnRzIC0tIGJhc2UsIGJlbGx5LCByaW0gLS0gYXMgZnJhY3Rpb25zIG9mIHRoZSBo",
+  "YWxmIHdpZHRoLgojIFRoZSBiZWxseSBpcyB0aGUgd2lkZXN0IGJ5IGNvbnN0cnVjdGlvbiwgd2hpY2ggaXMgd2hhdCBsZXRz",
+  "IGB3aWR0aF9tbWAgbWVhbgojIHRoZSBzaXplIG9mIHRoZSB0aGluZyByYXRoZXIgdGhhbiB0aGUgc2l6ZSBvZiBvbmUgc3Rh",
+  "dGlvbiBvbiBpdC4KQkVMTFkgPSBtaW4oMC45LCBtYXgoMC4xLCBCRUxMWV9QT1MpKQpDWCA9IFswLjAsIEJFTExZLCAxLjBd",
+  "CkNZID0gW0JBU0VfRlJBQywgMS4wLCBUT1BfRlJBQ10KCgpkZWYgbW9ub3RvbmVfc2xvcGVzKHhzLCB5cyk6CiAgICAiIiJG",
+  "cml0c2NoLUNhcmxzb24gdGFuZ2VudHM6IGEgY3VydmUgdGhyb3VnaCB0aGUgY29udHJvbCBwb2ludHMgdGhhdCBuZXZlcgog",
+  "ICAgb3ZlcnNob290cyB0aGVtLCBzbyB0aGUgc2lsaG91ZXR0ZSBpcyB0aGUgb25lIHRoZSBzbGlkZXJzIGRlc2NyaWJlLiIi",
+  "IgogICAgbiA9IGxlbih4cykKICAgIGRlbHRhcyA9IFsoeXNbaSArIDFdIC0geXNbaV0pIC8gKHhzW2kgKyAxXSAtIHhzW2ld",
+  "KSBmb3IgaSBpbiByYW5nZShuIC0gMSldCiAgICBzbG9wZXMgPSBbZGVsdGFzWzBdXSArIFswLjBdICogKG4gLSAyKSArIFtk",
+  "ZWx0YXNbLTFdXQogICAgZm9yIGkgaW4gcmFuZ2UoMSwgbiAtIDEpOgogICAgICAgIGlmIGRlbHRhc1tpIC0gMV0gKiBkZWx0",
+  "YXNbaV0gPD0gMDoKICAgICAgICAgICAgc2xvcGVzW2ldID0gMC4wCiAgICAgICAgZWxzZToKICAgICAgICAgICAgdzEgPSAy",
+  "ICogKHhzW2kgKyAxXSAtIHhzW2ldKSArICh4c1tpXSAtIHhzW2kgLSAxXSkKICAgICAgICAgICAgdzIgPSAoeHNbaSArIDFd",
+  "IC0geHNbaV0pICsgMiAqICh4c1tpXSAtIHhzW2kgLSAxXSkKICAgICAgICAgICAgc2xvcGVzW2ldID0gKHcxICsgdzIpIC8g",
+  "KHcxIC8gZGVsdGFzW2kgLSAxXSArIHcyIC8gZGVsdGFzW2ldKQogICAgcmV0dXJuIHNsb3BlcwoKCkNNID0gbW9ub3RvbmVf",
+  "c2xvcGVzKENYLCBDWSkKCgpkZWYgcmFkaXVzX2F0KHQpOgogICAgIiIiVGhlIHByb2ZpbGUgYXMgYSBmcmFjdGlvbiBvZiB0",
+  "aGUgaGFsZiB3aWR0aCwgYXQgaGVpZ2h0IGZyYWN0aW9uIHQuIiIiCiAgICB0ID0gbWluKDEuMCwgbWF4KDAuMCwgdCkpCiAg",
+  "ICBmb3IgaSBpbiByYW5nZShsZW4oQ1gpIC0gMSk6CiAgICAgICAgaWYgQ1hbaV0gPD0gdCA8PSBDWFtpICsgMV06CiAgICAg",
+  "ICAgICAgIGggPSBDWFtpICsgMV0gLSBDWFtpXQogICAgICAgICAgICBzID0gKHQgLSBDWFtpXSkgLyBoCiAgICAgICAgICAg",
+  "IG0wLCBtMSA9IENNW2ldICogaCAqIFNIT1VMREVSICogMiwgQ01baSArIDFdICogaCAqIFNIT1VMREVSICogMgogICAgICAg",
+  "ICAgICByZXR1cm4gKAogICAgICAgICAgICAgICAgKDIgKiBzKiozIC0gMyAqIHMqKjIgKyAxKSAqIENZW2ldCiAgICAgICAg",
+  "ICAgICAgICArIChzKiozIC0gMiAqIHMqKjIgKyBzKSAqIG0wCiAgICAgICAgICAgICAgICArICgtMiAqIHMqKjMgKyAzICog",
+  "cyoqMikgKiBDWVtpICsgMV0KICAgICAgICAgICAgICAgICsgKHMqKjMgLSBzKioyKSAqIG0xCiAgICAgICAgICAgICkKICAg",
+  "IHJldHVybiBDWVstMV0KCgojIC0tLSAyLiB0aGUgcGxhbiAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KIyBPbmUgZnVuY3Rpb24gcGVyIG91dGxpbmUsIGVhY2ggbm9ybWFsaXNlZCBzbyBp",
+  "dHMgb3duIG1heGltdW0gaXMgMSwgdGhlbgojIGJsZW5kZWQgdG93YXJkIGEgY2lyY2xlIGJ5IFBMQU5fREVQVEguIFdyaXR0",
+  "ZW4gdGhpcyB3YXksIGRlcHRoIDAgaXMgYSBjaXJjbGUKIyB3aGF0ZXZlciB0aGUgcGxhbiBzYXlzLCBzbyB0aGUgc2xpZGVy",
+  "IGlzIGNvbnRpbnVvdXMgYWNyb3NzIHRoZSBjaG9pY2UKIyByYXRoZXIgdGhhbiBqdW1waW5nIHdoZW4gaXQgY2hhbmdlcy4K",
+  "QVNQRUNUID0gbWF4KDAuNSwgMS4wIC0gT1ZBTCkKU0lERVMgPSBtYXgoMywgaW50KFBMQU5fUE9JTlRTKSkKCgpkZWYgcGxh",
+  "bl9yYXcoYW5nbGUpOgogICAgaWYgUExBTiA9PSAiaGVhcnQiOgogICAgICAgICMgVGhlIHN0YW5kYXJkIHBvbGFyIGhlYXJ0",
+  "OiBhIGN1c3AgYXQgdGhlIGJhY2ssIGEgcG9pbnQgYXQgdGhlIGZyb250LgogICAgICAgIHMsIGMgPSBtYXRoLnNpbihhbmds",
+  "ZSksIG1hdGguY29zKGFuZ2xlKQogICAgICAgIHJldHVybiAyLjAgLSAyLjAgKiBzICsgcyAqIG1hdGguc3FydChhYnMoYykp",
+  "IC8gKHMgKyAxLjQpCiAgICBpZiBQTEFOID09ICJwb2x5Z29uIjoKICAgICAgICBzdGVwID0gVEFVIC8gU0lERVMKICAgICAg",
+  "ICBoYWxmID0gc3RlcCAvIDIKICAgICAgICByZXR1cm4gbWF0aC5jb3MoaGFsZikgLyBtYXRoLmNvcygoKGFuZ2xlICsgaGFs",
+  "ZikgJSBzdGVwKSAtIGhhbGYpCiAgICBpZiBQTEFOID09ICJzdGFyIiBvciBQTEFOID09ICJwZXRhbCI6CiAgICAgICAgIyBU",
+  "aGUgc2FtZSBjb3NpbmUsIHJlYWQgdHdvIHdheXM6IGEgaGlnaCBleHBvbmVudCBsZWF2ZXMgbmFycm93IGFybXMKICAgICAg",
+  "ICAjIHN0YW5kaW5nIG91dCBvZiBhIHdpZGUgdmFsbGV5LCBhIGxvdyBvbmUgbGVhdmVzIGJyb2FkIHNjYWxsb3BzLgogICAg",
+  "ICAgIGsgPSAwLjUgKyAwLjUgKiBtYXRoLmNvcyhTSURFUyAqIGFuZ2xlKQogICAgICAgIHJldHVybiBrICoqICgyLjIgaWYg",
+  "UExBTiA9PSAic3RhciIgZWxzZSAwLjU1KQogICAgcmV0dXJuIDEuMAoKClBMQU5fUEVBSyA9IG1heChwbGFuX3JhdyhUQVUg",
+  "KiBpIC8gNzIwKSBmb3IgaSBpbiByYW5nZSg3MjApKQpQTEFOX1BFQUsgPSBQTEFOX1BFQUsgaWYgUExBTl9QRUFLID4gMWUt",
+  "NiBlbHNlIDEuMAoKCmRlZiBwbGFuX21peChhbmdsZSk6CiAgICByZXR1cm4gMS4wIC0gUExBTl9ERVBUSCArIFBMQU5fREVQ",
+  "VEggKiBwbGFuX3JhdyhhbmdsZSkgLyBQTEFOX1BFQUsKCgpkZWYgZWxsaXBzZShhbmdsZSk6CiAgICBjLCBzID0gbWF0aC5j",
+  "b3MoYW5nbGUpLCBtYXRoLnNpbihhbmdsZSkgLyBBU1BFQ1QKICAgIHJldHVybiAxLjAgLyBtYXRoLnNxcnQoYyAqIGMgKyBz",
+  "ICogcykKCgojIE5vcm1hbGlzZWQgYWdhaW4gYWZ0ZXIgdGhlIHNxdWFzaCwgc28gYHdpZHRoX21tYCBpcyB0aGUgbGFyZ2Vz",
+  "dCBkaW1lbnNpb24gb2YKIyB0aGUgZmluaXNoZWQgcGxhbiByYXRoZXIgdGhhbiBvZiB0aGUgY2lyY2xlIGl0IHN0YXJ0ZWQg",
+  "ZnJvbS4KUExBTl9OT1JNID0gbWF4KHBsYW5fbWl4KFRBVSAqIGkgLyA3MjApICogZWxsaXBzZShUQVUgKiBpIC8gNzIwKSBm",
+  "b3IgaSBpbiByYW5nZSg3MjApKQpQTEFOX05PUk0gPSBQTEFOX05PUk0gaWYgUExBTl9OT1JNID4gMWUtNiBlbHNlIDEuMAoK",
+  "CmRlZiBwbGFuKGFuZ2xlKToKICAgIHJldHVybiBwbGFuX21peChhbmdsZSkgKiBlbGxpcHNlKGFuZ2xlKSAvIFBMQU5fTk9S",
+  "TQoKClBMQU5fTE9XID0gbWluKHBsYW4oVEFVICogaSAvIDcyMCkgZm9yIGkgaW4gcmFuZ2UoNzIwKSkKCiMgLS0tIDMuIHRo",
+  "ZSByaWJzIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQpQSVRD",
+  "SCA9IFRBVSAvIG1heChSSUJfQ09VTlQsIDEpCkhBTEZfUElUQ0ggPSBtYXgoUklCX1dJRFRIICogUElUQ0ggLyAyLCAxZS05",
+  "KQojIDAgaXMgYSBzb2Z0IHN3ZWxsIGluIHRoZSBzdXJmYWNlLCAxIGEgcmVlZCBzdGFuZGluZyBvZmYgaXQgd2l0aCBzdGVl",
+  "cCBzaWRlcy4KUklCX0cgPSAwLjQgKyAxLjEgKiAoMS4wIC0gUklCX1NIQVJQKQojIE9uZSBjb2x1bW4gcnVuIHRoZSB3aG9s",
+  "ZSBoZWlnaHQgZmFkZXMgaW4gb3ZlciB0aGlzIG11Y2ggb2YgaXQgYXQgZWFjaCBlbmQuCkZBREUgPSAwLjEyCgoKZGVmIHJp",
+  "Yl9jb2x1bW4oYW5nbGUpOgogICAgb2Zmc2V0ID0gKChhbmdsZSArIFBJVENIIC8gMikgJSBQSVRDSCkgLSBQSVRDSCAvIDIK",
+  "ICAgIHUgPSBhYnMob2Zmc2V0KSAvIEhBTEZfUElUQ0gKICAgIGlmIHUgPj0gMS4wOgogICAgICAgIHJldHVybiAwLjAKICAg",
+  "IHJldHVybiAoMC41ICsgMC41ICogbWF0aC5jb3MobWF0aC5waSAqIHUpKSAqKiBSSUJfRwoKCmRlZiByaWJfcm93KHQpOgog",
+  "ICAgIiIiSG93IG11Y2ggcmliIHRoZXJlIGlzIGF0IGhlaWdodCB0LgoKICAgIEF0IG9uZSByb3cgdGhpcyBpcyBhIGZhZGUg",
+  "aW4gYW5kIG91dCwgd2hpY2ggaXMgd2hhdCBrZWVwcyB0aGUgZmlyc3QgbGF5ZXIKICAgIGZyZWUgb2YgYSBzdGFuZGluZyBs",
+  "ZWRnZS4gQWJvdmUgb25lIGl0IGlzIGEgc3RhY2sgb2YgY29zaW5lIGJ1bXBzLCBhbmQgdGhlCiAgICBzdGVlcGVzdCBwb2lu",
+  "dCBvZiBhIGNvc2luZSBidW1wIGlzIGhhbGZ3YXkgdXAgaXRzIG93biByaXNlIC0tIHdoaWNoIGlzIHdoeQogICAgdGhlIHBy",
+  "ZWNvbmRpdGlvbnMgbWVhc3VyZSB0aGUgZGVwdGggYWdhaW5zdCBoYWxmIGEgcm93LgogICAgIiIiCiAgICBpZiBST1dTIDw9",
+  "IDE6CiAgICAgICAgcmV0dXJuIHNtb290aHN0ZXAobWluKHQgLyBGQURFLCAoMS4wIC0gdCkgLyBGQURFLCAxLjApKQogICAg",
+  "cmV0dXJuIDAuNSAtIDAuNSAqIG1hdGguY29zKFRBVSAqICgodCAqIFJPV1MpICUgMS4wKSkKCgpkZWYgcmliX2F0KGFuZ2xl",
+  "LCB0KToKICAgIGlmIG5vdCBSSUJTX09OOgogICAgICAgIHJldHVybiAwLjAKICAgIGNvbHVtbiA9IHJpYl9jb2x1bW4oYW5n",
+  "bGUpCiAgICBpZiBjb2x1bW4gPD0gMC4wOgogICAgICAgIHJldHVybiAwLjAKICAgIGRlcHRoID0gUklCX01NCiAgICBpZiBS",
+  "SUJfVkFSWSA+IDA6CiAgICAgICAgaW5kZXggPSBpbnQocm91bmQoYW5nbGUgLyBQSVRDSCkpICUgbWF4KGludChSSUJfQ09V",
+  "TlQpLCAxKQogICAgICAgIGRlcHRoICo9IDEuMCAtIFJJQl9WQVJZICogMC40ICogaGFzaDAxKGluZGV4LCAxLjApCiAgICBy",
+  "ZXR1cm4gZGVwdGggKiBjb2x1bW4gKiByaWJfcm93KHQpCgoKIyAtLS0gNC4gdGhlIGJvZHkgLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCmRlZiBzZWN0aW9uKHQsIHopOgogICAgcG9pbnRz",
+  "ID0gW10KICAgIGZvciBpIGluIHJhbmdlKFBPSU5UUyk6CiAgICAgICAgYW5nbGUgPSBUQVUgKiBpIC8gUE9JTlRTCiAgICAg",
+  "ICAgcmFkaXVzID0gbWF4KDAuNCwgSEFMRl9XICogcmFkaXVzX2F0KHQpICogcGxhbihhbmdsZSkgKyByaWJfYXQoYW5nbGUs",
+  "IHQpKQogICAgICAgIHBvaW50cy5hcHBlbmQoKHJhZGl1cyAqIG1hdGguY29zKGFuZ2xlKSwgcmFkaXVzICogbWF0aC5zaW4o",
+  "YW5nbGUpKSkKICAgIHdpdGggQnVpbGRMaW5lKFBsYW5lLlhZLm9mZnNldCh6KSkgYXMgbGluZToKICAgICAgICBTcGxpbmUo",
+  "KnBvaW50cywgcG9pbnRzWzBdKQogICAgcmV0dXJuIG1ha2VfZmFjZShsaW5lLmxpbmUpCgoKcmVzdWx0ID0gbG9mdCgKICAg",
+  "IFtzZWN0aW9uKGkgLyBTRUNUSU9OUywgSEVJR0hUX01NICogaSAvIFNFQ1RJT05TKSBmb3IgaSBpbiByYW5nZShTRUNUSU9O",
+  "UyArIDEpXSwKICAgIHJ1bGVkPVRydWUsCikKCiMgLS0tIDUuIHRoZSBzb2NrZXQgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQojIEEgZmxhdC1ib3R0b21lZCBib3JlLCBub3QgYSBsb2Z0ZWQg",
+  "Y2F2aXR5OiBhIHRlYWxpZ2h0IHNpdHMgb24gYSBmbGF0IGZsb29yLAojIGFuZCBhIGN5bGluZGVyIGlzIGFuIGFuYWx5dGlj",
+  "IHN1cmZhY2UgdGhlIGtlcm5lbCBjdXRzIGZvciBhbG1vc3Qgbm90aGluZy4KIyBXaGF0IGl0IG1heSBub3QgZG8gaXMgY29t",
+  "ZSBvdXQgdGhyb3VnaCB0aGUgc2lkZSwgc28gaXQgaXMgY2xhbXBlZCBhZ2FpbnN0CiMgdGhlIG5hcnJvd2VzdCB0aGUgYm9k",
+  "eSBnZXRzIG92ZXIgdGhlIGJhbmQgdGhlIGJvcmUgYWN0dWFsbHkgcGFzc2VzIHRocm91Z2guCkRFUFRIX01NID0gbWF4KDIu",
+  "MCwgbWluKFNPQ0tFVF9ERVBUSF9NTSwgSEVJR0hUX01NIC0gRkxPT1JfTU0pKQpCT1JFX0xPID0gbWF4KDAuMCwgKEhFSUdI",
+  "VF9NTSAtIERFUFRIX01NKSAvIG1heChIRUlHSFRfTU0sIDFlLTYpKQpCT1JFX01JTiA9IG1pbihyYWRpdXNfYXQoQk9SRV9M",
+  "TyArICgxLjAgLSBCT1JFX0xPKSAqIGkgLyAxNikgZm9yIGkgaW4gcmFuZ2UoMTcpKQpST09NID0gSEFMRl9XICogQk9SRV9N",
+  "SU4gKiBQTEFOX0xPVwpTT0NLRVRfUiA9IG1heCgzLjAsIG1pbihTT0NLRVRfRF9NTSAvIDIsIFJPT00gLSBXQUxMX01NKSkK",
+  "IyBSdW4gdGhlIGN1dHRlciBvdXQgcGFzdCB0aGUgcmltIHNvIHRoZSBjdXQgaXMgYSBjbGVhbiBjcm9zc2luZyByYXRoZXIg",
+  "dGhhbiBhCiMgdGFuZ2VuY3k6IGEgY3V0dGVyIHRoYXQgc3RvcHMgZXhhY3RseSBvbiB0aGUgdG9wIGZhY2UgbGVhdmVzIHRo",
+  "ZSBrZXJuZWwgYQojIGNvaW5jaWRlbnQgcGFpciwgYW5kIHRoZSBtZXNoIGNvbWVzIGJhY2sgd2l0aCBhIGhvbGUgaW4gaXQu",
+  "Ck9WRVJDVVQgPSA2LjAKcmVzdWx0ID0gcmVzdWx0IC0gUG9zKAogICAgMCwgMCwgSEVJR0hUX01NIC0gREVQVEhfTU0gKyAo",
+  "REVQVEhfTU0gKyBPVkVSQ1VUKSAvIDIKKSAqIEN5bGluZGVyKFNPQ0tFVF9SLCBERVBUSF9NTSArIE9WRVJDVVQpCgojIC0t",
+  "LSA2LiB0aGUgd2luZG93cyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0KIyBQb2ludGVkIHNsb3RzLCBub3Qgcm91bmQgb25lcy4gVGhlIHRvcCBvZiBhIHJvdW5kIGhvbGUgaXMgYSBjZWlsaW5n",
+  "IHRoZQojIHByaW50ZXIgYnJpZGdlczsgdGhlIHRvcCBvZiB0aGlzIG9uZSBpcyB0d28gZmFjZXMgYXQgNDUgZGVncmVlcywg",
+  "d2hpY2ggaXQKIyBzaW1wbHkgcHJpbnRzLiBUaGV5IGFyZSBjdXQgYXMgb25lIGZ1c2VkIHRvb2wgcmF0aGVyIHRoYW4gb25l",
+  "IGF0IGEgdGltZToKIyBldmVyeSBib29sZWFuIGFnYWluc3QgYSByaWJiZWQgc2hlbGwgY29zdHMgaW4gcHJvcG9ydGlvbiB0",
+  "byBob3cgbWFueSBmYWNlcwojIHRoYXQgc2hlbGwgaGFzLCBhbmQgdGhlcmUgaXMgbm8gcmVhc29uIHRvIHBheSB0aGF0IHNp",
+  "eHRlZW4gdGltZXMuCiMKIyBFYWNoIHNsb3QgaXMgYSB3ZWRnZSwgbm90IGEgc3RyYWlnaHQgcHJpc206IGl0IGlzIGxvZnRl",
+  "ZCBiZXR3ZWVuIGEgbmFycm93CiMgZmFjZSBhdCB0aGUgYm9yZSBhbmQgYSB3aWRlIG9uZSBvdXQgcGFzdCB0aGUgd2FsbCwg",
+  "c28gaXQgdGFrZXMgdGhlIHNhbWUKIyAqZnJhY3Rpb24gb2YgdGhlIHBpdGNoKiBhdCBldmVyeSByYWRpdXMgaXQgcGFzc2Vz",
+  "IHRocm91Z2guIEEgc3RyYWlnaHQgc2xvdAojIHRha2VzIGEgZml4ZWQgbnVtYmVyIG9mIG1pbGxpbWV0cmVzIGluc3RlYWQs",
+  "IGFuZCB3aGVyZSB0aGUgcGxhbiBpcyB0dXJuaW5nCiMgLS0gdGhlIGNvcm5lciBvZiBhIHBvbHlnb24sIHRoZSB0aXAgb2Yg",
+  "YSBzdGFyIC0tIHdoYXQgaXQgbGVhdmVzIGJlc2lkZQojIGl0c2VsZiBpcyBhIHdlZGdlIHRoYXQgdGFwZXJzIHRvIG5vdGhp",
+  "bmcuIFRoYXQgaXMgbm90IGEgdGhpbiB3YWxsIHRoZQojIHByaW50ZXIgY2FuIGJlIGFza2VkIHRvIHRyeSBoYXJkZXIgYXQ7",
+  "IGl0IGlzIGEgc2xpdmVyLgpXSU5fTE8gPSBtYXgoSEVJR0hUX01NICogUElFUkNFX0xPLCBGTE9PUl9NTSArIDEuMCkKV0lO",
+  "X0hJID0gbWluKEhFSUdIVF9NTSAqIFBJRVJDRV9ISSwgSEVJR0hUX01NIC0gMS41KQppZiBQSUVSQ0VfQ09VTlQgPj0gMSBh",
+  "bmQgV0lOX0hJID4gV0lOX0xPICsgMi4wOgogICAgV0lOX1BJVENIID0gVEFVIC8gaW50KFBJRVJDRV9DT1VOVCkKICAgICMg",
+  "U3RhcnQgdGhlIHRvb2wganVzdCBpbnNpZGUgdGhlIGJvcmUsIHNvIGEgd2luZG93IGFsd2F5cyBicmVha3MgaW50byB0aGUK",
+  "ICAgICMgY2F2aXR5IHdoZXJlIHRoZXJlIGlzIG9uZSBhbmQgbGVhdmVzIHRoZSBjb3JlIGFsb25lIHdoZXJlIHRoZXJlIGlz",
+  "IG5vdC4KICAgIFdJTl9SMCA9IG1heCgxLjAsIFNPQ0tFVF9SIC0gMi4wKQogICAgV0lOX1JFQUNIID0gSEFMRl9XICsgUklC",
+  "X01NICsgT1ZFUkNVVAogICAgV0lOX0lOID0gUElFUkNFX1cgKiBXSU5fUElUQ0ggLyAyICogV0lOX1IwCiAgICBXSU5fT1VU",
+  "ID0gUElFUkNFX1cgKiBXSU5fUElUQ0ggLyAyICogV0lOX1JFQUNICiAgICAjIFRoZSA0NSBkZWdyZWUgcnVuLWluIGF0IGVh",
+  "Y2ggZW5kLCBrZXB0IG9mZiBib3RoIHRoZSBoYWxmIHdpZHRoIGFuZCB0aGUKICAgICMgaGFsZiBoZWlnaHQgc28gbm8gdHdv",
+  "IGNvcm5lcnMgb2YgdGhlIHNsb3QgbGFuZCBvbiBlYWNoIG90aGVyLgogICAgTk9TRSA9IG1pbihXSU5fSU4gKiAwLjksIChX",
+  "SU5fSEkgLSBXSU5fTE8pICogMC40OSkKCiAgICBkZWYgc2xvdF9mYWNlKHJhZGl1cywgaGFsZik6CiAgICAgICAgcG9pbnRz",
+  "ID0gWwogICAgICAgICAgICAoLWhhbGYsIFdJTl9MTyArIE5PU0UpLAogICAgICAgICAgICAoLWhhbGYgKyBOT1NFLCBXSU5f",
+  "TE8pLAogICAgICAgICAgICAoaGFsZiAtIE5PU0UsIFdJTl9MTyksCiAgICAgICAgICAgIChoYWxmLCBXSU5fTE8gKyBOT1NF",
+  "KSwKICAgICAgICAgICAgKGhhbGYsIFdJTl9ISSAtIE5PU0UpLAogICAgICAgICAgICAoaGFsZiAtIE5PU0UsIFdJTl9ISSks",
+  "CiAgICAgICAgICAgICgtaGFsZiArIE5PU0UsIFdJTl9ISSksCiAgICAgICAgICAgICgtaGFsZiwgV0lOX0hJIC0gTk9TRSks",
+  "CiAgICAgICAgXQogICAgICAgIHdpdGggQnVpbGRMaW5lKFBsYW5lLllaLm9mZnNldChyYWRpdXMpKSBhcyBzbG90OgogICAg",
+  "ICAgICAgICBQb2x5bGluZSgqcG9pbnRzLCBjbG9zZT1UcnVlKQogICAgICAgIHJldHVybiBtYWtlX2ZhY2Uoc2xvdC5saW5l",
+  "KQoKICAgIHRvb2xzID0gW10KICAgIGZvciBrIGluIHJhbmdlKGludChQSUVSQ0VfQ09VTlQpKToKICAgICAgICB3ZWRnZSA9",
+  "IGxvZnQoCiAgICAgICAgICAgIFtzbG90X2ZhY2UoV0lOX1IwLCBXSU5fSU4pLCBzbG90X2ZhY2UoV0lOX1JFQUNILCBXSU5f",
+  "T1VUKV0sIHJ1bGVkPVRydWUKICAgICAgICApCiAgICAgICAgdG9vbHMuYXBwZW5kKFJvdCgwLCAwLCBtYXRoLmRlZ3JlZXMo",
+  "V0lOX1BJVENIICogaykpICogd2VkZ2UpCiAgICBjdXR0ZXIgPSB0b29sc1swXSBpZiBsZW4odG9vbHMpID09IDEgZWxzZSB0",
+  "b29sc1swXS5mdXNlKCp0b29sc1sxOl0pCiAgICByZXN1bHQgPSByZXN1bHQgLSBjdXR0ZXIKCiMgLS0tIDcuIHRoZSBzdGFu",
+  "ZGluZyBiYWNrIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQojIE9uZSBleHRy",
+  "dWRlZCBvdXRsaW5lLCBwdXNoZWQgYXMgZmFyIGJhY2sgaW5zaWRlIHRoZSBmb290cHJpbnQgYXMgaXQgd2lsbCBnbwojIGFu",
+  "ZCBmdXNlZCBpbnRvIHRoZSBib2R5LiBJdCBpcyBhIHBsYXRlIHJhdGhlciB0aGFuIGEgcmV2b2x2ZSBvbiBwdXJwb3NlOiBh",
+  "CiMgcGxhdGUgc3RhbmRpbmcgb24gZWRnZSBoYXMgdmVydGljYWwgd2FsbHMsIGFuZCB0aGUgb25seSBvdmVyaGFuZyBhbnl3",
+  "aGVyZSBvbgojIGl0IGlzIHRoZSBvbmUgdGhlIGNyZXNjZW50J3Mgb3duIGJvdHRvbSBtYWtlcyAtLSB3aGljaCB0aGUgcHJl",
+  "Y29uZGl0aW9ucwojIGJ1cnkgaW4gdGhlIGJvZHkuCiMKIyBUaGUgbW9vbiBpcyB0d28gY2lyY2xlczogYSBiaXRlIG9mIHRo",
+  "aXMgcmFkaXVzLCBvZmZzZXQgYnkgdGhpcyBtdWNoIG9mIGl0LgojIFRoZSBiaXRlIHBsdXMgdGhlIG9mZnNldCBjb21lcyB0",
+  "byBtb3JlIHRoYW4gdGhlIHdob2xlLCB3aGljaCBpcyB3aGF0IG9wZW5zCiMgdGhlIHJpbmcgaW50byBhIGNyZXNjZW50IHdp",
+  "dGggaG9ybnMgcmF0aGVyIHRoYW4gY2xvc2luZyBpdCBpbnRvIGFuIGFubnVsdXMuCk1PT05fQklURSA9IDAuNzIKTU9PTl9P",
+  "RkZfWCA9IDAuMzAKTU9PTl9PRkZfWiA9IDAuMTAKU0xBQl9ST1VORCA9IDAuMTgKCmlmIEJBQ0sgIT0gIm5vbmUiIGFuZCBC",
+  "QUNLX0hfTU0gPiBIRUlHSFRfTU0gKyAyLjA6CiAgICBSRUFSID0gSEFMRl9XICogcmFkaXVzX2F0KDAuMCkgKiBwbGFuKFRB",
+  "VSAqIDMgLyA0KQogICAgQkFDS19ZID0gLW1heChTT0NLRVRfUiArIEJBQ0tfVF9NTSAvIDIgKyAxLjAsIFJFQVIgLSBCQUNL",
+  "X1RfTU0gLyAyIC0gMi4wKQogICAgaWYgQkFDSyA9PSAiY3Jlc2NlbnQiOgogICAgICAgIE1PT05fUiA9IEJBQ0tfSF9NTSAv",
+  "IDIKICAgICAgICBzaGFwZSA9IENpcmNsZShNT09OX1IpIC0gUG9zKAogICAgICAgICAgICBNT09OX1IgKiBNT09OX09GRl9Y",
+  "LCBNT09OX1IgKiBNT09OX09GRl9aCiAgICAgICAgKSAqIENpcmNsZShNT09OX1IgKiBNT09OX0JJVEUpCiAgICAgICAgTElG",
+  "VCA9IE1PT05fUgogICAgZWxpZiBCQUNLID09ICJhcmNoIjoKICAgICAgICBBUkNIX1cgPSBtaW4oQkFDS19IX01NICogMC42",
+  "MiwgSEFMRl9XICogMS41KQogICAgICAgIEFSQ0hfUiA9IEFSQ0hfVyAvIDIKICAgICAgICBBUkNIX1NURU0gPSBtYXgoMS4w",
+  "LCBCQUNLX0hfTU0gLSBBUkNIX1IpCiAgICAgICAgc2hhcGUgPSBQb3MoMCwgQVJDSF9TVEVNIC8gMikgKiBSZWN0YW5nbGUo",
+  "QVJDSF9XLCBBUkNIX1NURU0pICsgUG9zKAogICAgICAgICAgICAwLCBBUkNIX1NURU0KICAgICAgICApICogQ2lyY2xlKEFS",
+  "Q0hfUikKICAgICAgICBIT0xFX1cgPSBBUkNIX1cgLSBCQUNLX1RfTU0gKiAyLjIKICAgICAgICBpZiBIT0xFX1cgPiA0LjA6",
+  "CiAgICAgICAgICAgIEhPTEVfUiA9IEhPTEVfVyAvIDIKICAgICAgICAgICAgSE9MRV9CQVNFID0gQkFDS19UX01NICogMS4y",
+  "CiAgICAgICAgICAgIEhPTEVfU1RFTSA9IG1heCgxLjAsIEFSQ0hfU1RFTSAtIEhPTEVfQkFTRSkKICAgICAgICAgICAgc2hh",
+  "cGUgPSBzaGFwZSAtICgKICAgICAgICAgICAgICAgIFBvcygwLCBIT0xFX0JBU0UgKyBIT0xFX1NURU0gLyAyKSAqIFJlY3Rh",
+  "bmdsZShIT0xFX1csIEhPTEVfU1RFTSkKICAgICAgICAgICAgICAgICsgUG9zKDAsIEhPTEVfQkFTRSArIEhPTEVfU1RFTSkg",
+  "KiBDaXJjbGUoSE9MRV9SKQogICAgICAgICAgICApCiAgICAgICAgTElGVCA9IDAuMAogICAgZWxzZToKICAgICAgICBTTEFC",
+  "X1cgPSBtaW4oQkFDS19IX01NICogMC43MiwgSEFMRl9XICogMS42KQogICAgICAgIHNoYXBlID0gUG9zKDAsIEJBQ0tfSF9N",
+  "TSAvIDIpICogUmVjdGFuZ2xlUm91bmRlZCgKICAgICAgICAgICAgU0xBQl9XLCBCQUNLX0hfTU0sIG1pbihTTEFCX1csIEJB",
+  "Q0tfSF9NTSkgKiBTTEFCX1JPVU5ECiAgICAgICAgKQogICAgICAgIExJRlQgPSAwLjAKICAgIHBsYXRlID0gZXh0cnVkZShQ",
+  "bGFuZS5YWiAqIHNoYXBlLCBhbW91bnQ9QkFDS19UX01NIC8gMiwgYm90aD1UcnVlKQogICAgcmVzdWx0ID0gcmVzdWx0ICsg",
+  "UG9zKDAsIEJBQ0tfWSwgTElGVCkgKiBwbGF0ZQo="
+].join("");
+
+/* --- the profile, the plan, the ribs ------------------------------- */
+/* Three control points -- base, belly, rim -- with the belly always the
+   widest, which is what lets width_mm mean the size of the thing. */
+function holderProfile(p) {
+  const half = p.width_mm / 2;
+  const belly = Math.min(0.9, Math.max(0.1, p.belly_pos));
+  return monotoneProfile([0, belly, 1],
+    [p.base_frac * half, half, p.top_frac * half], p.shoulder, p.height_mm);
+}
+function holderPlanRaw(p, a) {
+  if (p.plan === "heart") {
+    const s = Math.sin(a), c = Math.cos(a);
+    return 2 - 2 * s + s * Math.sqrt(Math.abs(c)) / (s + 1.4);
+  }
+  const n = Math.max(3, Math.round(p.plan_points));
+  if (p.plan === "polygon") {
+    const step = TAU / n, half = step / 2;
+    return Math.cos(half) / Math.cos((((a + half) % step) + step) % step - half);
+  }
+  if (p.plan === "star" || p.plan === "petal") {
+    const k = 0.5 + 0.5 * Math.cos(n * a);
+    return Math.pow(k, p.plan === "star" ? 2.2 : 0.55);
+  }
+  return 1;
+}
+/* Normalised twice, exactly as the template does it: once so the outline's own
+   peak is 1, and again after the squash so width_mm is the largest dimension of
+   the finished plan rather than of the circle it started from. */
+function holderPlanner(p) {
+  const aspect = Math.max(0.5, 1 - p.oval);
+  const ellipse = a => {
+    const c = Math.cos(a), s = Math.sin(a) / aspect;
+    return 1 / Math.sqrt(c * c + s * s);
+  };
+  let peak = 0;
+  for (let i = 0; i < 720; i++) peak = Math.max(peak, holderPlanRaw(p, TAU * i / 720));
+  if (!(peak > 1e-6)) peak = 1;
+  const mix = a => 1 - p.plan_depth + p.plan_depth * holderPlanRaw(p, a) / peak;
+  let norm = 0;
+  for (let i = 0; i < 720; i++) {
+    const a = TAU * i / 720;
+    norm = Math.max(norm, mix(a) * ellipse(a));
+  }
+  if (!(norm > 1e-6)) norm = 1;
+  const plan = a => mix(a) * ellipse(a) / norm;
+  let low = Infinity;
+  for (let i = 0; i < 720; i++) low = Math.min(low, plan(TAU * i / 720));
+  return {plan: plan, low: low};
+}
+function holderRibsOn(p) { return p.rib_count >= 3 && p.rib_mm > 0.15; }
+/* One rib: a cosine bump across its own pitch, times how much rib there is at
+   this height. One row fades in and out; more than one is a stack of bumps. */
+function holderRib(p, a, t) {
+  if (!holderRibsOn(p)) return 0;
+  const pitch = TAU / Math.max(p.rib_count, 1);
+  const half = Math.max(p.rib_width * pitch / 2, 1e-9);
+  const offset = (((a + pitch / 2) % pitch) + pitch) % pitch - pitch / 2;
+  const u = Math.abs(offset) / half;
+  if (u >= 1) return 0;
+  const g = 0.4 + 1.1 * (1 - p.rib_sharp);
+  const column = Math.pow(0.5 + 0.5 * Math.cos(Math.PI * u), g);
+  const rows = Math.max(1, Math.round(p.rib_rows));
+  let band;
+  if (rows <= 1) {
+    const fade = 0.12;
+    const x = Math.min(1, Math.max(0, Math.min(t / fade, (1 - t) / fade, 1)));
+    band = x * x * (3 - 2 * x);
+  } else {
+    band = 0.5 - 0.5 * Math.cos(TAU * ((((t * rows) % 1) + 1) % 1));
+  }
+  let depth = p.rib_mm;
+  if (p.rib_vary > 0) {
+    const n = Math.max(Math.round(p.rib_count), 1);
+    const index = ((Math.round(a / pitch) % n) + n) % n;
+    depth *= 1 - p.rib_vary * 0.4 * hash01(index, 1, p.seed);
+  }
+  return depth * column * band;
+}
+/* The bore, clamped against the narrowest the body gets over the band it
+   passes through -- the same clamp the template applies, so the preview never
+   shows a socket the kernel would refuse to cut. */
+function holderSocket(p, prof, low) {
+  const depth = Math.max(2, Math.min(p.socket_depth_mm, p.height_mm - p.floor_mm));
+  const lo = Math.max(0, (p.height_mm - depth) / Math.max(p.height_mm, 1e-6));
+  let bore = Infinity;
+  for (let i = 0; i <= 16; i++) bore = Math.min(bore, prof.radiusAt(lo + (1 - lo) * i / 16));
+  const radius = Math.max(3, Math.min(p.socket_d_mm / 2, bore * low - p.wall_mm));
+  return {r: radius, depth: depth, floorZ: p.height_mm - depth};
+}
+/* Where the windows are. A window is a wedge, so its opening is a fixed
+   fraction of the pitch at every radius; near the top and bottom of the band
+   the 45 degree nose closes it in by a fixed number of millimetres instead. */
+function holderWindows(p, socketR) {
+  const lo = Math.max(p.height_mm * p.pierce_lo, p.floor_mm + 1);
+  const hi = Math.min(p.height_mm * p.pierce_hi, p.height_mm - 1.5);
+  if (!(p.pierce_count >= 1 && hi > lo + 2)) return null;
+  const count = Math.round(p.pierce_count);
+  const pitch = TAU / count;
+  const halfAngle = p.pierce_w * pitch / 2;
+  const nose = Math.min(halfAngle * Math.max(socketR - 2, 1) * 0.9, (hi - lo) * 0.49);
+  return {
+    lo: lo, hi: hi,
+    open: (a, z, r) => {
+      if (z <= lo || z >= hi) return false;
+      const offset = ((a % pitch) + pitch) % pitch;
+      const away = Math.min(offset, pitch - offset) * r;
+      const shoulder = Math.max(0, nose - Math.min(z - lo, hi - z));
+      return away < halfAngle * r - shoulder;
+    }
+  };
+}
+
+/* --- the standing back --------------------------------------------- */
+/* Each shape is one or two boundary paths in the plate's own plane. A pair is
+   stripped between (a crescent, an arch frame); a single path is a convex
+   outline and is fanned from its centre. */
+function holderBackPaths(p) {
+  const half = p.width_mm / 2;
+  if (p.back === "crescent") {
+    const R = p.back_h_mm / 2, rb = R * 0.72, dx = R * 0.30, dz = R * 0.10;
+    const d = Math.hypot(dx, dz);
+    const a = (d * d + R * R - rb * rb) / (2 * d);
+    const h2 = R * R - a * a;
+    if (!(h2 > 0)) return null;
+    const ux = dx / d, uz = dz / d, hh = Math.sqrt(h2);
+    const p1 = [a * ux - hh * uz, a * uz + hh * ux];
+    const p2 = [a * ux + hh * uz, a * uz - hh * ux];
+    const t1 = Math.atan2(p1[1], p1[0]), t2 = Math.atan2(p2[1], p2[0]);
+    /* The outer arc is the long way round, away from the bite. */
+    let sweep = t2 - t1;
+    while (sweep <= 0) sweep += TAU;
+    if (sweep < Math.PI) { sweep = sweep - TAU; }
+    const s1 = Math.atan2(p1[1] - dz, p1[0] - dx), s2 = Math.atan2(p2[1] - dz, p2[0] - dx);
+    let bite = s2 - s1;
+    while (bite <= -Math.PI) bite += TAU;
+    while (bite > Math.PI) bite -= TAU;
+    const N = 40, outer = [], inner = [];
+    for (let i = 0; i <= N; i++) {
+      const f = i / N;
+      outer.push([R * Math.cos(t1 + sweep * f), R * Math.sin(t1 + sweep * f) + R]);
+      inner.push([dx + rb * Math.cos(s1 + bite * f), dz + rb * Math.sin(s1 + bite * f) + R]);
+    }
+    return {outer: outer, inner: inner};
+  }
+  if (p.back === "arch") {
+    const w = Math.min(p.back_h_mm * 0.62, half * 1.5), r = w / 2;
+    const stem = Math.max(1, p.back_h_mm - r);
+    const hw = Math.max(0, w - p.back_t_mm * 2.2) / 2;
+    const hbase = p.back_t_mm * 1.2, hstem = Math.max(1, stem - hbase);
+    const N = 24, outer = [], inner = [];
+    const path = (into, x0, z0, zTop, rad) => {
+      into.push([-x0, z0]);
+      into.push([-x0, zTop]);
+      for (let i = 0; i <= N; i++) {
+        const th = Math.PI - Math.PI * i / N;
+        into.push([rad * Math.cos(th), zTop + rad * Math.sin(th)]);
+      }
+      into.push([x0, zTop]);
+      into.push([x0, z0]);
+    };
+    path(outer, w / 2, 0, stem, r);
+    if (hw < 1.5) return {outer: outer, inner: null, convex: false};
+    path(inner, hw, hbase, hbase + hstem, hw);
+    return {outer: outer, inner: inner};
+  }
+  const w = Math.min(p.back_h_mm * 0.72, half * 1.6);
+  const rad = Math.min(w, p.back_h_mm) * 0.18;
+  const N = 8, outer = [];
+  const corner = (cx, cz, from) => {
+    for (let i = 0; i <= N; i++) {
+      const th = from + Math.PI / 2 * i / N;
+      outer.push([cx + rad * Math.cos(th), cz + rad * Math.sin(th)]);
+    }
+  };
+  corner(w / 2 - rad, rad, -Math.PI / 2);
+  corner(w / 2 - rad, p.back_h_mm - rad, 0);
+  corner(-w / 2 + rad, p.back_h_mm - rad, Math.PI / 2);
+  corner(-w / 2 + rad, rad, Math.PI);
+  return {outer: outer, inner: null, closed: true};
+}
+/* Extrude a plate's outline to thickness, at y = back, and add it to a
+   builder. Everything the plate needs is a pair of paths or one closed one. */
+function holderBackSolid(build, p, paths, backY) {
+  const t = p.back_t_mm / 2;
+  const front = q => [q[0], backY + t, q[1]];
+  const back = q => [q[0], backY - t, q[1]];
+  const plate = new Builder();
+  /* A pair of paths is a ring: the two faces are the strip between them, and
+     the loop that walks out along one and back along the other is the single
+     boundary the side wall follows -- so the ends of the ring close
+     themselves rather than needing caps of their own. */
+  let loop;
+  if (paths.inner) {
+    const n = paths.outer.length;
+    for (let i = 0; i < n - 1; i++) {
+      const a = paths.outer[i], b = paths.outer[i + 1];
+      const c = paths.inner[i], d = paths.inner[i + 1];
+      plate.quad(front(a), front(b), front(d), front(c));
+      plate.quad(back(c), back(d), back(b), back(a));
+    }
+    loop = paths.outer.concat(paths.inner.slice().reverse());
+  } else {
+    loop = paths.outer;
+    const n = loop.length;
+    let cx = 0, cz = 0;
+    for (const q of loop) { cx += q[0] / n; cz += q[1] / n; }
+    const mid = [cx, cz];
+    for (let i = 0; i < n; i++) {
+      const a = loop[i], b = loop[(i + 1) % n];
+      plate.tri(front(mid), front(a), front(b));
+      plate.tri(back(b), back(a), back(mid));
+    }
+  }
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i], b = loop[(i + 1) % loop.length];
+    if (a[0] === b[0] && a[1] === b[1]) continue;
+    plate.quad(front(b), front(a), back(a), back(b));
+  }
+  build.merge(plate);
+}
+
+/* --- the mesh ------------------------------------------------------- */
+/* One closed shell: the outer skin with the windows carved out of it, the
+   cylinder they open into, the bore and its floor, the base, and -- when there
+   is one -- the standing back fused on. */
+function holderMesh(p, quality) {
+  const prof = holderProfile(p);
+  const planner = holderPlanner(p);
+  const sock = holderSocket(p, prof, planner.low);
+  const win = holderWindows(p, sock.r);
+  const H = p.height_mm;
+  const build = new Builder();
+  let cols = 96;
+  if (holderRibsOn(p)) cols = Math.max(cols, Math.round(p.rib_count) * 8);
+  if (p.plan === "heart" && p.plan_depth > 0.02) cols = Math.max(cols, 192);
+  else if (p.plan !== "round" && p.plan_depth > 0.02) {
+    cols = Math.max(cols, Math.round(p.plan_points) * 16);
+  }
+  cols = Math.min(cols, quality === "export" ? 320 : 208);
+  if (win) cols = Math.round(cols / Math.round(p.pierce_count)) * Math.round(p.pierce_count);
+  const rows = quality === "export" ? 44 : 30;
+
+  const outer = [], bore = [], angles = [];
+  for (let j = 0; j < cols; j++) {
+    const a = TAU * j / cols;
+    angles.push(a);
+    const skin = [], core = [];
+    for (let i = 0; i <= rows; i++) {
+      const t = i / rows, z = H * t;
+      const r = Math.max(0.4, prof.radiusAt(t) * planner.plan(a) + holderRib(p, a, t));
+      skin.push([r * Math.cos(a), r * Math.sin(a), z]);
+      core.push([sock.r * Math.cos(a), sock.r * Math.sin(a), z]);
+    }
+    outer.push(skin); bore.push(core);
+  }
+  /* A cell is cut away where a window covers it; the cylinder it opens into is
+     the bore, carried down past the bore's own floor where it has to be. */
+  /* The bore's floor is snapped to a row, so the ring that closes it and the
+     bottom of the bore wall are the same circle rather than a millimetre
+     apart. One row is about a millimetre of depth: invisible here, and the
+     kernel is the one that cuts the socket to the depth actually asked for. */
+  const iFloor = Math.max(0, Math.min(rows - 1, Math.round(sock.floorZ / H * rows)));
+  const floorZ = H * iFloor / rows;
+  /* A window opens where it breaks into the bore. Lower down the kernel cuts a
+     blind slot into the solid core, which the preview leaves alone: drawing it
+     would put three sheets of surface on one edge, and a shell that is not
+     closed is one the material readout cannot measure. */
+  const cut = (j, i) => {
+    if (!win || i <= iFloor) return false;
+    const t = (i + 0.5) / rows;
+    const a = angles[j] + Math.PI / cols;
+    const r = prof.radiusAt(t) * planner.plan(a);
+    return win.open(a, H * t, r);
+  };
+  for (let j = 0; j < cols; j++) {
+    const k = (j + 1) % cols;
+    for (let i = 0; i < rows; i++) {
+      /* A window takes the wall away entirely over its own span, so a cut cell
+         gets no surface at all: what bounds the opening is the reveal round
+         its edge, from the outer skin back to the bore. */
+      if (!cut(j, i)) {
+        build.quad(outer[j][i], outer[k][i], outer[k][i + 1], outer[j][i + 1]);
+      }
+      if (cut(j, i) !== cut(((j - 1) % cols + cols) % cols, i)) {
+        const a1 = outer[j][i], a2 = outer[j][i + 1];
+        const b1 = bore[j][i], b2 = bore[j][i + 1];
+        if (cut(j, i)) build.quad(a2, a1, b1, b2); else build.quad(a1, a2, b2, b1);
+      }
+      if (i > 0 && cut(j, i) !== cut(j, i - 1)) {
+        const a1 = outer[j][i], a2 = outer[k][i];
+        const b1 = bore[j][i], b2 = bore[k][i];
+        if (cut(j, i)) build.quad(a1, a2, b2, b1); else build.quad(a2, a1, b1, b2);
+      }
+    }
+    /* The bore itself, from its floor to the rim, and the ring of the top face
+       between the bore and the outer rim. */
+    for (let i = iFloor; i < rows; i++) {
+      if (!cut(j, i)) build.quad(bore[k][i], bore[j][i], bore[j][i + 1], bore[k][i + 1]);
+    }
+    const fz = [sock.r * Math.cos(angles[j]), sock.r * Math.sin(angles[j]), floorZ];
+    const fzk = [sock.r * Math.cos(angles[k]), sock.r * Math.sin(angles[k]), floorZ];
+    /* The floor of the socket faces up into it, so it winds the other way from
+       the base, which faces down at the plate. */
+    build.tri([0, 0, floorZ], fz, fzk);
+    build.quad(outer[j][rows], outer[k][rows], bore[k][rows], bore[j][rows]);
+    build.tri([0, 0, 0], outer[k][0], outer[j][0]);
+  }
+  if (p.back !== "none" && p.back_h_mm > H + 2) {
+    const paths = holderBackPaths(p);
+    if (paths) {
+      const rear = prof.radiusAt(0) * planner.plan(TAU * 3 / 4);
+      const backY = -Math.max(sock.r + p.back_t_mm / 2 + 1, rear - p.back_t_mm / 2 - 2);
+      holderBackSolid(build, p, paths, backY);
+    }
+  }
+  const positions = new Float32Array(build.pos);
+  positions.materialVolume = Math.abs(build.volume());
+  return positions;
+}
+
+/* The template's preconditions, checked as you drag. */
+function holderCheck(p) {
+  const out = [];
+  const room = 1 - p.oval;
+  const H = p.height_mm;
+  const arc = p.rib_width * Math.PI * p.width_mm / Math.max(p.rib_count, 1);
+  const rows = Math.max(p.rib_rows, 1);
+  if (!(p.socket_depth_mm + p.floor_mm <= H))
+    out.push(["The socket is deeper than the body is tall.",
+              "a shallower socket, a thinner floor, or more height"]);
+  if (!(p.socket_d_mm + p.wall_mm * 2 <= p.width_mm * room))
+    out.push(["The candle does not fit inside the body.",
+              "a wider holder, a smaller socket, or less squash"]);
+  if (!(p.floor_mm <= H * 0.6))
+    out.push(["The floor is most of the holder.", "a thinner floor"]);
+  if (!(p.width_mm * (1 - p.base_frac) / 2 <= p.belly_pos * H))
+    out.push(["The body flares off the plate faster than 45°, which needs support.",
+              "a wider base, or a belly further up"]);
+  if (!(p.width_mm * (1 - p.top_frac) / 2 <= (1 - p.belly_pos) * H))
+    out.push(["The body closes in over the socket faster than 45°.",
+              "a wider rim, or a belly further down"]);
+  if (p.rib_count >= 3) {
+    if (!(arc * room >= 2.0))
+      out.push(["The ribs come out narrower than two beads.",
+                "wider or fewer ribs, or less squash"]);
+    if (!(p.rib_mm <= H * 0.12 * rows))
+      out.push(["The ribs arrive at full depth faster than 45°, which is a ledge.",
+                "shallower ribs, more height, or more rows"]);
+    if (!(p.rib_mm * 2 * rows <= H))
+      out.push(["Each row of bumps rises faster than 45°.", "shallower ribs, or fewer rows"]);
+    if (!(p.rib_count * (2 * p.rib_mm / Math.max(arc, 1e-6)) * (1 + 2 * p.oval)
+          * (p.width_mm / 90) * (1 + p.plan_depth) <= 46))
+      out.push(["That surface costs more to mesh than the pipeline allows.",
+                "shallower or wider ribs, fewer of them, or a plainer plan"]);
+  }
+  if (p.pierce_count >= 1) {
+    if (!(p.pierce_hi >= p.pierce_lo + 0.15))
+      out.push(["The windows stop before they start.", "widen the band"]);
+    if (!((1 - p.pierce_w) * Math.PI * p.width_mm / Math.max(p.pierce_count, 1) * room >= 2.5))
+      out.push(["The pillars between the windows are thinner than a printed wall.",
+                "narrower or fewer windows, or less squash"]);
+    if (!((1 - p.pierce_w) * Math.PI * p.socket_d_mm / Math.max(p.pierce_count, 1) >= 2.0))
+      out.push(["Those pillars are thinner still where they meet the bore.",
+                "narrower or fewer windows, or a wider socket"]);
+    if (!(p.pierce_lo * H >= p.floor_mm))
+      out.push(["The windows cut into the floor.", "raise the window base"]);
+    if (!(p.plan_depth <= 0.6))
+      out.push(["A window cut across a corner that sharp leaves a sliver of wall.",
+                "a rounder plan, or no windows"]);
+  }
+  if (p.back !== "none") {
+    if (!(p.back_h_mm >= H + 12))
+      out.push(["The back does not clear the body it stands on.",
+                "a taller back, or a lower body"]);
+    if (!(p.socket_d_mm / 2 + p.back_t_mm + 4 <= p.width_mm * p.base_frac * room / 2))
+      out.push(["There is no room in front of the back for the candle.",
+                "a wider holder, a thinner back, or a smaller socket"]);
+    if (p.back === "crescent" && !(H >= p.back_h_mm * 0.15))
+      out.push(["The moon opens outward faster than 45° where the body ends.",
+                "a taller body, or a smaller moon"]);
+  }
+  if (!(p.wall_mm * room >= 1.2))
+    out.push(["The squash leaves the wall too thin to print.", "a thicker wall, or less squash"]);
+  if (!(p.width_mm * p.width_mm * room >= 900))
+    out.push(["The footprint is too small to hold the plate.", "a wider holder, or less squash"]);
+  return out;
+}
+
+/* Chip icon: the plan seen from above, which is the thing that tells the
+   styles apart at 32 pixels -- with the socket drawn out of it. */
+function holderSilhouette(preset) {
+  const p = Object.assign({}, HOLDER_DEFAULTS, preset, {seed: 3});
+  const planner = holderPlanner(p);
+  const half = p.width_mm / 2;
+  const ring = [];
+  for (let i = 0; i <= 96; i++) {
+    const a = TAU * i / 96;
+    const r = half * planner.plan(a) + (holderRibsOn(p) ? p.rib_mm * 0.6 : 0);
+    ring.push([r * Math.cos(a), r * Math.sin(a)]);
+  }
+  const maxR = Math.max(...ring.map(q => Math.hypot(q[0], q[1]))) || 1;
+  const k = 13 / maxR;
+  const put = ([x, y]) => `${(16 + x * k).toFixed(1)},${(16 - y * k).toFixed(1)}`;
+  const bore = Math.max(2.5, Math.min(p.socket_d_mm / 2, half * planner.low - p.wall_mm) * k);
+  return `<svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true">` +
+    `<path fill-rule="evenodd" d="M` + ring.map(put).join("L") +
+    `Z M${(16 + bore).toFixed(1)},16 a${bore.toFixed(1)},${bore.toFixed(1)} 0 1,0 ` +
+    `${(-2 * bore).toFixed(1)},0 a${bore.toFixed(1)},${bore.toFixed(1)} 0 1,0 ` +
+    `${(2 * bore).toFixed(1)},0Z"/></svg>`;
+}
+
+/* Shuffle: the proportion and feasibility nodes, as the generator runs them.
+   The socket is deliberately not in the proportion list -- a tealight is
+   39 mm across whatever size the holder is, and when it stops fitting it is
+   the body that grows. */
+function holderShuffle(next, base, seed) {
+  const width = next.width_mm;
+  const reference = base.width_mm;
+  const wobble = 1 + 0.06 * (hash01(11, 3, seed) * 2 - 1);
+  next.back_h_mm = width * (base.back_h_mm / reference) * wobble;
+  if (base.rib_count >= 3) {
+    const pitch = reference / base.rib_count;
+    next.rib_count = Math.max(4, Math.round(width / pitch));
+  }
+  next.oval = Math.min(Math.max(next.oval, 0), 0.5);
+  const room = 1 - next.oval;
+  next.wall_mm = Math.min(Math.max(next.wall_mm, 1.25 / room), 8);
+  next.width_mm = Math.max(next.width_mm, Math.sqrt(900 / room));
+  next.plan_depth = Math.min(Math.max(next.plan_depth, 0), 0.9);
+  next.belly_pos = Math.min(Math.max(next.belly_pos, 0.1), 0.9);
+  next.base_frac = Math.min(Math.max(next.base_frac, 0.3), 1);
+  next.top_frac = Math.min(Math.max(next.top_frac, 0.25), 1);
+
+  let socket = Math.min(Math.max(next.socket_d_mm, 12), 90);
+  for (let pass = 0; pass < 4; pass++) {
+    const low = holderPlanLow(next);
+    const deep = next.socket_depth_mm > next.height_mm * (1 - next.belly_pos);
+    const bore = deep ? Math.min(next.base_frac, next.top_frac) : next.top_frac;
+    const held = next.width_mm / 2 * bore * low * room;
+    const need = socket / 2 + next.wall_mm + 0.6;
+    if (held >= need) break;
+    const wider = Math.min(220, next.width_mm * need / Math.max(held, 1e-6));
+    if (wider > next.width_mm + 1e-6) { next.width_mm = wider; continue; }
+    if (next.plan_depth > 0.02) { next.plan_depth = Math.max(0, next.plan_depth - 0.2); continue; }
+    socket = Math.max(12, held * 2 - next.wall_mm * 2);
+    break;
+  }
+  next.socket_d_mm = socket;
+  holderSettle(next);
+
+  if (next.rib_count >= 3 && next.rib_mm > 0.15) {
+    next.rib_rows = Math.min(Math.max(Math.round(next.rib_rows), 1), 6);
+    next.rib_width = Math.min(Math.max(next.rib_width, 0.2), 0.95);
+    while (next.rib_count > 4 &&
+           next.rib_width * Math.PI * next.width_mm / next.rib_count * room < 2.2) {
+      next.rib_count -= 1;
+    }
+    const rows = Math.max(next.rib_rows, 1);
+    next.rib_mm = Math.min(next.rib_mm, next.height_mm * 0.115 * rows,
+                           next.height_mm / (2.1 * rows));
+    const arc = next.rib_width * Math.PI * next.width_mm / Math.max(next.rib_count, 1);
+    const load = next.rib_count * (1 + 2 * next.oval) * (next.width_mm / 90)
+      * (1 + next.plan_depth);
+    if (2 * next.rib_mm / Math.max(arc, 1e-6) * load > 46) {
+      next.rib_mm = Math.max(0, 46 / Math.max(load, 1e-6) * arc / 2);
+    }
+  } else {
+    next.rib_count = 0;
+  }
+
+  if (next.pierce_count >= 1) {
+    next.plan_depth = Math.min(next.plan_depth, 0.6);
+    next.pierce_lo = Math.min(
+      Math.max(next.pierce_lo, next.floor_mm / Math.max(next.height_mm, 1e-6) + 0.02), 0.6);
+    next.pierce_hi = Math.min(Math.max(next.pierce_hi, next.pierce_lo + 0.18), 0.95);
+    next.pierce_w = Math.min(Math.max(next.pierce_w, 0.1), 0.8);
+    while (next.pierce_count > 3 &&
+           (1 - next.pierce_w) * Math.PI * next.width_mm / next.pierce_count * room < 2.8) {
+      next.pierce_count -= 1;
+    }
+    while (next.pierce_count > 3 &&
+           (1 - next.pierce_w) * Math.PI * next.socket_d_mm / next.pierce_count < 2.2) {
+      next.pierce_count -= 1;
+    }
+  }
+
+  if (next.back !== "none") {
+    next.back_t_mm = Math.min(Math.max(next.back_t_mm, 4), 20);
+    const need = next.socket_d_mm + next.back_t_mm * 2 + 8;
+    let span = next.width_mm * next.base_frac * room;
+    if (span < need) {
+      next.width_mm = Math.min(220, next.width_mm * need / Math.max(span, 1e-6));
+      span = next.width_mm * next.base_frac * room;
+    }
+    if (span < need) next.back_t_mm = Math.max(4, (span - next.socket_d_mm - 8) / 2);
+  }
+  next.height_mm = Math.min(Math.max(next.height_mm, 14), 120);
+  next.width_mm = Math.min(Math.max(next.width_mm, 40), 220);
+  holderSettle(next);
+  return next;
+}
+/* The valley of the plan, whose radius the socket has to fit inside -- not the
+   width, which is what the arms reach to. */
+function holderPlanLow(p) {
+  const depth = Math.min(Math.max(p.plan_depth, 0), 0.9);
+  if (p.plan === "round" || depth <= 0) return 1;
+  const low = p.plan === "polygon" ? Math.cos(Math.PI / Math.max(3, Math.round(p.plan_points))) : 0;
+  return 1 - depth + depth * low;
+}
+/* The rules that read the body's overall size, applied last because the back
+   is allowed to widen it and the socket is allowed to raise it. */
+function holderSettle(next) {
+  ["width_mm", "height_mm", "belly_pos", "floor_mm", "back_h_mm"].forEach(name => {
+    next[name] = Math.round(next[name] * 100) / 100;
+  });
+  let H = next.height_mm;
+  next.floor_mm = Math.min(Math.max(next.floor_mm, 1.5), H * 0.6, 10);
+  next.socket_depth_mm = Math.floor(
+    Math.min(Math.max(next.socket_depth_mm, 4), H - next.floor_mm - 0.1, 110) * 100) / 100;
+  if (next.socket_depth_mm < 4) {
+    next.height_mm = Math.min(120, next.floor_mm + 4.4);
+    next.socket_depth_mm = 4;
+    H = next.height_mm;
+  }
+  const low = 1.92 * next.belly_pos * H / Math.max(next.width_mm, 1e-6);
+  const high = 1.92 * (1 - next.belly_pos) * H / Math.max(next.width_mm, 1e-6);
+  next.base_frac = Math.min(1, Math.ceil(Math.max(next.base_frac, 1 - low) * 100) / 100);
+  next.top_frac = Math.min(1, Math.ceil(Math.max(next.top_frac, 1 - high) * 100) / 100);
+  if (next.back !== "none") {
+    next.back_h_mm = Math.min(Math.ceil(Math.max(next.back_h_mm, H + 14) * 100) / 100, 160);
+    if (next.back === "crescent") {
+      next.back_h_mm = Math.floor(Math.min(next.back_h_mm, H / 0.16) * 100) / 100;
+    }
+  }
+}
+/* =================================================================
+   6. Three.js stage
    ================================================================= */
 const canvas = document.getElementById("view");
 const renderer = new THREE.WebGLRenderer({canvas, antialias: true, alpha: true, preserveDrawingBuffer: false});
@@ -2305,7 +3123,7 @@ function paintTheme() {
 }
 
 /* =================================================================
-   6. Rebuild + readouts
+   7. Rebuild + readouts
    ================================================================= */
 let lastPositions = null;
 let refit = true;
@@ -2365,7 +3183,7 @@ function command() {
 }
 
 /* =================================================================
-   7. Controls
+   8. Controls
    ================================================================= */
 let inputs = {};
 function fmt(f, value) {
@@ -2546,7 +3364,7 @@ document.getElementById("reset").addEventListener("click", () => {
 });
 
 /* =================================================================
-   8. Export
+   9. Export
    ================================================================= */
 let downloads = null;
 if (window.claude && typeof window.claude.use === "function") {
@@ -2694,12 +3512,12 @@ document.getElementById("copy-cmd").addEventListener("click", async () => {
 });
 
 /* =================================================================
-   9. The three models, and the switch between them
+   10. The four models, and the switch between them
 
       Everything above this point is either shared machinery or one
       model's own port of its template. A model is the pairing: its
       schema, its presets, the three functions that draw it, and the
-      strings that name its parts. Adding a fourth is adding an entry.
+      strings that name its parts. Adding a fifth is adding an entry.
    ================================================================= */
 const MODELS = {
   mushroom: {
@@ -2786,6 +3604,37 @@ const MODELS = {
     check: sculptCheck,
     shuffle: sculptShuffle,
     silhouette: sculptSilhouette
+  }  ,
+  holder: {
+    title: "Candle Holder",
+    noun: "candle-holder",
+    templateId: "decor_candle_holder",
+    presetHeading: "Styles",
+    variantKey: "style",
+    sizeKey: "width_mm",
+    seed: 3,
+    tagline: "Every slider below is a parameter of the <code>decor_candle_holder</code> " +
+      "template. A turned body with a bored socket in its top &mdash; heart, star, scallop " +
+      "or polygon in plan, ribbed or blown into bubbles, pierced into a lantern, and with a " +
+      "moon, an arch or a tablet standing behind the flame.",
+    seedNote: "The seed varies the depth of individual ribs and wobbles the proportions " +
+      "around the style &mdash; but never the socket, which stays the size of the candle. " +
+      "The same seed rebuilds the same holder here, in the CAD kernel, and on anyone " +
+      "else&rsquo;s machine.",
+    stepDetail: "whose body is a lofted surface and whose socket is still a bored cylinder " +
+      "you can move or resize",
+    groups: [["form", "Silhouette"], ["plan", "Plan"], ["ribs", "Ribs"],
+             ["windows", "Windows"], ["candle", "Candle and shell"], ["back", "Back"]],
+    schema: HOLDER_SCHEMA,
+    presets: HOLDER_PRESETS,
+    labels: HOLDER_LABELS,
+    jitter: HOLDER_JITTER,
+    defaults: HOLDER_DEFAULTS,
+    sourceB64: HOLDER_SOURCE_B64,
+    mesh: holderMesh,
+    check: holderCheck,
+    shuffle: holderShuffle,
+    silhouette: holderSilhouette
   }
 };
 
@@ -2811,7 +3660,7 @@ function useModel(name) {
 }
 
 /* =================================================================
-   10. Boot
+   11. Boot
    ================================================================= */
 function buildTabs() {
   const host = document.getElementById("tabs");

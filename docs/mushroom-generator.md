@@ -211,3 +211,7 @@ Add a set of slider positions to `SPECIES`. Nothing else changes: the jitter,
 the proportions, the feasibility rules and the CLI all pick it up, and
 `tests/test_generators.py` will solve it across its whole seed range and check
 every result against the template's schema and preconditions.
+
+The other generators on the same solver are covered by
+`docs/mushroom-generator.md`, `docs/vase-generator.md`,
+`docs/sculpt-vase-generator.md` and `docs/candle-holder-generator.md`.
