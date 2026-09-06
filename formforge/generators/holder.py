@@ -55,7 +55,7 @@ STYLES: dict[str, dict[str, Any]] = {
         "socket_depth_mm": 13, "wall_mm": 3.5, "floor_mm": 5,
     },
     "moon": {
-        "width_mm": 110, "height_mm": 22, "base_frac": 0.96, "top_frac": 0.9,
+        "width_mm": 124, "height_mm": 22, "base_frac": 0.96, "top_frac": 0.9,
         "belly_pos": 0.5, "shoulder": 0.4, "plan": "round", "rib_count": 0,
         "socket_d_mm": 42, "socket_depth_mm": 15, "back": "crescent",
         "back_h_mm": 132, "back_t_mm": 9, "wall_mm": 4, "floor_mm": 5,
@@ -390,6 +390,17 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
     # --- the standing back ---
     if out["back"] != "none":
         out["back_t_mm"] = min(max(out["back_t_mm"], 4.0), 20.0)
+        # A moon has to be held up as far out as it has spread by the height
+        # the body buries it to.
+        if out["back"] == "crescent":
+            span = out["width_mm"] * out["base_frac"] * room
+            if span < out["back_h_mm"] * 0.71:
+                out["width_mm"] = min(
+                    220.0, out["back_h_mm"] * 0.71 / max(out["base_frac"] * room, 1e-6)
+                )
+                span = out["width_mm"] * out["base_frac"] * room
+            if span < out["back_h_mm"] * 0.71:
+                out["back_h_mm"] = _down(span / 0.71)
         # The socket has to fit in front of the back, inside the footprint.
         need = out["socket_d_mm"] + out["back_t_mm"] * 2 + 8.0
         span = out["width_mm"] * out["base_frac"] * room

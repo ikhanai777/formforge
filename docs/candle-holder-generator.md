@@ -129,6 +129,16 @@ The pillar between two windows is then a constant fraction of the pitch, and it
 is checked at both ends of its run: against the width outside, and against the
 socket diameter at the bore, where the same fraction is fewer millimetres.
 
+Two more things about them are about cost rather than shape. A dozen windows are
+subtracted in **one** boolean with every tool at once, not fused into a union
+and then subtracted: fusing a dozen disjoint solids and cutting with the result
+is two general booleans where the kernel offers one, and the union is the
+expensive half -- the twelve-window `tower` went over the CPU limit that way and
+builds comfortably this way. And a plan that comes to a point does not go with a
+wall that is cut through, so `plan_depth` is capped at 0.6 wherever
+`pierce_count` is set: that is the other half of the sliver above, the half the
+wedge does not fix.
+
 ## The standing back
 
 `back` puts an upright behind the flame: a `crescent` moon, an `arch` frame with
@@ -190,6 +200,13 @@ for on top of those. Forty ribs on a circle build; forty on a heart do not.
 The feasibility node solves the same inequality at 38 rather than 40, because
 `rib_mm` is rounded to two decimals on the way out and a load sitting exactly on
 the limit rounds past it.
+
+Memory is the other ceiling, and a standing back moves it. A back is a second
+solid fused onto the first and both are in memory while that runs, so the
+section budget drops from 5,000 points to 3,600 when there is one. `arcade` --
+thirty-six ribs under an arch -- is what found that: it died with a segfault
+out of the sandbox's two gigabytes at the full budget and builds at the
+reduced one.
 
 ## Printing
 

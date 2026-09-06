@@ -370,6 +370,10 @@ preconditions:
   # degrees until it is (1 - 1/sqrt2) of its radius up. Below that the body has
   # to be there to hold it, so the body has to be that deep.
   - "back == \"crescent\" implies height_mm >= back_h_mm * 0.15"
+  # ...and it has to be that deep *under the moon*, which means the body has to
+  # reach as far along X as the moon has spread by the time it gets there:
+  # 0.707 of its radius, which is 0.354 of its height.
+  - "back == \"crescent\" implies back_h_mm * 0.71 <= width_mm * base_frac * (1 - oval)"
   # The plan is squashed before the wall gets its share of what is left.
   - "wall_mm * (1 - oval) >= 1.2"
   - "width_mm * width_mm * (1 - oval) >= 900"
@@ -438,7 +442,10 @@ source: |
   # sandbox gives the whole job two gigabytes. Past this ceiling the resolution
   # gives way rather than the design: a holder with fewer sections is a slightly
   # more faceted holder, where one that runs out of address space is nothing.
-  BUDGET = 5000
+  # A standing back is a second solid fused onto the first, and both are in
+  # memory at once while that runs, so a holder that has one gets less of the
+  # budget to spend on its skin.
+  BUDGET = 3600 if BACK != "none" else 5000
   if SECTIONS * POINTS > BUDGET:
       shrink = (BUDGET / (SECTIONS * POINTS)) ** 0.5
       POINTS = int(max(72, POINTS * shrink))
@@ -679,8 +686,10 @@ source: |
               [slot_face(WIN_R0, WIN_IN), slot_face(WIN_REACH, WIN_OUT)], ruled=True
           )
           tools.append(Rot(0, 0, math.degrees(WIN_PITCH * k)) * wedge)
-      cutter = tools[0] if len(tools) == 1 else tools[0].fuse(*tools[1:])
-      result = result - cutter
+      # One boolean with every tool at once. Fusing the wedges first and then
+      # subtracting the union is two general booleans where the kernel offers
+      # one, and the union of a dozen disjoint solids is the expensive half.
+      result = result.cut(*tools)
 
   # --- 7. the standing back ---------------------------------------------------
   # One extruded outline, pushed as far back inside the footprint as it will go
@@ -691,15 +700,32 @@ source: |
   #
   # The moon is two circles: a bite of this radius, offset by this much of it.
   # The bite plus the offset comes to more than the whole, which is what opens
-  # the ring into a crescent with horns rather than closing it into an annulus.
-  MOON_BITE = 0.72
+  # the ring into a crescent with horns rather than closing it into an annulus;
+  # and the bite minus the offset is what is left at the thick side, which is
+  # the width of the moon. 0.78 and 0.34 leave it a little over a quarter of
+  # its own diameter, which is a moon rather than a ring with a notch in it.
+  MOON_BITE = 0.78
   MOON_OFF_X = 0.30
-  MOON_OFF_Z = 0.10
+  MOON_OFF_Z = 0.16
   SLAB_ROUND = 0.18
 
   if BACK != "none" and BACK_H_MM > HEIGHT_MM + 2.0:
       REAR = HALF_W * radius_at(0.0) * plan(TAU * 3 / 4)
-      BACK_Y = -max(SOCKET_R + BACK_T_MM / 2 + 1.0, REAR - BACK_T_MM / 2 - 2.0)
+      # How far out along X the back still has to be held up by the body. A
+      # flat-bottomed back stands on the plate by itself and wants none of it,
+      # so it goes as far back as it fits. A crescent has to be buried to
+      # 0.293 of its radius -- see the preconditions -- and at that height it
+      # has already spread to 0.707 of it, so the body has to reach that far
+      # under the plate the moon is cut from. Which is a chord: push the plate
+      # only as far back as the body is still that wide.
+      if BACK == "crescent":
+          MOON_REACH = BACK_H_MM * 0.354
+          ROOM_Y = math.sqrt(max(0.0, REAR * REAR - MOON_REACH * MOON_REACH))
+      else:
+          ROOM_Y = REAR
+      BACK_Y = -max(
+          SOCKET_R + BACK_T_MM / 2 + 1.0, min(REAR - BACK_T_MM / 2 - 2.0, ROOM_Y)
+      )
       if BACK == "crescent":
           MOON_R = BACK_H_MM / 2
           shape = Circle(MOON_R) - Pos(
