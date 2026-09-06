@@ -368,6 +368,15 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
         # A plan that comes to a point and a wall that is cut through do not go
         # together: see the precondition of the same name.
         out["plan_depth"] = min(out["plan_depth"], 0.6)
+        # A window has to open into the bore, or the template lifts it until it
+        # does. Bore deeper rather than let that happen -- a lantern is a body
+        # hollowed nearly its own height, and windows are what that is for.
+        want = (1.0 - out["pierce_lo"]) * out["height_mm"] + 1.0
+        room = out["height_mm"] - out["floor_mm"] - 0.1
+        if out["socket_depth_mm"] < min(want, room):
+            out["socket_depth_mm"] = _down(min(want, room, 110.0))
+        reach = 1.0 - (out["socket_depth_mm"] - 1.0) / max(out["height_mm"], 1e-6)
+        out["pierce_lo"] = min(max(out["pierce_lo"], _up(reach)), 0.6)
         out["pierce_lo"] = min(
             max(out["pierce_lo"], out["floor_mm"] / max(height, 1e-6) + 0.02), 0.6
         )

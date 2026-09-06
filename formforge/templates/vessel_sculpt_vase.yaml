@@ -142,12 +142,16 @@ param_schema:
       ui: { widget: slider, step: 0.5, label: "Fin depth" }
     fin_width:
       type: number
-      minimum: 0.25
+      minimum: 0.3
       maximum: 0.9
       default: 0.45
       description: >
-        How much of the gap between ribs each one fills. 0.25 is a narrow blade
+        How much of the gap between ribs each one fills. 0.3 is a narrow blade
         with a wide flat between; 0.9 is a pleated wall with barely a valley.
+        The floor is what the section sampling can follow: a rib drawn through
+        fewer than about three points is a rib the spline overshoots rather
+        than draws, and the range sweep found that at 0.25 as a solid with no
+        volume at all.
       ui: { widget: slider, step: 0.05, label: "Fin width" }
     fin_sharp:
       type: number
@@ -288,6 +292,11 @@ preconditions:
   # A rib narrower than two beads, once the squash has had its share, is not a
   # rib the nozzle can lay.
   - "fin_count >= 3 implies fin_width * 3.14159 * belly_d_mm / max(fin_count, 1) * (1 - oval) >= 2.0"
+  # And a rib the section sampling cannot follow is not a rib the kernel draws.
+  # The sections carry at most 160 points, so a rib filling this little of its
+  # own pitch gets three of them across it -- which is the fewest a spline can
+  # be pushed through without overshooting into a self-intersection.
+  - "fin_count >= 3 implies fin_width * 160 / max(fin_count, 1) >= 3.0"
   # What the surface costs to mesh. A rib is where the normal swings hardest,
   # and the mesher subdivides until it can follow it: the steeper the rib
   # against its own width, the more ribs, and the further the squash pushes the
@@ -344,8 +353,17 @@ source: |
   # product is what a build costs -- and, more to the point, what it costs to
   # *mesh* afterwards, because a rib is where the surface normal swings hardest
   # and the mesher follows it whether the loft was cheap or not.
+  # Ten points per rib covers the ribs the schema calls wide. A narrow one needs
+  # its own floor: what matters is not points per rib but points *across the
+  # rib*, and 3.4 of them is the fewest the spline can be pushed through without
+  # overshooting the crest into a self-intersection. Below that the kernel
+  # returns a solid with no volume, which is how the range sweep found it.
   FINS_ON = FIN_COUNT >= 3 and FIN_MM > 0.15 and FIN_END > FIN_START + 0.02
-  POINTS = int(min(160, max(96, FIN_COUNT * 10))) if FINS_ON else 96
+  POINTS = (
+      int(min(160, max(96, FIN_COUNT * 10, FIN_COUNT * 3.4 / max(FIN_WIDTH, 0.3))))
+      if FINS_ON
+      else 96
+  )
   # A ruled band is a straight line up the wall, so the fade at each end of a fin
   # band needs several of them to be a ramp rather than a step, and a swept fin
   # needs enough that consecutive sections stay a fraction of a fin apart.

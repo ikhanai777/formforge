@@ -298,7 +298,7 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
     out["fin_start"] = min(max(out["fin_start"], 0.0), 0.78)
     out["fin_end"] = min(max(out["fin_end"], out["fin_start"] + 0.12), 1.0)
     if out["fin_count"] >= 3:
-        out["fin_width"] = min(max(out["fin_width"], 0.25), 0.9)
+        out["fin_width"] = min(max(out["fin_width"], 0.3), 0.9)
         # A rib narrower than two beads once the squash has had its share is
         # not a rib the nozzle can lay: widen it, and if it cannot widen far
         # enough, drop the count until it can.

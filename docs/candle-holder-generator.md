@@ -129,6 +129,14 @@ The pillar between two windows is then a constant fraction of the pitch, and it
 is checked at both ends of its run: against the width outside, and against the
 socket diameter at the bore, where the same fraction is fewer millimetres.
 
+**They start at the bore's floor.** A window lower than that is not a window at
+all: it is a blind slot driven into the solid core, which is a different thing
+to look at and a far more expensive thing to cut. The range sweep found it as a
+timeout at sixteen windows on the default dish, and the same dish takes sixteen
+in twelve seconds once they are lifted to where the cavity starts. The template
+lifts them; the generator bores deeper instead, so that a lantern gets the
+windows it asked for rather than a band of them near the rim.
+
 Two more things about them are about cost rather than shape. A dozen windows are
 subtracted in **one** boolean with every tool at once, not fused into a union
 and then subtracted: fusing a dozen disjoint solids and cutting with the result

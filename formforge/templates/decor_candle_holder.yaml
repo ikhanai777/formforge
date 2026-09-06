@@ -651,7 +651,12 @@ source: |
   # -- the corner of a polygon, the tip of a star -- what it leaves beside
   # itself is a wedge that tapers to nothing. That is not a thin wall the
   # printer can be asked to try harder at; it is a sliver.
-  WIN_LO = max(HEIGHT_MM * PIERCE_LO, FLOOR_MM + 1.0)
+  # A window starts at the bore's own floor at the lowest. Below that it is not
+  # a window at all -- it is a blind slot driven into the solid core, which is
+  # both a different thing to look at and a far more expensive thing to cut:
+  # twelve of them on a shallow dish costs more than thirty CPU-seconds, where
+  # twelve that open into a cavity cost fourteen.
+  WIN_LO = max(HEIGHT_MM * PIERCE_LO, FLOOR_MM + 1.0, HEIGHT_MM - DEPTH_MM + 1.0)
   WIN_HI = min(HEIGHT_MM * PIERCE_HI, HEIGHT_MM - 1.5)
   if PIERCE_COUNT >= 1 and WIN_HI > WIN_LO + 2.0:
       WIN_PITCH = TAU / int(PIERCE_COUNT)
