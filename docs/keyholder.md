@@ -201,13 +201,58 @@ formforge keyholder photo.jpg --threshold 0.35 --invert
 formforge keyholder logo.png --detail cut --mount screw --plaque-t 4
 ```
 
+- **Browser**: `formforge serve --allow-unsafe-sandbox`, then
+  <http://127.0.0.1:8000/>. Described below.
 - **MCP**: `generate_key_holder`, with `plan_only` for the cheap first pass. The
   outline drawing comes back inline as an image, so the model can look at what
   it traced and change the threshold itself.
 - **HTTP**: `POST /v1/keyholder` with the image base64 encoded. Same job
   machinery, same WebSocket event stream and same bundle as `/v1/generate`.
+  `POST /v1/keyholder/plan` is the synchronous half: trace, lay out, return the
+  drawing, no kernel.
 - **Python**: `plan_from_image(...)` for the layout alone, `build_key_holder(...)`
   for the whole thing.
+
+### The browser interface
+
+`formforge/api/static/` — three files, no build step, no CDN. The offline path
+is a product feature everywhere else in this system, and a UI that needed a
+network to render its own stylesheet would be the one place it stopped being
+true.
+
+The page is built around the same split as the CLI's `--plan-only`, and that
+split is the whole design:
+
+| | plan | build |
+|---|---|---|
+| Endpoint | `POST /v1/keyholder/plan` | `POST /v1/keyholder` |
+| Costs | about a second, no kernel | about a minute of OCCT |
+| Runs when | any control moves | the button is pressed |
+| Answers | *did it see the right shape?* | *is it printable?* |
+
+So every slider repaints the outline, and the geometry runs only once someone
+has looked at it. The drawing is on screen the whole time, the plan's notes and
+warnings are listed under it verbatim, and the build streams the same phase log
+the CLI prints over the WebSocket the API already had.
+
+Three smaller decisions in there:
+
+* **Images are sent as they are when they are small.** Re-encoding a cut-out PNG
+  in a canvas would throw away its alpha channel, which is the one input that
+  traces perfectly. Only a photograph over 4 MB is resized in the browser first.
+* **A preview name is looked up, never joined onto a path.**
+  `/v1/models/{id}/previews/{name}` resolves against that model's own preview
+  map, so a name that arrives in a URL never reaches the filesystem.
+* **The job goes terminal only once its bundle is written.** The WebSocket's
+  "closed" frame is what the page waits on, and flipping the status before
+  `source.py` exists hands a client a model whose download links are still
+  appearing.
+
+`formforge serve` binds to loopback. `--allow-unsafe-sandbox` is how a user says
+they accept running generated Python on a runtime that does not isolate the host
+kernel, and it is refused outright on any non-loopback address: "I accept the
+risk on my own laptop" and "I accept it for the internet" are different
+sentences, and the environment variable alone cannot tell them apart.
 
 Every bundle from this path carries one extra preview, `preview_trace.png`: the
 outline that survived cleanup, the openings that became engraving, and where the

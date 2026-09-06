@@ -354,6 +354,61 @@ class TestHttpApi:
         download = client.get(f"/v1/models/{model_id}/download?format=3mf")
         assert download.status_code == 200
 
+    def test_planning_returns_a_drawing_without_touching_the_kernel(self, client):
+        """The interactive half of the interface.
+
+        A control that repaints an outline in a second is a different tool from
+        one that queues a minute of geometry to find out, so this endpoint is
+        synchronous and does no CAD work at all.
+        """
+        response = client.post(
+            "/v1/keyholder/plan", json={"image_base64": _blob_png(), "width_mm": 150}
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["status"] == "planned"
+        assert payload["plan"]["size_mm"][0] == pytest.approx(150.0, abs=1.0)
+        assert payload["drawing_png"].startswith("data:image/png;base64,")
+        assert payload["image"]["source"]
+
+    def test_planning_reports_an_impossible_request_as_the_callers(self, client):
+        """A parameter the geometry refuses is a 422 naming it, not a 500."""
+        response = client.post(
+            "/v1/keyholder/plan",
+            json={"image_base64": _blob_png(), "mount": "glue"},
+        )
+        assert response.status_code == 422
+        assert "mount" in response.json()["detail"]
+
+    def test_a_preview_can_only_name_a_preview_this_model_has(self, client):
+        """The name in the URL is looked up, never joined onto a path."""
+        submitted = client.post(
+            "/v1/keyholder", json={"image_base64": _blob_png(), "width_mm": 120, "hooks": 2}
+        )
+        model_id = submitted.json()["model_id"]
+        assert client.get(f"/v1/models/{model_id}/previews/trace").status_code == 200
+        escape = client.get(f"/v1/models/{model_id}/previews/..%2F..%2Fetc%2Fpasswd")
+        assert escape.status_code == 404
+
+    def test_serving_the_interface_on_a_network_needs_a_real_sandbox(self, capsys):
+        """"I accept the risk on my laptop" is not "I accept it for the internet".
+
+        The environment variable cannot tell those two sentences apart, so the
+        flag that means the first one is refused outright on any address other
+        than loopback. Checked before anything is started.
+        """
+        from formforge import cli
+
+        assert cli.main(["serve", "--host", "0.0.0.0", "--allow-unsafe-sandbox"]) == 1
+        assert "refused on 0.0.0.0" in capsys.readouterr().err
+
+    def test_the_browser_interface_is_served(self, client):
+        assert client.get("/", follow_redirects=False).status_code == 307
+        page = client.get("/ui/")
+        assert page.status_code == 200
+        assert "key holder" in page.text
+        assert client.get("/ui/app.js").status_code == 200
+
     def test_a_key_holder_from_an_unreadable_image_fails_with_a_reason(self, client):
         """The caller's mistake, reported as such rather than as a 500."""
         submitted = client.post("/v1/keyholder", json={"image_base64": "x" * 64})

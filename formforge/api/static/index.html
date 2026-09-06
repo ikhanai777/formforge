@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FormForge &mdash; key holder</title>
+<!-- Inline, because a favicon request that 404s is the first thing in the
+     console of a page whose whole job is to make problems visible. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%238a6f4d'/%3E%3Cpath d='M6 19h20v4H6z' fill='%23e6d5bd'/%3E%3Cpath d='M10 23v4h3v-4zM19 23v4h3v-4z' fill='%23e6d5bd'/%3E%3Ccircle cx='16' cy='12' r='5' fill='none' stroke='%23e6d5bd' stroke-width='2.5'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <div>
+      <strong>FormForge</strong>
+      <span class="sub">image &rarr; wall-mounted key holder</span>
+    </div>
+  </div>
+  <div class="posture" id="posture" title="Reported by /healthz"></div>
+</header>
+
+<main>
+  <!-- ------------------------------------------------------------ controls -->
+  <section class="panel controls">
+    <h2>1. The picture</h2>
+
+    <label class="drop" id="drop" for="file">
+      <input type="file" id="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" hidden>
+      <img id="thumb" alt="" hidden>
+      <span class="drop-copy" id="drop-copy">
+        <strong>Drop an image here</strong>
+        <em>or click to choose &mdash; PNG, JPEG, WebP</em>
+        <small>Cut-outs and clip art trace exactly. Photographs depend on their
+        background: check the outline before you build.</small>
+      </span>
+    </label>
+
+    <h2>2. The key holder</h2>
+
+    <div class="field">
+      <label for="width">Width <output id="width-out">180 mm</output></label>
+      <input type="range" id="width" min="60" max="300" step="5" value="180">
+    </div>
+
+    <div class="field">
+      <label for="hooks">Hooks <output id="hooks-out">from the width</output></label>
+      <input type="range" id="hooks" min="0" max="12" step="1" value="0">
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label for="mount">Wall fixing</label>
+        <select id="mount">
+          <option value="keyhole">Keyhole slots</option>
+          <option value="screw">Countersunk screws</option>
+          <option value="none">None &mdash; adhesive</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="detail">Openings inside the outline</label>
+        <select id="detail">
+          <option value="engrave">Engrave into the face</option>
+          <option value="cut">Cut through</option>
+          <option value="ignore">Ignore</option>
+        </select>
+      </div>
+    </div>
+
+    <details id="advanced">
+      <summary>More</summary>
+
+      <div class="row">
+        <div class="field">
+          <label for="plaque">Plate thickness <output id="plaque-out">7.0 mm</output></label>
+          <input type="range" id="plaque" min="3" max="12" step="0.5" value="7">
+        </div>
+        <div class="field">
+          <label for="feature">Minimum feature <output id="feature-out">2.4 mm</output></label>
+          <input type="range" id="feature" min="1.2" max="8" step="0.2" value="2.4">
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="border">Border <output id="border-out">0 mm</output></label>
+          <input type="range" id="border" min="0" max="12" step="0.5" value="0">
+        </div>
+        <div class="field">
+          <label for="railh">Rail height <output id="railh-out">18 mm</output></label>
+          <input type="range" id="railh" min="8" max="40" step="1" value="18">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="overlap">Rail overlap into the silhouette <output id="overlap-out">4 mm</output></label>
+        <input type="range" id="overlap" min="0" max="30" step="1" value="4">
+        <small>Raise this when part of the outline is dropped for not reaching the rail.</small>
+      </div>
+
+      <div class="field">
+        <label for="threshold">
+          Foreground cut
+          <output id="threshold-out">automatic</output>
+        </label>
+        <input type="range" id="threshold" min="0.05" max="0.95" step="0.01" value="0.5" disabled>
+        <div class="checks">
+          <label><input type="checkbox" id="auto-threshold" checked> Choose it for me</label>
+          <label><input type="checkbox" id="invert"> The subject is the edge of the frame</label>
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label for="profile">Printer</label>
+          <select id="profile"></select>
+        </div>
+        <div class="field">
+          <label for="material">Material</label>
+          <select id="material">
+            <option>PLA</option><option>PETG</option><option>ABS</option>
+            <option>ASA</option><option>TPU</option>
+          </select>
+        </div>
+      </div>
+    </details>
+
+    <button id="build" class="primary" disabled>Build the model</button>
+    <p class="hint" id="build-hint">Drop an image to begin.</p>
+  </section>
+
+  <!-- ------------------------------------------------------------- results -->
+  <section class="panel results">
+    <div class="stage" id="stage">
+      <div class="empty" id="empty">
+        <p>The traced outline appears here.</p>
+        <p class="quiet">Tracing takes about a second and needs no CAD kernel,
+        so it re-runs every time you move a control. Nothing is built until you
+        ask for it.</p>
+      </div>
+      <figure id="drawing-wrap" hidden>
+        <img id="drawing" alt="The traced outline, hook rail, hooks and wall fixings">
+        <figcaption>
+          <span class="swatch plate"></span> plate
+          <span class="swatch engraved"></span> engraved
+          <span class="swatch hook"></span> hooks
+          <span class="swatch mount"></span> wall fixing
+          <span class="swatch trace"></span> what the tracer found
+        </figcaption>
+      </figure>
+      <div class="spinner" id="spinner" hidden><span></span> tracing&hellip;</div>
+    </div>
+
+    <p class="summary" id="summary"></p>
+    <ul class="notes" id="notes"></ul>
+
+    <div id="run" hidden>
+      <h2>Build</h2>
+      <ol class="steps" id="steps"></ol>
+      <div id="verdict" hidden></div>
+      <div class="views" id="views" hidden></div>
+      <div class="downloads" id="downloads" hidden>
+        <h3>Bundle</h3>
+        <div class="links" id="links"></div>
+        <p class="quiet">
+          3MF first: it declares its units, and an STL does not. `source.py` is
+          the script that built this &mdash; change a constant, re-run it, and
+          you have a new model.
+        </p>
+      </div>
+    </div>
+
+    <p class="untested">
+      Nothing here has been physically printed. Every threshold this applies is
+      a conventional maker value until a print outcome says otherwise.
+    </p>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

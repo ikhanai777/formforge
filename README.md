@@ -89,6 +89,7 @@ formforge templates planter_halfmoon_wall        # parameters, ranges, print tes
 formforge generate "a hex planter for a 4in pot"
 formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
 formforge keyholder cat.png --width 200 --hooks 5   # an image, not a sentence
+formforge serve                                  # the browser interface
 formforge check model.stl --profile bambu_p1s_0.4 --category planter
 formforge render model.stl --out previews/
 formforge rules --profile prusa_mk4_0.4          # the DFM rules being applied
@@ -109,7 +110,27 @@ a print outcome recorded against a model is the only thing that can make one
 of them a measurement, and it lands next to what the validator measured at the
 time.
 
-### From a picture
+### In a browser
+
+```bash
+$ formforge serve --allow-unsafe-sandbox     # then open http://127.0.0.1:8000/
+```
+
+Drop in a picture, and the outline is traced, laid out and drawn in about a
+second — hook rail, hooks and keyhole slots included. Every control re-plans as
+you move it, because tracing costs nothing and the drawing is the only thing
+that shows what the tracer decided. Pressing **Build the model** runs the CAD
+kernel and streams the same steps the CLI prints, then hands over the renders
+and the bundle.
+
+The two halves are deliberate: the cheap one is immediate and always on screen,
+and the minute of geometry happens only when someone has looked at the outline.
+
+`serve` binds to loopback. `--allow-unsafe-sandbox` is how you say you accept
+running generated Python on a runtime that does not isolate the host kernel;
+it is refused on any other address.
+
+### From a picture, on the command line
 
 ```bash
 $ formforge keyholder beetle.png --width 200 --plan-only   # trace, draw, stop
@@ -189,7 +210,9 @@ is worth showing rather than hiding — watching it find a 1.1 mm wall and
 regenerate is the clearest possible argument for the whole approach.
 
 `POST /v1/keyholder` takes a base64 image and runs the key holder path through
-the same job machinery, event stream and bundle.
+the same job machinery, event stream and bundle. `POST /v1/keyholder/plan` is
+its cheap half: it traces and lays out synchronously and returns the drawing,
+which is what makes the browser interface feel immediate.
 
 `GET /v1/models/{id}/events` replays it again afterwards, from the database.
 `GET /v1/stats` reports template health and the dominant failure classes;

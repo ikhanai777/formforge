@@ -80,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_rules(subparsers)
     _add_stats(subparsers)
     _add_feedback(subparsers)
+    _add_serve(subparsers)
     _add_doctor(subparsers)
 
     args = parser.parse_args(argv)
@@ -867,6 +868,93 @@ def _cmd_feedback(args) -> int:
             }
         )
     print(_ok("recorded") + f" {feedback_id}")
+    return 0
+
+
+def _add_serve(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "serve",
+        help="run the HTTP API and the browser interface",
+        description=(
+            "Serves the key holder interface at / and the REST API under /v1. "
+            "Binds to the loopback address: this executes generated Python, so "
+            "putting it on a network needs a sandbox runtime that isolates the "
+            "host kernel."
+        ),
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument(
+        "--allow-unsafe-sandbox",
+        action="store_true",
+        help=(
+            "start even though the sandbox runtime does not isolate the host "
+            "kernel. Loopback only, and never in production."
+        ),
+    )
+    parser.set_defaults(handler=_cmd_serve)
+
+
+# Addresses that reach only this machine. The unsafe-sandbox override is
+# accepted on these and refused everywhere else -- "I accept the risk on my own
+# laptop" and "I accept it for the internet" are different sentences, and the
+# env var alone cannot tell them apart.
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "0:0:0:0:0:0:0:1"})
+
+
+def _cmd_serve(args) -> int:
+    try:
+        import uvicorn  # noqa: PLC0415
+    except ImportError:
+        print(
+            _bad("the HTTP server needs FastAPI and uvicorn: "
+                 "pip install 'formforge[api]'"),
+            file=sys.stderr,
+        )
+        return 1
+
+    from .api import create_app  # noqa: PLC0415
+    from .sandbox import GeometrySandbox  # noqa: PLC0415
+
+    isolated = GeometrySandbox().production_ready()
+    loopback = args.host in LOOPBACK_HOSTS
+    if not isolated and args.allow_unsafe_sandbox and not loopback:
+        print(
+            _bad(
+                f"--allow-unsafe-sandbox is refused on {args.host}: this server "
+                "executes generated Python, and the runtime does not isolate "
+                "the host kernel. Bind to 127.0.0.1, or set "
+                "FORMFORGE_SANDBOX_RUNTIME=gvisor."
+            ),
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        app = create_app(allow_unsafe_sandbox=args.allow_unsafe_sandbox)
+    except RuntimeError as exc:
+        print(_bad(str(exc)), file=sys.stderr)
+        if not isolated:
+            print(
+                _warn(
+                    "\nFor a local server on your own machine, this is the flag "
+                    "that says you accept that:\n"
+                    f"  formforge serve --allow-unsafe-sandbox --port {args.port}"
+                ),
+                file=sys.stderr,
+            )
+        return 1
+
+    if not isolated:
+        print(
+            _warn(
+                "sandbox: no kernel isolation. Local use only -- do not put this "
+                "on a network."
+            )
+        )
+    print(f"key holder interface: {_c(f'http://{args.host}:{args.port}/', '1')}")
+    print(_dim(f"api docs: http://{args.host}:{args.port}/docs"))
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0
 
 

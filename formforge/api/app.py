@@ -52,7 +52,8 @@ try:
         WebSocket,
         WebSocketDisconnect,
     )
-    from fastapi.responses import FileResponse, JSONResponse
+    from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+    from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel, Field
 
     FASTAPI_AVAILABLE = True
@@ -70,6 +71,18 @@ from ..slicer import slice_model
 from ..store import PRINT_ISSUES, Store
 
 STORE_DIR = Path(os.environ.get("FORMFORGE_STORE", Path.home() / ".formforge" / "models"))
+
+# The browser interface. Three static files with no build step and no CDN: the
+# offline path is a product feature everywhere else in this system, and a UI
+# that needs a network to render its own stylesheet would be the one place it
+# stops being true.
+STATIC_DIR = Path(__file__).parent / "static"
+
+# An uploaded image, base64, capped. The tracer downsamples to 512 px on the
+# long edge and the browser resizes before it uploads, so anything past this is
+# either a mistake or someone probing; 16 MB of characters is about 12 MB of
+# image, which is a phone photograph nobody resized.
+MAX_IMAGE_B64_CHARS = 16_000_000
 
 # How many events to retain per job for a client that connects late. A loop
 # emits well under this, so a client that connects after the run finished still
@@ -100,7 +113,7 @@ class Job:
         that is approximate -- the phase name is the honest signal, and the
         number is there for a UI that needs one.
         """
-        order = ["queued", "policy", "intent", "route", "codegen", "execute",
+        order = ["queued", "policy", "intent", "route", "trace", "codegen", "execute",
                  "validate", "render", "critique", "done"]
         try:
             return round(order.index(self.phase) / (len(order) - 1), 2)
@@ -186,15 +199,18 @@ if FASTAPI_AVAILABLE:
         before uploading sends tens of kilobytes.
         """
 
-        image_base64: str = Field(..., min_length=32)
+        image_base64: str = Field(..., min_length=32, max_length=MAX_IMAGE_B64_CHARS)
         printer_profile: str = DEFAULT_PROFILE_ID
         material: str = "PLA"
         filename: str | None = None
         width_mm: float | None = Field(default=None, ge=60, le=300)
         hooks: int | None = Field(default=None, ge=0, le=12)
         plaque_t_mm: float | None = Field(default=None, ge=3, le=12)
-        min_feature_mm: float | None = Field(default=None, ge=1.2, le=8)
+        min_feature_mm: float | None = Field(default=None, ge=0.8, le=8)
         border_mm: float | None = Field(default=None, ge=0, le=12)
+        rail: bool | None = None
+        rail_h_mm: float | None = Field(default=None, ge=0, le=60)
+        rail_overlap_mm: float | None = Field(default=None, ge=0, le=30)
         mount: str | None = None
         detail: str | None = None
         threshold: float | None = Field(default=None, ge=0, le=1)
@@ -323,9 +339,6 @@ def create_app(
         # The orchestrator assigns its own model id; keep the one the client
         # already has so the URLs it was handed keep working.
         result.model_id = job.model_id
-        job.result = result
-        job.status = result.status
-        job.phase = "done"
 
         if result.status == "ok":
             template = (
@@ -338,6 +351,14 @@ def create_app(
             )
             result.artifacts.update(bundle.files)
 
+        # Terminal last, and after the bundle exists. The status is what the
+        # WebSocket watches to decide the run is over, so flipping it before
+        # `source.py` has been written hands a client a model whose download
+        # links are still appearing.
+        job.result = result
+        job.status = result.status
+        job.phase = "done"
+
         # Persisted for every terminal status, not just success: a store that
         # holds only the runs that worked cannot answer a question worth
         # asking. The write is best-effort by design -- see store.Store.
@@ -348,6 +369,84 @@ def create_app(
             job,
             {"phase": "done", "ok": result.ok, "message": result.message, "status": result.status},
         )
+
+    def _key_holder_spec(request: KeyHolderRequest):
+        from ..keyholder import KeyHolderSpec  # noqa: PLC0415
+
+        settings = {
+            "width_mm": request.width_mm,
+            "hook_count": request.hooks,
+            "plaque_t_mm": request.plaque_t_mm,
+            "min_feature_mm": request.min_feature_mm,
+            "border_mm": request.border_mm,
+            "rail_h_mm": request.rail_h_mm,
+            "rail_overlap_mm": request.rail_overlap_mm,
+            "mount": request.mount,
+            "detail": request.detail,
+            "profile_id": request.printer_profile,
+            "material": request.material,
+        }
+        chosen = {k: v for k, v in settings.items() if v is not None}
+        if request.rail is False:
+            chosen["rail"] = False
+            chosen["hook_count"] = 0
+        return KeyHolderSpec(**chosen)
+
+    def _decode_image(request: KeyHolderRequest) -> bytes:
+        try:
+            return base64.b64decode(request.image_base64, validate=True)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=422, detail=f"image_base64 is not valid base64: {exc}"
+            ) from None
+
+    @app.post("/v1/keyholder/plan")
+    async def keyholder_plan(request: KeyHolderRequest):
+        """Trace and lay out an image, and stop before the CAD kernel.
+
+        Synchronous, because it is about a second and the answer is the whole
+        point of asking: a photograph traces into a guess, and this is the
+        drawing that shows which guess. It is what makes the interface usable --
+        a slider that repaints an outline in a second is a different tool from
+        one that queues a minute of geometry to find out.
+        """
+        from ..keyholder import (  # noqa: PLC0415
+            DesignError,
+            ImageError,
+            TraceError,
+            plan_from_image,
+        )
+        from ..keyholder.preview import render_trace  # noqa: PLC0415
+
+        image = _decode_image(request)
+        try:
+            spec = _key_holder_spec(request)
+            plan, mask_info, trace_stats = await asyncio.to_thread(
+                plan_from_image,
+                image,
+                spec,
+                threshold=request.threshold,
+                invert=request.invert,
+            )
+            drawing = STORE_DIR / "plans" / f"{uuid.uuid4().hex}.png"
+            drawing.parent.mkdir(parents=True, exist_ok=True)
+            await asyncio.to_thread(render_trace, plan, drawing)
+        except (ImageError, TraceError, DesignError) as exc:
+            # The caller's image or the caller's numbers, and the message says
+            # which. Not a 500.
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+
+        payload = plan.as_dict()
+        encoded = base64.b64encode(drawing.read_bytes()).decode("ascii")
+        drawing.unlink(missing_ok=True)
+        return {
+            "status": "planned",
+            "summary": plan.summary(),
+            "plan": payload,
+            "image": mask_info.as_dict(),
+            "trace": trace_stats.as_dict(),
+            "drawing_png": f"data:image/png;base64,{encoded}",
+        }
 
     @app.post("/v1/keyholder", status_code=202)
     async def keyholder(request: KeyHolderRequest, background: BackgroundTasks):
@@ -367,7 +466,6 @@ def create_app(
         from ..keyholder import (  # noqa: PLC0415
             DesignError,
             ImageError,
-            KeyHolderSpec,
             TraceError,
             build_key_holder,
         )
@@ -388,19 +486,8 @@ def create_app(
             jobs.publish(job, {"phase": "failed", "ok": False, "message": job.error})
             return
 
-        settings = {
-            "width_mm": request.width_mm,
-            "hook_count": request.hooks,
-            "plaque_t_mm": request.plaque_t_mm,
-            "min_feature_mm": request.min_feature_mm,
-            "border_mm": request.border_mm,
-            "mount": request.mount,
-            "detail": request.detail,
-            "profile_id": request.printer_profile,
-            "material": request.material,
-        }
         try:
-            spec = KeyHolderSpec(**{k: v for k, v in settings.items() if v is not None})
+            spec = _key_holder_spec(request)
             outcome = await asyncio.to_thread(
                 build_key_holder,
                 image,
@@ -427,15 +514,17 @@ def create_app(
 
         result = outcome.result
         result.model_id = job.model_id
-        job.result = result
-        job.status = result.status
-        job.phase = "done"
 
         if result.status == "ok":
             bundle = await asyncio.to_thread(
                 write_bundle, result, store / result.model_id / "bundle"
             )
             result.artifacts.update(bundle.files)
+
+        # Terminal only once the bundle is on disk -- see `_run_generation`.
+        job.result = result
+        job.status = result.status
+        job.phase = "done"
 
         database.record_generation(result, parent_id=job.parent_id)
         jobs.publish(
@@ -573,6 +662,25 @@ def create_app(
         }[format]
         return FileResponse(path, filename=filename)
 
+    @app.get("/v1/models/{model_id}/previews/{name}")
+    async def preview(model_id: str, name: str):
+        """One rendered view of a finished model.
+
+        The name is looked up in the model's own preview map rather than joined
+        onto a directory, so the only paths this can serve are the ones the
+        renderer wrote for this model. A path that arrives in the URL never
+        reaches the filesystem.
+        """
+        job = _require_result(model_id)
+        path = (job.result.previews or {}).get(name)
+        if not path or not Path(path).exists():
+            available = ", ".join(sorted(job.result.previews or {})) or "none"
+            raise HTTPException(
+                status_code=404,
+                detail=f"model {model_id} has no {name!r} preview. Available: {available}",
+            )
+        return FileResponse(path, media_type="image/png")
+
     # -- catalogue -----------------------------------------------------
     @app.get("/v1/templates")
     async def list_templates(category: str | None = None, q: str | None = None):
@@ -679,6 +787,14 @@ def create_app(
                 "write_failures": totals["write_failures"],
             },
         }
+
+    # -- the browser interface -----------------------------------------
+    if STATIC_DIR.is_dir():
+        app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
+
+        @app.get("/", include_in_schema=False)
+        async def index():
+            return RedirectResponse("/ui/")
 
     # -- helpers -------------------------------------------------------
     def _record_policy(result) -> None:
