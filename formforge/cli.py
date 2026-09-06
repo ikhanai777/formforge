@@ -34,6 +34,13 @@ from .validation import validate
 # Terminal colour, off when not a tty so piped output stays clean.
 _TTY = sys.stdout.isatty()
 
+# Repeated here rather than imported from `formforge.keyholder`, which pulls in
+# shapely and numpy: building the argument parser happens on every invocation,
+# including `formforge --version`. A test pins these against the module's own
+# constants so the two cannot drift.
+KEYHOLDER_MOUNTS = ("keyhole", "screw", "none")
+KEYHOLDER_DETAIL = ("engrave", "cut", "ignore")
+
 
 def _c(text: str, code: str) -> str:
     return f"\033[{code}m{text}\033[0m" if _TTY else text
@@ -64,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     _add_generate(subparsers)
+    _add_keyholder(subparsers)
     _add_build(subparsers)
     _add_templates(subparsers)
     _add_check(subparsers)
@@ -169,6 +177,232 @@ def _cmd_generate(args) -> int:
 def _print_warnings(report: dict | None) -> None:
     for warning in (report or {}).get("warnings", [])[:5]:
         print(_warn(f"  warning: {warning.get('message', '')}"))
+
+
+# ---------------------------------------------------------------------------
+# keyholder (image in, wall-mounted key rack out)
+# ---------------------------------------------------------------------------
+
+
+def _add_keyholder(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "keyholder",
+        help="turn an image into a wall-mounted key holder",
+        description=(
+            "Trace a picture into a silhouette, put a hook rail under it and "
+            "keyhole hangers in it, and build the result as a printable solid. "
+            "Cut-outs and clip art trace cleanly; photographs depend on their "
+            "background, so start with --plan-only and look at the drawing."
+        ),
+    )
+    # Every option defaults to None so that "not given" reaches KeyHolderSpec as
+    # "not given". Repeating the numbers here would put a second set of defaults
+    # in the system, and the two would eventually disagree.
+    parser.add_argument("image", help="PNG, JPEG or WebP. Transparency is used when present.")
+    parser.add_argument("--width", type=float, help="overall width in mm (default 180)")
+    parser.add_argument(
+        "--hooks", type=int, help="how many hooks; 0 picks a count from the width"
+    )
+    parser.add_argument("--plaque-t", type=float, help="plate thickness in mm (default 7)")
+    parser.add_argument(
+        "--mount",
+        choices=KEYHOLDER_MOUNTS,
+        help="keyhole slots (default), countersunk screws, or nothing",
+    )
+    parser.add_argument(
+        "--detail",
+        choices=KEYHOLDER_DETAIL,
+        help="what to do with openings inside the outline (default engrave)",
+    )
+    parser.add_argument(
+        "--min-feature",
+        type=float,
+        help="anything thinner than this is removed before it is built (default 2.4 mm)",
+    )
+    parser.add_argument(
+        "--border", type=float, help="grow the silhouette by this much, in mm"
+    )
+    parser.add_argument(
+        "--hook-out", type=float, help="how far a hook projects (default 20 mm)"
+    )
+    parser.add_argument("--rail-h", type=float, help="hook rail height in mm (default 18)")
+    parser.add_argument(
+        "--rail-overlap",
+        type=float,
+        help="how far the rail reaches up into the silhouette (default 4 mm)",
+    )
+    parser.add_argument("--no-rail", action="store_true", help="silhouette only, no hooks")
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        help="override the automatic foreground cut, 0..1",
+    )
+    parser.add_argument(
+        "--invert", action="store_true", help="the subject is the region the frame touches"
+    )
+    parser.add_argument("--profile", default=DEFAULT_PROFILE_ID)
+    parser.add_argument("--material", default="PLA")
+    parser.add_argument("--out", default="out")
+    parser.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="trace and lay out, draw the outline, and stop before the CAD kernel",
+    )
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--no-store", action="store_true")
+    parser.set_defaults(handler=_cmd_keyholder)
+
+
+def _keyholder_module():
+    from . import keyholder  # noqa: PLC0415
+
+    return keyholder
+
+
+def _keyholder_spec(args):
+    keyholder = _keyholder_module()
+    chosen = {
+        "width_mm": args.width,
+        "plaque_t_mm": args.plaque_t,
+        "border_mm": args.border,
+        "min_feature_mm": args.min_feature,
+        "detail": args.detail,
+        "rail_h_mm": args.rail_h,
+        "rail_overlap_mm": args.rail_overlap,
+        "hook_count": args.hooks,
+        "hook_out_mm": args.hook_out,
+        "mount": args.mount,
+        "profile_id": args.profile,
+        "material": args.material,
+    }
+    settings = {key: value for key, value in chosen.items() if value is not None}
+    if args.no_rail:
+        settings["rail"] = False
+        settings["hook_count"] = 0
+    return keyholder.KeyHolderSpec(**settings)
+
+
+def _cmd_keyholder(args) -> int:
+    from .bundle import write_bundle  # noqa: PLC0415
+
+    keyholder = _keyholder_module()
+    image = Path(args.image)
+    if not image.exists():
+        print(_bad(f"no such image: {image}"), file=sys.stderr)
+        return 1
+
+    out_dir = Path(args.out)
+    try:
+        spec = _keyholder_spec(args)
+    except Exception as exc:  # noqa: BLE001
+        print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    if args.plan_only:
+        return _keyholder_plan_only(args, spec, image, out_dir)
+
+    if not args.json:
+        print(_dim(f"image: {image}"))
+        print()
+
+    try:
+        outcome = keyholder.build_key_holder(
+            image,
+            spec,
+            out_dir=out_dir,
+            threshold=args.threshold,
+            invert=True if args.invert else None,
+            source_name=image.name,
+            on_event=None
+            if args.json
+            else lambda e: print(
+                f"  [{_ok('ok') if e.ok else _bad('!!')}] {e.phase:<9} {e.message}"
+            ),
+        )
+    except (keyholder.ImageError, keyholder.TraceError, keyholder.DesignError) as exc:
+        print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    result = outcome.result
+    if result.status == "ok":
+        bundle = write_bundle(result, out_dir / result.model_id / "bundle")
+        result.artifacts.update(bundle.files)
+
+    if not args.no_store:
+        from .store import Store  # noqa: PLC0415
+
+        with Store() as database:
+            database.record_generation(result)
+
+    if args.json:
+        print(json.dumps(outcome.as_dict(), indent=2, default=str))
+        return 0 if outcome.ok else 1
+
+    print()
+    print(outcome.summary() if outcome.ok else result.summary())
+    _print_keyholder_notes(outcome)
+    if outcome.ok:
+        print()
+        print(f"bundle: {out_dir / result.model_id / 'bundle'}")
+        _print_warnings(result.validation)
+    return 0 if outcome.ok else 1
+
+
+def _keyholder_plan_only(args, spec, image: Path, out_dir: Path) -> int:
+    keyholder = _keyholder_module()
+    from .keyholder.preview import render_trace  # noqa: PLC0415
+
+    try:
+        plan, mask_info, trace_stats = keyholder.plan_from_image(
+            image,
+            spec,
+            threshold=args.threshold,
+            invert=True if args.invert else None,
+        )
+    except (keyholder.ImageError, keyholder.TraceError, keyholder.DesignError) as exc:
+        print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    drawing = render_trace(plan, out_dir / f"{image.stem}_trace.png")
+
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "plan": plan.as_dict(),
+                    "image": mask_info.as_dict(),
+                    "trace": trace_stats.as_dict(),
+                    "drawing": str(drawing),
+                },
+                indent=2,
+            )
+        )
+        return 0
+
+    print(plan.summary())
+    for note in mask_info.notes:
+        print(_dim(f"  image: {note}"))
+    for note in trace_stats.notes:
+        print(_dim(f"  trace: {note}"))
+    for note in plan.notes:
+        print(_dim(f"  plan:  {note}"))
+    for warning in plan.warnings:
+        print(_warn(f"  warning: {warning}"))
+    print()
+    print(f"drawing: {drawing}")
+    return 0
+
+
+def _print_keyholder_notes(outcome) -> None:
+    for note in (outcome.mask_info.notes if outcome.mask_info else []):
+        print(_dim(f"  image: {note}"))
+    for note in (outcome.plan.notes if outcome.plan else []):
+        print(_dim(f"  plan:  {note}"))
+    for warning in (outcome.plan.warnings if outcome.plan else []):
+        print(_warn(f"  warning: {warning}"))
+    if outcome.result.previews.get("trace"):
+        print(_dim(f"  traced outline: {outcome.result.previews['trace']}"))
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +919,16 @@ def _cmd_doctor(args) -> int:
         print(f"  wall thickness {_ok('accelerated')}")
     except ImportError:
         print(f"  wall thickness {_warn('unaccelerated')} -- install rtree for full resolution")
+
+    try:
+        import PIL  # noqa: F401, PLC0415
+
+        print(f"  image tracing  {_ok('available')} -- formforge keyholder")
+    except ImportError:
+        print(
+            f"  image tracing  {_warn('unavailable')} -- install "
+            "\"formforge[image]\" for `formforge keyholder`"
+        )
 
     print(f"  profiles       {', '.join(sorted(PROFILES))}")
 

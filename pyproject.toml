@@ -38,11 +38,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Decoding an uploaded PNG/JPEG/WebP for the key holder tracer. An extra rather
+# than a base dependency because the geometry sandbox image never decodes an
+# image: tracing happens on the host, and only millimetres cross into the
+# sandbox.
+image = ["pillow>=10.0"]
 llm = ["anthropic>=0.40"]
 api = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "pydantic>=2.6"]
 mcp = ["mcp>=1.0"]
 dev = ["pytest>=8.0", "pytest-cov>=4.1", "ruff>=0.4"]
 all = [
+    "pillow>=10.0",
     "anthropic>=0.40",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",

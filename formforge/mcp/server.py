@@ -30,9 +30,11 @@ import base64
 import json
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from ..bundle import write_bundle
 from ..dfm import DEFAULT_PROFILE_ID, PROFILES
+from ..keyholder.design import DETAIL_MODES, MOUNT_MODES
 from ..llm import build_client
 from ..orchestrator import Orchestrator
 from ..store import PRINT_ISSUES, Store
@@ -262,6 +264,91 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                     "default": ["3mf", "stl"],
                 },
+            },
+        },
+    },
+    {
+        "name": "generate_key_holder",
+        "description": (
+            "Turn a picture into a wall-mounted key holder: the image becomes "
+            "the silhouette, and a hook rail, self-supporting hooks and keyhole "
+            "hangers are generated around it. Takes a file path or base64 PNG/"
+            "JPEG/WebP. Cut-out PNGs and clip art trace cleanly; a photograph "
+            "depends on its background, so call it with plan_only first, look "
+            "at the returned outline drawing, and only then build -- planning "
+            "costs no CAD time. If the outline is inside out, pass invert; if "
+            "it grabbed too much or too little, move threshold. This is a "
+            "deterministic geometry path, not a generated script: the same "
+            "image and settings always produce the same model."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "image_path": {
+                    "type": "string",
+                    "description": "Path to the image on this machine.",
+                },
+                "image_base64": {
+                    "type": "string",
+                    "description": "The image itself, base64 encoded, if there is no path.",
+                },
+                "plan_only": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Trace and lay out, return the outline drawing, and stop "
+                        "before the CAD kernel. Seconds rather than a minute."
+                    ),
+                },
+                "width_mm": {
+                    "type": "number",
+                    "minimum": 60,
+                    "maximum": 300,
+                    "description": "Overall width. Default 180.",
+                },
+                "hooks": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 12,
+                    "description": "0 chooses a count from the width.",
+                },
+                "mount": {"type": "string", "enum": list(MOUNT_MODES)},
+                "detail": {
+                    "type": "string",
+                    "enum": list(DETAIL_MODES),
+                    "description": (
+                        "What to do with openings inside the outline: engrave "
+                        "them into the face, cut them through, or ignore them."
+                    ),
+                },
+                "plaque_t_mm": {"type": "number", "minimum": 3, "maximum": 12},
+                "min_feature_mm": {
+                    "type": "number",
+                    "minimum": 1.2,
+                    "maximum": 8,
+                    "description": (
+                        "Anything thinner than this is removed from the outline "
+                        "before it is built. Raise it for a spindly image."
+                    ),
+                },
+                "border_mm": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 12,
+                    "description": "Grow the silhouette outwards, which also welds thin parts.",
+                },
+                "threshold": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "Override the automatic foreground cut.",
+                },
+                "invert": {
+                    "type": "boolean",
+                    "description": "The subject is the region touching the frame, not the middle.",
+                },
+                "printer_profile": {"type": "string", "default": DEFAULT_PROFILE_ID},
+                "material": {"type": "string", "default": "PLA"},
             },
         },
     },
@@ -501,6 +588,112 @@ class FormForgeTools:
         result.previews = dict(previews.views)
         return self._record(result, None)
 
+    def generate_key_holder(
+        self,
+        image_path: str | None = None,
+        image_base64: str | None = None,
+        plan_only: bool = False,
+        width_mm: float | None = None,
+        hooks: int | None = None,
+        mount: str | None = None,
+        detail: str | None = None,
+        plaque_t_mm: float | None = None,
+        min_feature_mm: float | None = None,
+        border_mm: float | None = None,
+        threshold: float | None = None,
+        invert: bool | None = None,
+        printer_profile: str = DEFAULT_PROFILE_ID,
+        material: str = "PLA",
+    ) -> dict:
+        from ..keyholder import (  # noqa: PLC0415
+            DesignError,
+            ImageError,
+            KeyHolderSpec,
+            TraceError,
+            build_key_holder,
+        )
+
+        if not image_path and not image_base64:
+            raise ToolError("pass either image_path or image_base64")
+        source: str | bytes
+        name = "an uploaded image"
+        if image_path:
+            path = Path(image_path)
+            if not path.exists():
+                raise ToolError(f"no image at {image_path}")
+            source, name = str(path), path.name
+        else:
+            try:
+                source = base64.standard_b64decode(image_base64 or "")
+            except Exception as exc:  # noqa: BLE001
+                raise ToolError(f"image_base64 is not valid base64: {exc}") from None
+
+        settings = {
+            "width_mm": width_mm,
+            "hook_count": hooks,
+            "mount": mount,
+            "detail": detail,
+            "plaque_t_mm": plaque_t_mm,
+            "min_feature_mm": min_feature_mm,
+            "border_mm": border_mm,
+            "profile_id": printer_profile,
+            "material": material,
+        }
+        spec = KeyHolderSpec(**{k: v for k, v in settings.items() if v is not None})
+
+        try:
+            if plan_only:
+                return self._key_holder_plan(spec, source, name, threshold, invert)
+            outcome = build_key_holder(
+                source,
+                spec,
+                out_dir=self.store,
+                threshold=threshold,
+                invert=invert,
+                source_name=name,
+            )
+        except (ImageError, TraceError, DesignError) as exc:
+            raise ToolError(str(exc)) from None
+
+        payload = self._record(outcome.result, None)
+        payload["keyholder"] = outcome.as_dict()["keyholder"]
+        # Failures come back as a result rather than an error on purpose: the
+        # outline drawing travels with them, and it is what says whether the
+        # next call should change the threshold or the minimum feature size.
+        payload["message"] = outcome.summary() if outcome.ok else outcome.result.message
+        return payload
+
+    def _key_holder_plan(
+        self,
+        spec,
+        source,
+        name: str,
+        threshold: float | None,
+        invert: bool | None,
+    ) -> dict:
+        """The cheap half: trace, lay out, draw, and stop."""
+        from ..keyholder import plan_from_image  # noqa: PLC0415
+        from ..keyholder.preview import render_trace  # noqa: PLC0415
+
+        plan, mask_info, trace_stats = plan_from_image(
+            source, spec, threshold=threshold, invert=invert
+        )
+        directory = self.store / "plans"
+        directory.mkdir(parents=True, exist_ok=True)
+        drawing = render_trace(plan, directory / f"{uuid4().hex}.png")
+        return {
+            "status": "planned",
+            "summary": plan.summary(),
+            "plan": plan.as_dict(),
+            "image": mask_info.as_dict(),
+            "trace": trace_stats.as_dict(),
+            "previews": {"trace": str(drawing)},
+            "message": (
+                "Nothing has been built yet. Check the outline drawing against "
+                "the image, then call again without plan_only."
+            ),
+        }
+
     def modify_model(self, model_id: str, param_changes: dict) -> dict:
         previous = self._get(model_id)
         template_id = previous.template_id
@@ -703,6 +896,7 @@ class FormForgeTools:
             "generate_from_template": self.generate_from_template,
             "generate_from_prompt": self.generate_from_prompt,
             "generate_from_code": self.generate_from_code,
+            "generate_key_holder": self.generate_key_holder,
             "modify_model": self.modify_model,
             "check_printability": self.check_printability,
             "render_views": self.render_views,
@@ -768,7 +962,9 @@ def result_content(payload: dict, *, include_images: bool = True) -> list[dict]:
     if not include_images:
         return blocks
     previews = payload.get("previews") or payload.get("views") or {}
-    for name in ("iso", "section", "front", "top"):
+    # `trace` first: for an image-traced model it is the picture that answers
+    # the only question the user has, which is whether it saw the right shape.
+    for name in ("trace", "iso", "section", "front", "top"):
         path = previews.get(name)
         if path and Path(path).exists():
             blocks.append({"type": "text", "text": f"{name} view:"})

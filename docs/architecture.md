@@ -213,6 +213,43 @@ makes the whole loop testable in CI without credentials.
 
 ---
 
+### A third route: an image is an input, not a generator
+
+`formforge keyholder` adds a route beside `template` and `freeform` —
+`image_trace` — and it is worth being explicit about why that is not a
+contradiction of the first decision in the README.
+
+An uploaded picture never becomes geometry. It becomes a *polygon*, in
+`keyholder/`, and every product decision made around that polygon — the hook
+rail, the hook profile, the keyhole sandwich, the minimum feature size, the
+mount placement — is parametric code generated deterministically and validated
+by the same three tiers as anything else. The kernel receives one cleaned
+profile and a handful of named constants. What the image contributes is a
+silhouette; what it never contributes is a wall thickness, a fixing, or a
+tolerance.
+
+Two consequences worth stating:
+
+*The repair loop needs no model.* Every failure a traced outline produces has a
+known cause, so the ladder is a lookup table rather than a conversation — a
+wall under the minimum re-opens the outline, more than one solid closes the gaps
+and deepens the rail, a refused profile simplifies harder. The route therefore
+costs nothing per run and is reproducible byte for byte, which is also why it
+gets its own value in the `route` column rather than being filed under
+`freeform`: it would otherwise pollute the one comparison that column exists to
+support.
+
+*Cleanup happens in the plane, before the kernel.* A morphological opening at
+half the minimum feature size is a guarantee (nothing survives thinner than the
+threshold) where a post-hoc wall-thickness measurement is a sample. Doing it in
+Shapely also keeps the hard set operations 2D: a traced photograph has a few
+hundred vertices and the occasional self-intersection, and unioning that against
+a bar in 3D fails in ways that are miserable to diagnose.
+
+`docs/keyholder.md` covers the path in full.
+
+---
+
 ### Collection is on by default
 
 `generation_events` and `print_feedback` are the two tables that cannot be

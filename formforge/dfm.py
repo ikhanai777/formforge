@@ -368,6 +368,20 @@ CATEGORY_RULES: dict[str, list[str]] = {
         "Print with the load path in-plane; never pull layers apart.",
         "Screw bosses need >= 2 mm of material around the shank.",
     ],
+    # A key holder is a wall plate and a row of hooks, and it inherits the
+    # constraints of both. It is its own category rather than a hook with
+    # decoration because the failure that matters is different: a hook fails at
+    # its root, a key holder falls off the wall.
+    "key_holder": [
+        "One connected solid: a decorative outline that does not reach the rail "
+        "is a loose piece, not a feature.",
+        "A wall fixing must be present, and it must have >= 2.5 mm of material "
+        "around it.",
+        "Hooks need a plate behind them for their full width and root height.",
+        "Every hook face must be self-supporting: nothing in a hook can be "
+        "reached with pliers to remove supports from.",
+        "Total mass under 400 g if adhesive-mounted.",
+    ],
     "box": [
         "Lid clearance 0.30 mm per side.",
         "Fillet internal corners r >= 1.5 mm.",

@@ -430,6 +430,75 @@ CATEGORY_INVARIANTS: dict[str, tuple[CategoryInvariant, ...]] = {
             severity=Severity.WARN,
         ),
     ),
+    "key_holder": (
+        CategoryInvariant(
+            "key_holder.one_piece",
+            "solids == 1",
+            "One piece",
+            "The model is more than one solid: part of the outline is not joined "
+            "to the rest and would print as a loose fragment.",
+            "Deepen the rail overlap so the silhouette meets the rail, or add a "
+            "border to weld the parts together.",
+        ),
+        CategoryInvariant(
+            "key_holder.hook_root",
+            "min_wall >= 2.4",
+            "Hook root thickness",
+            "Something in the part is under 2.4 mm. On a key holder printed flat "
+            "that is almost always a hook root or a neck in the silhouette, and "
+            "both break under a bunch of keys.",
+            "Raise the minimum feature size so the outline is opened further, or "
+            "thicken the plate.",
+            # Not applied to a keyhole-mounted piece, and the exception is the
+            # point rather than a loophole: a keyhole is a lip, a cavity and a
+            # cover, and the cover in front of the cavity is deliberately thin.
+            # It is a floor, not a wall -- it carries no load and only has to be
+            # opaque -- so the general rule would condemn the one wall in this
+            # design that is meant to be under 2.4 mm. Everything structural is
+            # guaranteed by construction instead: the outline is opened to the
+            # minimum feature size before it is built, and `key_holder.cover`
+            # below still catches a cover that has gone genuinely thin.
+            applies_when="params.get('mount', 'keyhole') != 'keyhole'",
+        ),
+        CategoryInvariant(
+            "key_holder.cover",
+            "min_wall >= 1.2",
+            "Thinnest wall",
+            "Some wall in the part is under 1.2 mm: thinner than six layers, and "
+            "thinner than the cover a keyhole cavity is designed to leave.",
+            "Thicken the plate, or use a smaller screw so the head cavity does "
+            "not eat the material in front of it.",
+        ),
+        CategoryInvariant(
+            "key_holder.mount_present",
+            "hole_count >= 1",
+            "Wall fixing",
+            "No keyhole or screw hole: there is no way to hang this on a wall.",
+            "Add a keyhole slot on the back, or a countersunk screw hole.",
+            severity=Severity.WARN,
+        ),
+        CategoryInvariant(
+            "key_holder.adhesive_mass",
+            "mass_g <= 400",
+            "Adhesive-mount mass",
+            "Over 400 g is more than an adhesive strip holds, and this piece is "
+            "about to have keys hung on it.",
+            "Reduce the plate thickness or the overall width, or fix it with "
+            "screws rather than adhesive.",
+            severity=Severity.WARN,
+        ),
+        CategoryInvariant(
+            "key_holder.plate_flat",
+            "plate_contact_fraction >= 0.25",
+            "Prints flat",
+            "Little of the model touches the bed. A key holder is meant to print "
+            "with its back flat on the plate; anything else needs supports "
+            "inside the hooks, where they cannot be removed.",
+            "Model the piece lying on its back face, with the hooks projecting "
+            "upwards.",
+            severity=Severity.WARN,
+        ),
+    ),
     "box": (
         CategoryInvariant(
             "box.no_trapped_volume",

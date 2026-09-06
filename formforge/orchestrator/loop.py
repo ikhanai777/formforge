@@ -86,6 +86,10 @@ class GenerationResult:
     source_code: str = ""
     language: str = "build123d"
     params: dict[str, Any] = field(default_factory=dict)
+    # The schema behind `params`, when the producer has one and no template
+    # does: a JSON Schema `properties` object, which is what `params.json`
+    # needs to say what each value's valid range is.
+    exposed_params: dict[str, Any] = field(default_factory=dict)
     artifacts: dict[str, str] = field(default_factory=dict)
     previews: dict[str, str] = field(default_factory=dict)
     stats: dict[str, Any] = field(default_factory=dict)

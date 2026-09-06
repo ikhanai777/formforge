@@ -35,6 +35,10 @@ REQUIRED_DIMENSIONS: dict[str, tuple[str, ...]] = {
     "wall_decor": (),
     "keychain": (),
     "hook": (),
+    # The width has a defensible default (180 mm, the size of the wooden ones
+    # people buy) and the height comes from the image's own proportions, so
+    # there is nothing here that has to be asked for.
+    "key_holder": (),
 }
 
 _CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
@@ -58,6 +62,13 @@ _CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "hook": (
         "hook", "coat hook", "key hook", "towel hook", "peg", "hanger",
         "french cleat", "wall mount", "bracket",
+    ),
+    # A rack with several hooks on a decorative back plate, not a single hook.
+    # The multi-word phrases are what keeps "a hook for my keys" in `hook`.
+    "key_holder": (
+        "key holder", "keyholder", "key rack", "key hanger", "key rail",
+        "key organizer", "key organiser", "key hooks", "wall key",
+        "hooks for keys", "rack for keys",
     ),
     "box": (
         "box", "case", "container", "lid", "bin", "storage", "gridfinity",

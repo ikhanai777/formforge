@@ -32,6 +32,7 @@ rather than a paragraph in a runbook.
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
 import uuid
@@ -175,6 +176,29 @@ if FASTAPI_AVAILABLE:
         material: str = "PLA"
         constraints: dict[str, Any] = Field(default_factory=dict)
         interactive: bool = True
+
+    class KeyHolderRequest(BaseModel):
+        """An uploaded picture plus the handful of numbers worth exposing.
+
+        The image arrives base64 rather than as multipart because everything
+        else in this API is JSON and a key holder is small: a 512 px trace is
+        all the resolution the geometry can use, so a client that resizes
+        before uploading sends tens of kilobytes.
+        """
+
+        image_base64: str = Field(..., min_length=32)
+        printer_profile: str = DEFAULT_PROFILE_ID
+        material: str = "PLA"
+        filename: str | None = None
+        width_mm: float | None = Field(default=None, ge=60, le=300)
+        hooks: int | None = Field(default=None, ge=0, le=12)
+        plaque_t_mm: float | None = Field(default=None, ge=3, le=12)
+        min_feature_mm: float | None = Field(default=None, ge=1.2, le=8)
+        border_mm: float | None = Field(default=None, ge=0, le=12)
+        mount: str | None = None
+        detail: str | None = None
+        threshold: float | None = Field(default=None, ge=0, le=1)
+        invert: bool | None = None
 
     class ModifyRequest(BaseModel):
         param_changes: dict[str, Any]
@@ -323,6 +347,106 @@ def create_app(
         jobs.publish(
             job,
             {"phase": "done", "ok": result.ok, "message": result.message, "status": result.status},
+        )
+
+    @app.post("/v1/keyholder", status_code=202)
+    async def keyholder(request: KeyHolderRequest, background: BackgroundTasks):
+        """Trace an image into a wall-mounted key holder.
+
+        Same job machinery as `/v1/generate`: returns immediately, streams its
+        steps over the same WebSocket, and lands in the same model store. The
+        one addition worth knowing about is the `trace` preview, which shows
+        what the tracer decided; on this route it is the picture that explains
+        every surprising result.
+        """
+        job = jobs.create()
+        background.add_task(_run_key_holder, job, request)
+        return {"job_id": job.job_id, "model_id": job.model_id, "status": "queued"}
+
+    async def _run_key_holder(job: Job, request: KeyHolderRequest) -> None:
+        from ..keyholder import (  # noqa: PLC0415
+            DesignError,
+            ImageError,
+            KeyHolderSpec,
+            TraceError,
+            build_key_holder,
+        )
+
+        loop = asyncio.get_running_loop()
+
+        def on_event(event) -> None:
+            job.phase = event.phase
+            job.step = event.step
+            loop.call_soon_threadsafe(jobs.publish, job, event.as_dict())
+
+        job.status = "running"
+        try:
+            image = base64.b64decode(request.image_base64, validate=True)
+        except Exception as exc:  # noqa: BLE001
+            job.status = "failed"
+            job.error = f"image_base64 is not valid base64: {exc}"
+            jobs.publish(job, {"phase": "failed", "ok": False, "message": job.error})
+            return
+
+        settings = {
+            "width_mm": request.width_mm,
+            "hook_count": request.hooks,
+            "plaque_t_mm": request.plaque_t_mm,
+            "min_feature_mm": request.min_feature_mm,
+            "border_mm": request.border_mm,
+            "mount": request.mount,
+            "detail": request.detail,
+            "profile_id": request.printer_profile,
+            "material": request.material,
+        }
+        try:
+            spec = KeyHolderSpec(**{k: v for k, v in settings.items() if v is not None})
+            outcome = await asyncio.to_thread(
+                build_key_holder,
+                image,
+                spec,
+                out_dir=store,
+                threshold=request.threshold,
+                invert=request.invert,
+                source_name=request.filename or "an uploaded image",
+                on_event=on_event,
+            )
+        except (ImageError, TraceError, DesignError) as exc:
+            # A bad image or an impossible layout is the caller's to fix, and
+            # the message says how; it is not a server error.
+            job.status = "failed"
+            job.error = str(exc)
+            jobs.publish(job, {"phase": "failed", "ok": False, "message": job.error})
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.exception("key holder %s failed", job.job_id)
+            job.status = "failed"
+            job.error = f"{type(exc).__name__}: {exc}"
+            jobs.publish(job, {"phase": "failed", "ok": False, "message": job.error})
+            return
+
+        result = outcome.result
+        result.model_id = job.model_id
+        job.result = result
+        job.status = result.status
+        job.phase = "done"
+
+        if result.status == "ok":
+            bundle = await asyncio.to_thread(
+                write_bundle, result, store / result.model_id / "bundle"
+            )
+            result.artifacts.update(bundle.files)
+
+        database.record_generation(result, parent_id=job.parent_id)
+        jobs.publish(
+            job,
+            {
+                "phase": "done",
+                "ok": result.ok,
+                "message": result.message,
+                "status": result.status,
+                "keyholder": outcome.as_dict()["keyholder"],
+            },
         )
 
     @app.get("/v1/models/{model_id}")

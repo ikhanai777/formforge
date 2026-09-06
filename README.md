@@ -88,6 +88,7 @@ formforge templates                              # what is available
 formforge templates planter_halfmoon_wall        # parameters, ranges, print test
 formforge generate "a hex planter for a 4in pot"
 formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
+formforge keyholder cat.png --width 200 --hooks 5   # an image, not a sentence
 formforge check model.stl --profile bambu_p1s_0.4 --category planter
 formforge render model.stl --out previews/
 formforge rules --profile prusa_mk4_0.4          # the DFM rules being applied
@@ -108,6 +109,56 @@ a print outcome recorded against a model is the only thing that can make one
 of them a measurement, and it lands next to what the validator measured at the
 time.
 
+### From a picture
+
+```bash
+$ formforge keyholder beetle.png --width 200 --plan-only   # trace, draw, stop
+$ formforge keyholder beetle.png --width 200
+
+  [ok] trace     traced 179 outline points from 512x384 px (colour-distance)
+  [ok] codegen   laid out 200 x 128 x 27 mm, 5 hook(s), keyhole mount, ~145 g
+  [ok] execute   solid built: 1772 triangles
+  [ok] validate  30 checks passed
+  [ok] render    8 views rendered
+```
+
+`keyholder` is the one command where the input is a shape rather than a
+sentence. An uploaded picture becomes the silhouette of a wall-mounted key rack;
+everything that makes the silhouette a product — the hook rail, self-supporting
+hooks, keyhole hangers, the minimum feature size, the print orientation — is
+generated parametrically around it.
+
+**The image decides the outline and nothing else.** It never becomes geometry
+directly: it becomes a polygon, the polygon is cleaned in the plane until it is
+manufacturable, and only then does a kernel see it. So this path keeps
+everything the table above claims — watertight by construction, dimensioned,
+editable afterwards, STEP on the way out — for an input that a mesh generator
+would answer with a shell that has no wall thickness, no fixings and no flat
+back.
+
+Three decisions are worth knowing about, and `docs/keyholder.md` explains all of
+them:
+
+- **It prints flat, back to the bed.** For an arbitrary outline that is not a
+  preference: flat, every traced edge is a vertical wall; on edge, every one of
+  them is an overhang whose angle came from a photograph. The cost is that a
+  hook root is loaded across the layers, which is why the hooks are wedges with
+  a 45° gusset and why the generated `source.py` says to use PETG for a heavy
+  rack.
+- **Thin features are deleted before they are built, not reported afterwards.**
+  A morphological opening at half the minimum feature size guarantees nothing in
+  the plane is thinner than 2.4 mm, and the result says what that cost:
+  `removed features thinner than 2.4 mm (6% of the traced area)`.
+- **Every bundle carries `preview_trace.png`.** The outline that survived, the
+  openings that became engraving, where the hooks and fixings landed. When a key
+  holder comes out wrong the reason is visible there and nowhere else, which is
+  what `--plan-only` exists to put in front of you in a second, before the
+  kernel runs.
+
+Cut-outs, clip art and logos trace exactly. Photographs depend on their
+background: `--threshold` moves the cut, `--invert` flips it, and the drawing
+tells you which you need.
+
 ### From Claude, over MCP
 
 ```bash
@@ -116,7 +167,10 @@ python -m formforge.mcp        # stdio server
 
 Then ask Claude for "a hex wall planter for a 4-inch pot". The tool results
 carry the preview images inline, so Claude can see what it made and correct
-itself in the same turn.
+itself in the same turn. `generate_key_holder` takes an uploaded picture and has
+a `plan_only` mode for exactly that reason: the traced outline comes back as an
+image, so the model can look at what it read out of the photograph and change
+the threshold before spending a minute in the kernel.
 
 `report_print_result` is the tool worth knowing about: when the user comes back
 and says how a print came out, that sentence is the only empirical evidence this
@@ -133,6 +187,9 @@ FORMFORGE_SANDBOX_RUNTIME=gvisor uvicorn formforge.api.app:app
 `/v1/models/{id}/stream` replays every step of the loop as it happens. The loop
 is worth showing rather than hiding — watching it find a 1.1 mm wall and
 regenerate is the clearest possible argument for the whole approach.
+
+`POST /v1/keyholder` takes a base64 image and runs the key holder path through
+the same job machinery, event stream and bundle.
 
 `GET /v1/models/{id}/events` replays it again afterwards, from the database.
 `GET /v1/stats` reports template health and the dominant failure classes;
@@ -262,8 +319,13 @@ formforge/
   mcp/            the MCP server
   api/            the HTTP gateway
   eval/           the template harness and the benchmark
+  keyholder/      image -> mask -> polygon -> layout -> build123d
   templates/      12 verified parametric definitions
 ```
+
+`docs/keyholder.md` covers the image path: how the subject is separated from
+its background, why the outline is cleaned in the plane rather than checked
+afterwards, and why the hooks are the shape they are.
 
 `docs/architecture.md` covers the parts that need more than a paragraph:
 tessellation, the measurement approximations and where they are wrong, the
