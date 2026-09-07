@@ -337,6 +337,9 @@ preconditions:
   - >
     min(96, max(60, max(emboss_count, panels * 2, 8) * 6))
     * min(72, max(24, emboss_rows * 21)) <= 7000
+  # The foot spreads on a cone, and a cone that reaches out further than it
+  # rises is an overhang past 45 degrees whatever else is true of it.
+  - "foot_mm <= foot_h_mm + 0.5"
   - "bore_d_mm + wall_mm * 2 >= 60"
 
 source: |
@@ -392,6 +395,8 @@ source: |
   SHELL_RIBS = 5.0
   VEIN = 0.07
   BEAD_SPAN = 2.2
+  EDGE_MM = 2.0
+  LAND_MM = 1.0
 
 
   def hash01(index, salt):
@@ -479,6 +484,18 @@ source: |
   PHASE = [hash01(k, 2.0) for k in range(3)]
 
 
+  def edge_fade(t):
+      """Nothing stands proud right at the plate: the first millimetres are a
+      plain land, which is what a cast piece does at its foot anyway.
+
+      Only at the bottom. The rim at the top is a vertical wall meeting a
+      horizontal face, which is a right angle and measures as thick as the wall
+      is; fading the relief out there would turn that right angle into a wedge
+      and make the thing it is meant to prevent.
+      """
+      return min(1.0, HEIGHT_MM * t / EDGE_MM)
+
+
   def relief_at(angle, t):
       """How far the ornament stands proud at this angle and height, in mm."""
       total = 0.0
@@ -486,7 +503,7 @@ source: |
           for edge in (LOW, HIGH):
               total = max(total, BEAD_MM * bump((t - edge) / BEAD_T))
       if EMBOSS_MM <= 0.05:
-          return total
+          return total * edge_fade(t)
       for low, high, kind, index in BANDS:
           if kind == "plain" or t < low or t > high:
               continue
@@ -515,7 +532,7 @@ source: |
               value = max(value * clear, frame)
           if value > 0.0:
               total = max(total, EMBOSS_MM * value)
-      return total
+      return total * edge_fade(t)
 
 
   # --- 3. the silhouette ------------------------------------------------------
@@ -549,10 +566,17 @@ source: |
   # of no height is a foot that spreads over one row of the loft, which is what
   # a foot of no height should look like anyway.
   FOOT_T = min(0.95, max(FOOT_H_MM / max(HEIGHT_MM, 1e-6), 0.02))
+  # A short vertical land under the foot, and it is not cosmetic. Without it the
+  # foot's cone runs straight into the flat bottom face, and a cone at 45
+  # degrees meeting a horizontal plane closes at 45 -- an edge with no thickness
+  # in it, which is exactly what the thickness pass samples and rejects. One
+  # millimetre of vertical wall turns that into a right angle.
+  LAND_T = min(LAND_MM / max(HEIGHT_MM, 1e-6), FOOT_T * 0.5)
   WAIST_T = min(0.92, max(FOOT_T + 0.05, WAIST_POS))
   WAIST_R = max(RIM_R * (1.0 - WAIST), bore_at(WAIST_T) + MIN_WALL)
   CONTROL = [
       (0.0, RIM_R + FOOT_MM),
+      (LAND_T, RIM_R + FOOT_MM),
       (FOOT_T, RIM_R * (1.0 + BELLY)),
       (WAIST_T, WAIST_R),
       (1.0, RIM_R),
@@ -666,14 +690,18 @@ source: |
   # --- 5. the socket ----------------------------------------------------------
   # Wider at the top, because that is the way a cup is: a cone the other way up
   # is an undercut, and on a holder with a floor it cuts the foot clean off.
+  # A cone whose two radii are equal is not a cone, and the kernel says so
+  # rather than quietly building a cylinder, so an untapered socket is opened
+  # by a hundredth of a millimetre. That is a fortieth of a layer.
+  NIP = 0.01
   if FLOOR_MM <= 0.05:
       result = result - Pos(0, 0, HEIGHT_MM / 2) * Cone(
-          BORE_BOT, BORE_TOP, HEIGHT_MM + OVER + OVER
+          BORE_BOT, max(BORE_TOP, BORE_BOT + NIP), HEIGHT_MM + OVER + OVER
       )
   else:
       GROW = BORE_TAPER * BORE_TOP * OVER / max(DEPTH, 1e-6)
       result = result - Pos(0, 0, HEIGHT_MM - DEPTH + (DEPTH + OVER) / 2) * Cone(
-          BORE_BOT, BORE_TOP + GROW, DEPTH + OVER
+          BORE_BOT, max(BORE_TOP + GROW, BORE_BOT + NIP), DEPTH + OVER
       )
 
   # --- 6. the handles ---------------------------------------------------------

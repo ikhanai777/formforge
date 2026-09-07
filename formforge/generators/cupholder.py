@@ -125,7 +125,7 @@ STYLES: dict[str, dict[str, Any]] = {
     "tankard": {
         "height_mm": 86, "bore_d_mm": 92, "bore_taper": 0.08, "bore_depth": 0.78,
         "wall_mm": 3.8, "floor_mm": 4, "belly": 0.1, "waist": 0.12,
-        "waist_pos": 0.58, "foot_mm": 10, "foot_h_mm": 9,
+        "waist_pos": 0.58, "foot_mm": 10, "foot_h_mm": 11,
         "band_low": "dentil", "band_mid": "plain", "band_high": "bead",
         "split_low": 0.22, "split_high": 0.8, "emboss_mm": 1.3, "emboss_count": 14,
         "emboss_rows": 1, "emboss_sharp": 0.85, "panels": 0, "panel_frame": 0.18,
@@ -135,7 +135,7 @@ STYLES: dict[str, dict[str, Any]] = {
     "shell": {
         "height_mm": 92, "bore_d_mm": 78, "bore_taper": 0.14, "bore_depth": 0.8,
         "wall_mm": 3.6, "floor_mm": 4, "belly": 0.16, "waist": 0.14,
-        "waist_pos": 0.48, "foot_mm": 11, "foot_h_mm": 10,
+        "waist_pos": 0.48, "foot_mm": 11, "foot_h_mm": 12,
         "band_low": "plain", "band_mid": "scallop", "band_high": "eggdart",
         "split_low": 0.18, "split_high": 0.8, "emboss_mm": 1.5, "emboss_count": 10,
         "emboss_rows": 1, "emboss_sharp": 0.5, "panels": 8, "panel_frame": 0.16,
@@ -440,7 +440,7 @@ def _settle(out: dict[str, Any]) -> None:
     exactly at a limit rounds off it otherwise, and the sweep finds that before
     anybody else does.
     """
-    for name in ("height_mm", "floor_mm", "foot_h_mm", "wall_mm", "bore_depth"):
+    for name in ("height_mm", "floor_mm", "foot_h_mm", "foot_mm", "wall_mm", "bore_depth"):
         out[name] = round(float(out[name]), 2)
     height = out["height_mm"]
 
@@ -477,6 +477,12 @@ def _settle(out: dict[str, Any]) -> None:
     if out["foot_h_mm"] < 0.0:
         out["foot_h_mm"] = 0.0
         out["bore_depth"] = _down(min(out["bore_depth"], 1.0 + 1.8 / height))
+    # The foot spreads on a cone, so how far out it may reach is set by how far
+    # up it has to do it in. Settled last, because the line above is the last
+    # thing allowed to shorten it.
+    # 0.4 against the template's 0.5: 7.88 + 0.5 is 8.379999999999999 in binary,
+    # and a foot rounded to exactly 8.38 is then one ulp over a rule it meets.
+    out["foot_mm"] = _down(min(max(out["foot_mm"], 0.0), out["foot_h_mm"] + 0.4, 26.0))
 
 
 def _up(value: float) -> float:

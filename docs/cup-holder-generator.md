@@ -168,6 +168,38 @@ perfectly reasonable pair of sliders. The source takes the waist as far as the
 wall allows and no further, and the section clamps it again in case the curve
 *between* control points dips below what the control points promised.
 
+## What the range sweep found
+
+Building every parameter at both ends of its declared range turned up four
+things, and three of them are the same mistake in different clothes: an *edge*
+where two surfaces close at an acute angle has no thickness in it, and the
+thickness pass samples exactly there.
+
+**A cone meeting a plane closes at the cone's own angle.** The foot spreads on a
+45-degree cone and the bottom of the holder is a flat disc, so the rim where
+they meet is a 50-degree wedge -- and about one sample in a hundred lands within
+0.8 mm of it, which is precisely what the first percentile reads. The fix is a
+one-millimetre vertical land under the foot, which turns that wedge into a right
+angle and takes the measured minimum wall from 0.00 mm to 3.5 mm on the fluted
+column. It is also what a cast foot looks like.
+
+**Relief that runs into a flat face does the same thing on a smaller scale**, so
+the ornament now fades out over the first two millimetres above the plate. Only
+at the bottom: the rim at the top is a vertical wall meeting a horizontal face,
+which is already a right angle, and fading the relief there would *create* the
+wedge rather than remove it. That is the trap this rule sets -- the symmetric
+version of the fix is worse than no fix.
+
+**A foot may not reach out further than it rises.** `foot_mm` ran to 26 mm
+against a `foot_h_mm` that could be 8, which is a 73-degree flare -- unprintable
+on its own terms, quite apart from the 0.24 mm edge it left. Stated as a
+precondition rather than clamped in the source, because a foot that wide is a
+different design decision and the caller should be told.
+
+**A cone with two equal radii is not a cone**, and the kernel says so rather
+than quietly building a cylinder. An untapered socket now opens by a hundredth
+of a millimetre, which is a fortieth of a layer.
+
 ## Printing
 
 It stands on its foot with no support. The foot spreads on a cone rather than a
