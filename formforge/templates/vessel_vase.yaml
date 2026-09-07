@@ -179,18 +179,24 @@ param_schema:
     emboss_mm:
       type: number
       minimum: 0
-      maximum: 5
+      maximum: 4
       default: 1.6
-      description: "How far the relief stands proud of the wall."
+      description: >
+        How far the relief stands proud of the wall. The ceiling is measured:
+        the spline sections lose area to a raised bump in proportion to how
+        prominent it is, and past 4 mm on a 48 mm radius the loss is over the
+        one part in thirty this template holds itself to.
       ui: { widget: slider, step: 0.1, label: "Relief depth" }
     emboss_count:
       type: integer
       minimum: 1
-      maximum: 10
+      maximum: 9
       default: 6
       description: >
-        Repeats of the motif around. The ceiling is what the surface costs to
-        loft and cut, which is measured rather than chosen.
+        Repeats of the motif around. The ceiling is measured, and it is not the
+        repeats themselves: past nine, the points a repeat needs push the
+        surface budget hard enough that the bands give way, and the bands are
+        what a row of flowers is drawn out of.
       ui: { widget: slider, step: 1, label: "Repeats" }
     emboss_rows:
       type: integer

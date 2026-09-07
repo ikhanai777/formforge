@@ -374,7 +374,7 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
     # --- the relief -------------------------------------------------------
     if out.get("emboss", "none") != "none" and out["emboss_mm"] > 0.02:
         out["emboss_sharp"] = min(max(out["emboss_sharp"], 0.0), 1.0)
-        out["emboss_mm"] = min(max(out["emboss_mm"], 0.2), 5.0)
+        out["emboss_mm"] = min(max(out["emboss_mm"], 0.2), 4.0)
         out["emboss_lo"] = min(max(out["emboss_lo"], 0.0), 0.85)
         out["emboss_hi"] = min(max(out["emboss_hi"], out["emboss_lo"] + 0.14), 1.0)
         if out["emboss_hi"] - out["emboss_lo"] < 0.14:
@@ -389,7 +389,7 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
         narrow = min(out[name] for name in PROPORTIONAL)
         while out["emboss_count"] > 1 and 3.14159 * narrow / out["emboss_count"] < 7.0:
             out["emboss_count"] -= 1
-        out["emboss_count"] = int(min(max(out["emboss_count"], 1), 10))
+        out["emboss_count"] = int(min(max(out["emboss_count"], 1), 9))
         # A band that also winds round the vase needs bands per fraction of a
         # turn on top of bands per fraction of a row, and the two multiply.
         if abs(out["twist_deg"]) > 340:
