@@ -108,7 +108,9 @@ button, input, select { font: inherit; color: inherit; }
   flex-wrap: wrap;
   border-bottom: 1px solid var(--line);
   padding-bottom: 14px;
+  min-width: 0;
 }
+.masthead > div { min-width: 0; }
 .wordmark {
   font-family: var(--font-display);
   font-weight: 600;
@@ -136,7 +138,18 @@ button, input, select { font: inherit; color: inherit; }
 .pipeline b { color: var(--accent); font-weight: 500; }
 .pipeline i { font-style: normal; opacity: .5; }
 
-/* model tabs */
+/* model tabs. Six of them are 513px of content, which on a 390px phone was
+   the single thing setting the page's minimum width and pushing 139px of
+   horizontal overflow into every other element. A grid child defaults to
+   min-width:auto, so it cannot shrink below its content unless told to --
+   hence min-width:0 here and on the column that holds it. */
+.mast-right {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+  min-width: 0;
+  max-width: 100%;
+}
 .tabs {
   display: flex;
   gap: 6px;
@@ -144,7 +157,13 @@ button, input, select { font: inherit; color: inherit; }
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 3px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
+.tabs::-webkit-scrollbar { display: none; }
 .tab {
   border: 0;
   background: transparent;
@@ -154,6 +173,8 @@ button, input, select { font: inherit; color: inherit; }
   font-size: 13px;
   font-weight: 500;
   cursor: pointer;
+  white-space: nowrap;
+  flex: none;
   transition: background .12s ease, color .12s ease;
 }
 .tab:hover { color: var(--ink); }
@@ -170,7 +191,9 @@ button, input, select { font: inherit; color: inherit; }
   grid-template-columns: minmax(0, 1fr) 372px;
   gap: 16px;
   align-items: start;
+  min-width: 0;
 }
+.studio > * { min-width: 0; }
 @media (max-width: 980px) {
   .studio { grid-template-columns: minmax(0, 1fr); }
 }
@@ -189,6 +212,10 @@ button, input, select { font: inherit; color: inherit; }
   display: grid;
 }
 @media (max-width: 980px) { .stage { height: 56vh; min-height: 380px; } }
+/* A phone held sideways is 390px tall, and a 380px minimum on the stage leaves
+   nothing of the page to scroll to. Short viewports get a stage measured
+   against the height they actually have. */
+@media (max-height: 560px) { .stage { height: 74vh; min-height: 190px; } }
 #view { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
 #view.dragging { cursor: grabbing; }
 
@@ -247,7 +274,14 @@ button, input, select { font: inherit; color: inherit; }
   display: grid;
   gap: 14px;
   align-content: start;
+  min-width: 0;
 }
+/* Every level of the nesting has to be told, not just the top one: a grid or
+   flex child's automatic minimum size is its content, so a single panel that
+   cannot shrink holds the whole page open behind it -- and the panels are three
+   levels down, inside a grid inside a grid. One blanket rule rather than a list
+   of the ones that happen to matter today. */
+.controls, .controls * { min-width: 0; }
 @media (min-width: 981px) {
   .controls { max-height: min(78vh, 760px); overflow-y: auto; padding-right: 4px; }
 }
@@ -347,9 +381,12 @@ input[type="range"]::-moz-range-thumb {
   width: 14px; height: 14px; border-radius: 50%;
   background: var(--accent); border: 2px solid var(--surface); cursor: grab;
 }
-.segmented { display: flex; gap: 5px; }
+/* Ten motifs in a row is 31px a button on a phone, which is neither readable
+   nor tappable. They wrap instead, each keeping a width its label fits in. */
+.segmented { display: flex; gap: 5px; flex-wrap: wrap; }
 .segmented button {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 68px;
   border: 1px solid var(--line);
   background: var(--paper);
   color: var(--muted);
@@ -459,6 +496,75 @@ input[type="range"]::-moz-range-thumb {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ---- phones ---------------------------------------------------
+   The layout already collapses to one column at 980px. What a phone
+   needs on top of that is room to scroll: the stage has to be short
+   enough that there is page above and below it, because the canvas
+   takes the whole gesture and a viewer you cannot scroll past is a
+   viewer you are stuck in. */
+@media (max-width: 700px) {
+  .shell { padding: 12px 12px 18px; gap: 12px; }
+  /* The tagline is six lines of prose on a 320px screen, which puts the model
+     below the fold on the one device where the model is the whole point. It is
+     clamped to three and opens on a tap rather than being cut away. */
+  .tagline {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .tagline.open { display: block; -webkit-line-clamp: none; }
+  .tagline::after { content: " more"; color: var(--accent); font-weight: 600; }
+  .tagline.open::after { content: ""; }
+  .masthead { gap: 10px; padding-bottom: 10px; }
+  .wordmark { font-size: 24px; }
+  .tagline { font-size: 13px; }
+  .mast-right { justify-items: stretch; width: 100%; }
+  .pipeline { display: none; }
+  /* The readout stops being an overlay and becomes a strip under the model.
+     Floated over a 380px stage it wrapped to two lines and sat across the rim
+     of whatever it was describing. */
+  .stage { height: min(52vh, 420px); min-height: 260px; grid-template-rows: minmax(0, 1fr) auto; }
+  .readout {
+    position: static;
+    grid-row: 2;
+    border: 0;
+    border-top: 1px solid var(--line);
+    border-radius: 0;
+    backdrop-filter: none;
+    background: var(--surface);
+    gap: 10px;
+    padding: 7px 10px;
+    font-size: 11px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    scrollbar-width: none;
+  }
+  .readout::-webkit-scrollbar { display: none; }
+  .hint { display: none; }
+  .studio { gap: 12px; }
+  .panel { padding: 11px 12px 13px; }
+  .species { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; }
+  .formats { grid-template-columns: 1fr; }
+}
+
+/* ---- touch ----------------------------------------------------
+   Coarse pointers get targets they can actually hit, and the number
+   input gets 16px so that focusing it does not zoom the page on iOS. */
+@media (pointer: coarse) {
+  .tab { padding: 9px 16px; font-size: 14px; }
+  .btn { padding: 11px 16px; min-height: 44px; }
+  .chip { padding: 9px 6px 8px; min-height: 62px; }
+  .segmented button { padding: 10px 6px; min-height: 40px; }
+  .seedrow input[type="number"] { font-size: 16px; padding: 9px 10px; width: 104px; }
+  .field { padding: 9px 0; }
+  input[type="range"] { height: 34px; }
+  input[type="range"]::-webkit-slider-thumb { width: 24px; height: 24px; margin-top: -10.5px; }
+  input[type="range"]::-moz-range-thumb { width: 24px; height: 24px; }
+}
 </style>
 </head>
 <body>
@@ -468,7 +574,7 @@ input[type="range"]::-moz-range-thumb {
       <h1 class="wordmark">FormForge <span>Studio</span></h1>
       <p class="tagline" id="tagline"></p>
     </div>
-    <div style="display:grid; gap:10px; justify-items:end;">
+    <div class="mast-right">
       <div class="tabs" id="tabs" role="tablist"></div>
       <div class="pipeline" id="pipeline"></div>
     </div>
@@ -479,7 +585,7 @@ input[type="range"]::-moz-range-thumb {
       <section class="stage">
         <canvas id="view"></canvas>
         <div class="readout" id="readout"></div>
-        <div class="hint">drag to orbit &middot; scroll to zoom</div>
+        <div class="hint" id="hint">drag to orbit &middot; scroll to zoom</div>
       </section>
       <section class="status" id="status" data-state="ok">
         <div class="status-head"><span class="dot"></span><span id="status-title">Ready to build</span></div>
@@ -5131,25 +5237,61 @@ function resize() {
     camera.updateProjectionMatrix();
   }
 }
-let dragging = false, lastX = 0, lastY = 0;
+/* One finger orbits, two fingers pinch to zoom. The pointers are tracked in a
+   map rather than as one pair of coordinates, because a second finger landing
+   has to stop the orbit cleanly rather than make the model leap to wherever
+   that finger happened to touch. */
+const touches = new Map();
+let dragging = false, lastX = 0, lastY = 0, pinch = 0;
+const zoomBy = factor => {
+  orbit.dist = Math.min(700, Math.max(60, orbit.dist * factor));
+  applyCamera(); draw();
+};
+const spread = () => {
+  const [a, b] = [...touches.values()];
+  return Math.hypot(a.x - b.x, a.y - b.y);
+};
 canvas.addEventListener("pointerdown", e => {
-  dragging = true; lastX = e.clientX; lastY = e.clientY;
-  canvas.classList.add("dragging"); canvas.setPointerCapture(e.pointerId);
+  touches.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* capture is a nicety */ }
+  if (touches.size === 1) {
+    dragging = true; lastX = e.clientX; lastY = e.clientY;
+    canvas.classList.add("dragging");
+  } else if (touches.size === 2) {
+    dragging = false; canvas.classList.remove("dragging");
+    pinch = spread();
+  }
 });
 canvas.addEventListener("pointermove", e => {
+  if (!touches.has(e.pointerId)) return;
+  touches.set(e.pointerId, {x: e.clientX, y: e.clientY});
+  if (touches.size >= 2) {
+    const now = spread();
+    if (pinch > 0 && now > 0) zoomBy(pinch / now);
+    pinch = now;
+    return;
+  }
   if (!dragging) return;
   orbit.theta -= (e.clientX - lastX) * 0.008;
   orbit.phi = Math.min(Math.PI - 0.08, Math.max(0.08, orbit.phi - (e.clientY - lastY) * 0.006));
   lastX = e.clientX; lastY = e.clientY;
   applyCamera(); draw();
 });
-["pointerup", "pointercancel"].forEach(ev => canvas.addEventListener(ev, () => {
-  dragging = false; canvas.classList.remove("dragging");
-}));
+["pointerup", "pointercancel", "pointerleave"].forEach(ev =>
+  canvas.addEventListener(ev, e => {
+    touches.delete(e.pointerId);
+    if (touches.size < 2) pinch = 0;
+    if (touches.size === 1) {
+      /* The finger that is left becomes the orbit again, from where it is. */
+      const [only] = [...touches.values()];
+      lastX = only.x; lastY = only.y;
+      dragging = true; canvas.classList.add("dragging");
+    }
+    if (touches.size === 0) { dragging = false; canvas.classList.remove("dragging"); }
+  }));
 canvas.addEventListener("wheel", e => {
   e.preventDefault();
-  orbit.dist = Math.min(700, Math.max(60, orbit.dist * (1 + Math.sign(e.deltaY) * 0.09)));
-  applyCamera(); draw();
+  zoomBy(1 + Math.sign(e.deltaY) * 0.09);
 }, {passive: false});
 
 function draw() { resize(); renderer.render(scene, camera); }
@@ -5790,6 +5932,12 @@ function buildTabs() {
 document.getElementById("pipeline").innerHTML =
   ["preset", "seed", "jitter", "proportions", "feasibility", "geometry"]
     .map((n, i) => (i ? '<i>&rarr;</i>' : "") + (i === 5 ? `<b>${n}</b>` : n)).join("");
+if (window.matchMedia("(pointer: coarse)").matches) {
+  document.getElementById("hint").innerHTML = "drag to turn &middot; pinch to zoom";
+}
+document.getElementById("tagline").addEventListener("click", function () {
+  this.classList.toggle("open");
+});
 const themeWatcher = window.matchMedia("(prefers-color-scheme: dark)");
 themeWatcher.addEventListener("change", paintTheme);
 new MutationObserver(paintTheme).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
