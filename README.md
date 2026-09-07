@@ -128,9 +128,11 @@ formforge vase --params-only --count 12         # the sliders, no geometry
 formforge mushroom --species parasol --set cap_d_mm=90 --render
 ```
 
-Six definitions ship today: a **vase** in twelve silhouettes -- urn, amphora,
-bottle, bud, tulip, hourglass, cylinder, faceted, crystal, spiral, fluted,
-rippled -- a **sculpt vase** in twelve more, which is the same silhouette
+Six definitions ship today: a **vase** in twenty-one silhouettes -- urn,
+amphora, bottle, bud, tulip, hourglass, cylinder, faceted, crystal, spiral,
+fluted, rippled, and nine more wrapped in a floral relief of vines, laurel,
+ferns, blossom, roses, lilies, damask, trellis or imbricated petals -- a
+**sculpt vase** in twelve more, which is the same silhouette
 machinery wearing solid blades, an oval plan and a cut mouth rather than a
 fluted wall -- a **candle holder** in twelve, from a ribbed heart to a pierced
 lantern to a dish with a crescent moon standing behind the flame -- a tabletop

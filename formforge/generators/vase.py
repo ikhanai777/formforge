@@ -88,6 +88,69 @@ STYLES: dict[str, dict[str, Any]] = {
         "neck_d_mm": 74, "neck_pos": 0.86, "rim_d_mm": 80, "shoulder": 0.5,
         "ripples": 11, "ripple_mm": 2.2,
     },
+    # --- the embossed nine ---------------------------------------------------
+    # A silhouette and a garden on it. The band is stated in height fractions,
+    # so it stays where it was put when the vase is scaled; the repeat count is
+    # not, because a repeat is a flower and a flower is cast at the size a
+    # flower is cast at.
+    "vineyard": {
+        "height_mm": 185, "base_d_mm": 62, "mid_d_mm": 98, "mid_pos": 0.42,
+        "neck_d_mm": 56, "neck_pos": 0.84, "rim_d_mm": 68, "shoulder": 0.55,
+        "emboss": "vine", "emboss_mm": 1.8, "emboss_count": 5, "emboss_rows": 3,
+        "emboss_sharp": 0.5, "emboss_lo": 0.14, "emboss_hi": 0.82,
+    },
+    "laurelled": {
+        "height_mm": 200, "base_d_mm": 48, "mid_d_mm": 104, "mid_pos": 0.5,
+        "neck_d_mm": 46, "neck_pos": 0.86, "rim_d_mm": 60, "shoulder": 0.6,
+        "emboss": "laurel", "emboss_mm": 1.6, "emboss_count": 6, "emboss_rows": 4,
+        "emboss_sharp": 0.55, "emboss_lo": 0.2, "emboss_hi": 0.9,
+    },
+    "fernery": {
+        "height_mm": 210, "base_d_mm": 70, "mid_d_mm": 76, "mid_pos": 0.4,
+        "neck_d_mm": 72, "neck_pos": 0.86, "rim_d_mm": 78, "shoulder": 0.3,
+        "emboss": "fern", "emboss_mm": 1.5, "emboss_count": 7, "emboss_rows": 5,
+        "emboss_sharp": 0.45, "emboss_lo": 0.06, "emboss_hi": 0.96,
+        "rim_band_mm": 0.8,
+    },
+    "posy": {
+        "height_mm": 165, "base_d_mm": 44, "mid_d_mm": 56, "mid_pos": 0.28,
+        "neck_d_mm": 70, "neck_pos": 0.78, "rim_d_mm": 104, "shoulder": 0.55,
+        "emboss": "blossom", "emboss_mm": 2.0, "emboss_count": 6, "emboss_rows": 3,
+        "emboss_sharp": 0.4, "emboss_lo": 0.1, "emboss_hi": 0.74,
+        "rim_band_mm": 0.8,
+    },
+    "rosette": {
+        "height_mm": 205, "base_d_mm": 76, "mid_d_mm": 88, "mid_pos": 0.24,
+        "neck_d_mm": 32, "neck_pos": 0.68, "rim_d_mm": 36, "shoulder": 0.8,
+        "emboss": "rose", "emboss_mm": 1.9, "emboss_count": 5, "emboss_rows": 2,
+        "emboss_sharp": 0.35, "emboss_lo": 0.06, "emboss_hi": 0.5,
+    },
+    "fleur": {
+        "height_mm": 180, "base_d_mm": 58, "mid_d_mm": 92, "mid_pos": 0.38,
+        "neck_d_mm": 64, "neck_pos": 0.82, "rim_d_mm": 76, "shoulder": 0.4,
+        "facets": 8, "facet_round": 0.55,
+        "emboss": "lily", "emboss_mm": 1.7, "emboss_count": 8, "emboss_rows": 3,
+        "emboss_sharp": 0.6, "emboss_lo": 0.16, "emboss_hi": 0.8,
+    },
+    "damascene": {
+        "height_mm": 190, "base_d_mm": 78, "mid_d_mm": 80, "mid_pos": 0.45,
+        "neck_d_mm": 78, "neck_pos": 0.85, "rim_d_mm": 82, "shoulder": 0.25,
+        "emboss": "damask", "emboss_mm": 1.5, "emboss_count": 6, "emboss_rows": 5,
+        "emboss_sharp": 0.6, "emboss_lo": 0.05, "emboss_hi": 0.95,
+        "rim_band_mm": 1.0,
+    },
+    "trellised": {
+        "height_mm": 185, "base_d_mm": 66, "mid_d_mm": 90, "mid_pos": 0.44,
+        "neck_d_mm": 72, "neck_pos": 0.86, "rim_d_mm": 84, "shoulder": 0.5,
+        "emboss": "trellis", "emboss_mm": 1.4, "emboss_count": 6, "emboss_rows": 5,
+        "emboss_sharp": 0.7, "emboss_lo": 0.08, "emboss_hi": 0.92,
+    },
+    "artichoke": {
+        "height_mm": 170, "base_d_mm": 58, "mid_d_mm": 110, "mid_pos": 0.5,
+        "neck_d_mm": 66, "neck_pos": 0.86, "rim_d_mm": 74, "shoulder": 0.7,
+        "emboss": "scale", "emboss_mm": 2.2, "emboss_count": 9, "emboss_rows": 7,
+        "emboss_sharp": 0.5, "emboss_lo": 0.02, "emboss_hi": 0.94,
+    },
 }
 
 STYLE_NOTE = {
@@ -103,6 +166,15 @@ STYLE_NOTE = {
     "spiral": "flutes wound most of a turn -- the vase-mode classic",
     "fluted": "a column of sharp ribs",
     "rippled": "horizontal rings up the wall",
+    "vineyard": "an urn with a vine running round its belly",
+    "laurelled": "a laurel spray up a tall amphora",
+    "fernery": "ferns the whole way up a straight-sided column",
+    "posy": "open blossoms under a wide tulip mouth",
+    "rosette": "coiled roses round the shoulders of a bottle",
+    "fleur": "lilies on eight soft facets",
+    "damascene": "an ogee damask covering the wall",
+    "trellised": "a leafy lattice, corner to corner",
+    "artichoke": "imbricated petals, the way a pinecone is built",
 }
 
 # How far each slider may wander from its style. Tighter than the mushroom's:
@@ -120,12 +192,16 @@ JITTER: dict[str, tuple[str, float]] = {
     "ripple_mm": ("rel", 0.25),
     "wall_mm": ("abs", 0.2),
     "rim_band_mm": ("abs", 0.4),
+    "emboss_mm": ("rel", 0.18),
+    "emboss_sharp": ("abs", 0.15),
+    "emboss_lo": ("abs", 0.04),
+    "emboss_hi": ("abs", 0.04),
 }
 
 # Diameters are not jittered on their own -- they are rebuilt from the style's
 # own ratios against the height that came out of the jitter, then nudged.
 PROPORTIONAL = ("base_d_mm", "mid_d_mm", "neck_d_mm", "rim_d_mm")
-COUNTS = ("facets", "lobes", "ripples")
+COUNTS = ("facets", "lobes", "ripples", "emboss_count", "emboss_rows")
 
 DEFINITION = Definition("vase")
 
@@ -231,6 +307,23 @@ def _proportioned(
     if style.get("lobes") and "lobes" not in pinned:
         pitch = style.get("mid_d_mm", 90) / max(style["lobes"], 1)
         out["lobes"] = max(4, round(out["mid_d_mm"] / pitch * (0.9 + 0.2 * draws["lobes"])))
+    # A flower is cast at the size a flower is cast at. So the *count* follows
+    # the vase -- more of them round a wider one, more rows up a taller band --
+    # while the relief depth stays exactly where the style put it, because that
+    # is a millimetre figure and the nozzle does not care how big the vase is.
+    if out.get("emboss", "none") != "none":
+        if "emboss_count" not in pinned and style.get("emboss_count"):
+            pitch = style.get("mid_d_mm", 90) / max(style["emboss_count"], 1)
+            out["emboss_count"] = max(
+                3, round(out["mid_d_mm"] / pitch * (0.92 + 0.16 * draws["emboss_count"]))
+            )
+        if "emboss_rows" not in pinned and style.get("emboss_rows"):
+            span = (style.get("emboss_hi", 0.9) - style.get("emboss_lo", 0.1)) * reference
+            pitch = span / max(style["emboss_rows"], 1)
+            band = (out["emboss_hi"] - out["emboss_lo"]) * height
+            out["emboss_rows"] = max(
+                1, round(band / max(pitch, 1e-6) * (0.92 + 0.16 * draws["emboss_rows"]))
+            )
     return out
 
 
@@ -277,6 +370,32 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
     if abs(out["twist_deg"]) * detail > 3400:
         out["twist_deg"] = round(3400 / detail) * (1 if out["twist_deg"] >= 0 else -1)
     out["base_mm"] = min(out["base_mm"], out["height_mm"] * 0.25)
+
+    # --- the relief -------------------------------------------------------
+    if out.get("emboss", "none") != "none" and out["emboss_mm"] > 0.02:
+        out["emboss_sharp"] = min(max(out["emboss_sharp"], 0.0), 1.0)
+        out["emboss_mm"] = min(max(out["emboss_mm"], 0.2), 5.0)
+        out["emboss_lo"] = min(max(out["emboss_lo"], 0.0), 0.85)
+        out["emboss_hi"] = min(max(out["emboss_hi"], out["emboss_lo"] + 0.14), 1.0)
+        if out["emboss_hi"] - out["emboss_lo"] < 0.14:
+            out["emboss_lo"] = max(0.0, out["emboss_hi"] - 0.14)
+        # A row needs enough height that the flower in it is a shape rather than
+        # a scratch. The rows give way, not the band: where the ornament sits is
+        # the design, how many times it repeats up it is not.
+        band = (out["emboss_hi"] - out["emboss_lo"]) * height
+        out["emboss_rows"] = int(min(max(out["emboss_rows"], 1), max(1, band // 10)))
+        # And a repeat needs enough of the circumference to draw a flower in at
+        # the narrowest place the band can reach.
+        narrow = min(out[name] for name in PROPORTIONAL)
+        while out["emboss_count"] > 1 and 3.14159 * narrow / out["emboss_count"] < 7.0:
+            out["emboss_count"] -= 1
+        out["emboss_count"] = int(min(max(out["emboss_count"], 1), 10))
+        # A band that also winds round the vase needs bands per fraction of a
+        # turn on top of bands per fraction of a row, and the two multiply.
+        if abs(out["twist_deg"]) > 340:
+            out["twist_deg"] = 340.0 if out["twist_deg"] > 0 else -340.0
+    else:
+        out["emboss"] = "none"
     return out
 
 
@@ -386,6 +505,11 @@ def describe(params: dict[str, Any]) -> str:
         surface.append(f"{params['ripples']} rings")
     if abs(params.get("twist_deg", 0)) >= 15:
         surface.append(f"{params['twist_deg']:.0f}° twist")
+    if params.get("emboss", "none") != "none" and params.get("emboss_mm", 0) > 0.02:
+        surface.append(
+            f"{params['emboss']} relief {params['emboss_mm']:.1f} mm proud"
+            f" x{params.get('emboss_count', 0)}"
+        )
     widest = max(params.get(k, 0) for k in PROPORTIONAL)
     return (
         f"{params.get('height_mm', 0):.0f} mm tall, {widest:.0f} mm across, "

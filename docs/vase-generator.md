@@ -1,7 +1,7 @@
 # The vase generator
 
-Twelve silhouettes and four surface treatments from one definition, exported as
-STL to print and STEP to edit.
+Twenty-one silhouettes, four surface treatments and nine floral reliefs from one
+definition, exported as STL to print and STEP to edit.
 
 ```
 formforge vase --count 8 --seed 42 --style mixed --out out/vases
@@ -26,8 +26,9 @@ sculptural vase live in, with the right-hand column rebuilt from this
 template's schema. Open the file in a
 browser -- no server, no build step -- and you have
 
-* the twelve styles as chips, each drawn from its own silhouette
-* every slider the template declares, grouped as silhouette, surface and wall
+* the twenty-one styles as chips, each drawn from its own silhouette
+* every slider the template declares, grouped as silhouette, surface, relief and
+  wall
 * the vase rebuilt as you drag, as one closed shell rather than a solid with a
   cavity cut from it: outer skin, rim, cavity, floor. That is what makes the
   material readout exact rather than an estimate -- 80.4 cm3 on screen against
@@ -64,9 +65,18 @@ between two sections of a ruled loft is a straight blend of them.
 | `spiral` | flutes wound most of a turn — the vase-mode classic |
 | `fluted` | a column of sharp ribs |
 | `rippled` | horizontal rings up the wall |
+| `vineyard` | an urn with a vine running round its belly |
+| `laurelled` | a laurel spray up a tall amphora |
+| `fernery` | ferns the whole way up a straight-sided column |
+| `posy` | open blossoms under a wide tulip mouth |
+| `rosette` | coiled roses round the shoulders of a bottle |
+| `fleur` | lilies on eight soft facets |
+| `damascene` | an ogee damask covering the wall |
+| `trellised` | a leafy lattice, corner to corner |
+| `artichoke` | imbricated petals, the way a pinecone is built |
 
-They are not twelve sizes of one vase: each is a set of positions for the same
-sliders, and `--style mixed` draws one per seed.
+They are not twenty-one sizes of one vase: each is a set of positions for the
+same sliders, and `--style mixed` draws one per seed.
 
 ## The silhouette
 
@@ -96,6 +106,71 @@ Applied to the radius, in this order, on both the outer skin and the cavity:
 * **ripples** — horizontal rings up the wall.
 * **twist** — rotation of the section from base to rim. With flutes or facets
   this is the spiral vase everyone prints; on a round section it does nothing.
+
+## The relief
+
+The last nine styles wear a **floral relief**, and it is a different kind of
+thing from the four above: not a shape applied to the radius but a *field*.
+`emboss_at(angle, t)` answers one question -- how far does the surface stand
+proud here -- and every section is drawn through points that each ask it. That
+is what makes nine motifs cost the same as one.
+
+| Motif | What it is |
+| --- | --- |
+| `vine` | a stem that wanders, with a leaf on the outside of each bend |
+| `laurel` | a swaying spray, leaves alternating up it |
+| `fern` | a rachis with pinnae that shorten as they rise |
+| `blossom` | five petals seen face on, with a boss in the middle |
+| `rose` | a coiled bud: one ridge spiralling out from the centre |
+| `lily` | three petals rising out of a tie band -- the fleur |
+| `damask` | the ogee, with a flower held inside it |
+| `trellis` | a leafy lattice, a leaf in each opening |
+| `scale` | imbricated petals, the way a pinecone is built |
+
+`emboss_lo` and `emboss_hi` put the band where you want it, from a frieze round
+the belly to a covering over the whole wall. `emboss_count` is repeats around
+and `emboss_rows` repeats up, and neither is a size: a flower is cast at the
+size a flower is cast at, so the generator scales the *counts* with the vase
+and leaves `emboss_mm` exactly where the style put it.
+
+The relief goes on the **outer skin alone**. It is raised, never sunk, so it can
+only add material to the outside: the cavity is lofted from the plain
+silhouette, the wall under a crest comes out thicker rather than thinner, and
+the inside of the vase stays smooth enough to clean. It is also why the relief
+needs no printability rule of its own -- the steepest surface a motif can make
+is its own flank, and `emboss_sharp` is the exponent that sets that angle.
+
+### Two numbers here are measured, and both were surprises
+
+**The exponent stops at 1.8.** An interpolating spline drawn through a narrow
+raised bump undershoots on both sides of it, and how far it undershoots depends
+on the *shape* of the bump and not at all on how densely it is sampled: a stroke
+a tenth of a repeat wide at exponent 2.6 loses nearly seven per cent of the
+section's area whether it is drawn through twenty-two samples per repeat or
+forty-four. Under 1.8, with every stroke at least fifteen hundredths of a repeat
+wide, the loss is under one per cent.
+
+**Every running element sways.** This is the stranger one. A ridge that runs
+straight up the vase at a fixed angle is the single thing a ruled loft between
+spline sections cannot follow. The surface between two sections is matched by
+curve *parameter* rather than by angle, and a ridge that never moves pins that
+parameterisation in a way that makes the band between two nearly identical
+sections enclose a fifth less than it should. A laurel with a straight stem came
+back with a tenth of the vase missing; the same laurel with a stem that sways by
+fourteen hundredths of a repeat over a row comes back exact. Nothing else helps
+-- not more points round, not more bands up, not a periodic spline, not a
+smoother field. The rule lives in the source as `SWAY_MIN`, and the acceptance
+test for a new motif is to build it twice, once with spline sections and once
+with polyline, and check the two volumes agree.
+
+The two directions are not symmetric, and knowing which is which is what makes
+the budget spendable. **Points round are correctness** -- the section is a
+spline, so too few points and the curve overshoots inward through the wall.
+**Bands up are quality** -- the loft between sections is ruled, so too few bands
+and the flower is merely blocky. When the surface budget binds, the bands give
+way and the points never do.
+
+## Printing the relief
 
 No segment of the silhouette may change radius faster than **45 degrees**, in
 either direction, and the template says so as a precondition. Flaring out that

@@ -167,6 +167,62 @@ param_schema:
       default: 0
       description: "Ring depth."
       ui: { widget: slider, step: 0.1, label: "Ring depth" }
+    emboss:
+      type: string
+      enum: [none, vine, laurel, fern, blossom, rose, lily, damask, trellis, scale]
+      default: none
+      description: >
+        A floral relief wrapped round the wall. Raised, never sunk, so it can
+        only add material to the outside: the cavity is lofted from the plain
+        silhouette and the wall under a crest is thicker rather than thinner.
+      ui: { widget: segmented, label: "Relief" }
+    emboss_mm:
+      type: number
+      minimum: 0
+      maximum: 5
+      default: 1.6
+      description: "How far the relief stands proud of the wall."
+      ui: { widget: slider, step: 0.1, label: "Relief depth" }
+    emboss_count:
+      type: integer
+      minimum: 1
+      maximum: 10
+      default: 6
+      description: >
+        Repeats of the motif around. The ceiling is what the surface costs to
+        loft and cut, which is measured rather than chosen.
+      ui: { widget: slider, step: 1, label: "Repeats" }
+    emboss_rows:
+      type: integer
+      minimum: 1
+      maximum: 8
+      default: 3
+      description: "Repeats of the motif up the band."
+      ui: { widget: slider, step: 1, label: "Rows" }
+    emboss_sharp:
+      type: number
+      minimum: 0
+      maximum: 1
+      default: 0.5
+      description: >
+        0 is a soft swell, 1 a crisp cast edge. It is also the slider the
+        overhang rule is written against: the steepest thing the relief can
+        make is its own flank.
+      ui: { widget: slider, step: 0.05, label: "Crispness" }
+    emboss_lo:
+      type: number
+      minimum: 0
+      maximum: 0.85
+      default: 0.12
+      description: "Height fraction where the band of relief starts."
+      ui: { widget: slider, step: 0.02, label: "Band base" }
+    emboss_hi:
+      type: number
+      minimum: 0.15
+      maximum: 1
+      default: 0.86
+      description: "And where it ends. The full range wraps the whole wall."
+      ui: { widget: slider, step: 0.02, label: "Band top" }
     wall_mm:
       type: number
       minimum: 1.0
@@ -210,7 +266,9 @@ invariants:
   - "bbox.z >= height_mm - 2"
   # The widest control diameter plus whatever the flutes stand out by, and a
   # little slack for the facet corners.
-  - "bbox.x <= max(base_d_mm, mid_d_mm, neck_d_mm, rim_d_mm) + lobe_mm * 2 + 6"
+  - >
+    bbox.x <= max(base_d_mm, mid_d_mm, neck_d_mm, rim_d_mm)
+    + lobe_mm * 2 + emboss_mm * 2 + 6
   # It has to stand on the plate long enough to finish printing.
   - "plate_contact_mm2 >= 350"
 
@@ -234,6 +292,21 @@ preconditions:
   # geometry costs minutes rather than seconds -- and starts handing back a
   # cavity that has cut through its own outer wall.
   - "abs(twist_deg) * max(lobes, facets, 1) <= 3600"
+  # The relief has a band to live in, and each row in that band needs enough
+  # height that the motif in it is a shape rather than a scratch.
+  - "emboss != \"none\" implies emboss_hi >= emboss_lo + 0.12"
+  - "emboss != \"none\" implies emboss_rows * 9 <= (emboss_hi - emboss_lo) * height_mm"
+  # One repeat has to be wide enough to draw a flower in at the narrowest place
+  # the band can reach. A vine stem is a tenth of a repeat across, so six
+  # millimetres of repeat is a 0.6 mm stem -- one bead and a half.
+  - >
+    emboss != "none" implies
+    3.14159 * min(base_d_mm, mid_d_mm, neck_d_mm, rim_d_mm)
+    / max(emboss_count, 1) >= 6.0
+  # A floral band that also winds round the vase needs a band per fraction of a
+  # turn on top of a band per fraction of a row, and the two multiply. Past half
+  # a turn the source cannot afford both, and it is the flowers that suffer.
+  - "emboss != \"none\" implies abs(twist_deg) <= 360"
 
 source: |
   from build123d import *
@@ -257,6 +330,13 @@ source: |
   TWIST_DEG = 0.0
   RIPPLES = 0
   RIPPLE_MM = 0.0
+  EMBOSS = "none"
+  EMBOSS_MM = 1.6
+  EMBOSS_COUNT = 6
+  EMBOSS_ROWS = 3
+  EMBOSS_SHARP = 0.5
+  EMBOSS_LO = 0.12
+  EMBOSS_HI = 0.86
   WALL_MM = 1.6
   BASE_MM = 2.4
   RIM_BAND_MM = 0.0
@@ -268,14 +348,30 @@ source: |
   # lofted through SECTIONS x POINTS points and then cut against each other, so
   # the product is what the build costs: a fixed high resolution spends most of
   # the CPU budget rendering a smooth cylinder in exquisite detail.
-  SHARP_FACETS = FACETS >= 3 and FACET_ROUND < 0.15 and LOBES < 1
+  HAS_EMBOSS = EMBOSS != "none" and EMBOSS_MM > 0.02
+  BAND_LO = min(max(EMBOSS_LO, 0.0), 0.9)
+  BAND_HI = max(min(EMBOSS_HI, 1.0), BAND_LO + 0.08)
+  BAND = max(BAND_HI - BAND_LO, 0.15)
+  # A polygon needs its own corners and nothing else -- but only if there is
+  # nothing else. Relief is drawn between the corners, so the shortcut is off
+  # whenever there is any.
+  SHARP_FACETS = FACETS >= 3 and FACET_ROUND < 0.15 and LOBES < 1 and not HAS_EMBOSS
   if SHARP_FACETS:
-      # A polygon needs its own corners and nothing else: sampling at exactly
-      # FACETS points lands on every corner, and the loft is then a handful of
-      # ruled strips rather than a few thousand facets to intersect.
+      # Sampling at exactly FACETS points lands on every corner, and the loft is
+      # then a handful of ruled strips rather than a few thousand facets to
+      # intersect.
       POINTS = FACETS
   else:
-      POINTS = min(120, max(48, LOBES * 6, FACETS * 8))
+      # Twelve samples across a repeat, not the six a flute needs: a flute is
+      # one cosine across its whole repeat and a vine stem is a tenth of one.
+      # Sixteen samples across a repeat, not the six a flute needs: a flute is
+      # one cosine across its whole repeat, and the narrowest stroke here is a
+      # stem at a sixth of one. Sixteen is also roughly what a row gets up the
+      # band, and the cell is roughly square on the wall -- spending the budget
+      # evenly on the two directions is what keeps a leaf looking like a leaf
+      # rather than like a stack of chamfers.
+      FLORAL = EMBOSS_COUNT * 16 if HAS_EMBOSS else 0
+      POINTS = min(160, max(48, LOBES * 6, FACETS * 8, FLORAL))
   # A ruled band is a straight line up the wall, so a ripple needs several bands
   # to be a ripple rather than a chamfer, and a twisted flute needs enough bands
   # that consecutive sections are a small fraction of a flute apart. Under-sample
@@ -284,18 +380,36 @@ source: |
   # smooth silhouette 40 bands keeps the chord error under a layer line, and the
   # shading continuous -- 24 was geometrically fine and looked faceted.
   SPIRAL = abs(TWIST_DEG) * max(LOBES, FACETS, 1) / 60.0
-  SECTIONS = int(min(96, max(40, RIPPLES * 6, SPIRAL)))
+  # A row of relief needs bands the same way a repeat needs points, and it only
+  # gets the part of the height the band covers -- so a narrow band of many rows
+  # is the expensive case, not a tall one.
+  FLORAL_ROWS = EMBOSS_ROWS * 16 / BAND if HAS_EMBOSS else 0
+  SECTIONS = int(min(132, max(40, RIPPLES * 6, SPIRAL, FLORAL_ROWS)))
 
   # Both skins are lofted through SECTIONS x POINTS points and then cut against
   # each other, so their product is what the build costs. Past this ceiling the
   # resolution gives way rather than the design: the angular sampling first,
   # then the bands -- but never below what the spiral needs, because that is the
   # sampling whose failure breaks the solid instead of softening it.
-  BUDGET = 4800
+  # Two numbers rather than one: relief is what a vase is *for* once it has been
+  # asked for, so a vase wearing it is allowed a bigger surface than a plain one
+  # before the resolution starts giving way. Both are measured, and what they
+  # measure is memory rather than time -- the two lofts are nearly free and the
+  # single boolean between them is a gigabyte.
+  BUDGET = 6300 if HAS_EMBOSS else 4800
   if SECTIONS * POINTS > BUDGET:
-      shrink = (BUDGET / (SECTIONS * POINTS)) ** 0.5
-      POINTS = max(48, int(POINTS * shrink))
-      SECTIONS = int(max(24, min(SECTIONS, max(SPIRAL, BUDGET / POINTS))))
+      if HAS_EMBOSS:
+          # Points round are *correctness* and bands up are *quality*, and the
+          # difference is that the section is a spline while the loft between
+          # sections is ruled. Too few points and the curve overshoots inward
+          # between the samples, through the wall, and the cavity cuts the vase
+          # away; too few bands and the flower is merely blocky. So the bands
+          # are what gives way, always, and the points never do.
+          SECTIONS = int(max(24, SPIRAL, min(SECTIONS, BUDGET / POINTS)))
+      else:
+          shrink = (BUDGET / (SECTIONS * POINTS)) ** 0.5
+          POINTS = max(48, int(POINTS * shrink))
+          SECTIONS = int(max(24, min(SECTIONS, max(SPIRAL, BUDGET / POINTS))))
 
 
   def hash01(index, salt):
@@ -407,17 +521,209 @@ source: |
       return RIPPLE_MM * math.sin(TAU * RIPPLES * t)
 
 
-  def outer_radius(angle, t):
+  # --- 2b. the relief ---------------------------------------------------------
+  # The ornament is a *field* rather than geometry: one function answers how far
+  # the surface stands proud at an angle and a height, and the section is drawn
+  # through points that each ask it. That is what makes nine motifs cost the
+  # same as one, and it settles the printing question at the same time -- every
+  # motif returns a number that is *added* to the radius, so the steepest thing
+  # anything on the wall can make is its own flank, and EMBOSS_SHARP is the
+  # exponent that sets that angle.
+  #
+  # The ceiling on the exponent is measured, and it is the single most
+  # surprising number in this file. An interpolating spline drawn through a
+  # narrow raised bump undershoots on both sides of it, and how far it
+  # undershoots depends on the *shape* of the bump and not at all on how densely
+  # it is sampled -- a stroke a tenth of a repeat wide at exponent 2.6 loses
+  # nearly seven per cent of the section's area whether it is drawn through
+  # twenty-two samples per repeat or forty-four. Below 1.8, and with every
+  # stroke in the motifs at least fifteen hundredths of a repeat wide, the loss
+  # is under one per cent, which is under the tessellation tolerance. Above it,
+  # the cavity cuts out through the wall and the vase comes back with a tenth
+  # of itself missing.
+  GAMMA = 1.0 + 0.8 * (1.0 - EMBOSS_SHARP)
+  PETALS = 5.0
+  EDGE_MM = 3.0
+  # Every running element in the motifs sways by at least this much of a repeat
+  # over a row, and the number is measured rather than drawn. A ridge that runs
+  # straight up the vase at a fixed angle is the one thing a ruled loft between
+  # spline sections cannot follow: the surface between two sections is matched
+  # by curve parameter rather than by angle, and a ridge that never moves pins
+  # the parameterisation in a way that makes the band between two *almost
+  # identical* sections enclose a fifth less than it should. Ten hundredths of
+  # a repeat of sway takes the error from nine and a half per cent to seven
+  # tenths of one; fourteen takes it to nothing. Nothing else helps -- not more
+  # points round, not more bands up, not a periodic spline.
+  SWAY_MIN = 0.1
+  SWAY = 0.14
+
+
+  def bump(x):
+      """A cosine hump, 1 at the middle and 0 at |x| = 1."""
+      if x <= -1.0 or x >= 1.0:
+          return 0.0
+      return (0.5 + 0.5 * math.cos(math.pi * x)) ** GAMMA
+
+
+  def plateau(x, ramp):
+      """A flat-topped block with a ramp of that width at each side."""
+      return min(1.0, max(0.0, (1.0 - abs(x)) / max(ramp, 1e-6)))
+
+
+  def ribbon(u, centre, width):
+      """A raised band running along `centre`, wrapping round the repeat."""
+      return bump((((u - centre + 0.5) % 1.0) - 0.5) / max(width, 1e-6))
+
+
+  def blob(u, v, cx, cy, wide, tall, lean):
+      """One leaf or petal: an ellipse leaned over, wrapping round the repeat."""
+      dx = ((u - cx + 0.5) % 1.0) - 0.5
+      dy = v - cy
+      rx = dx + dy * lean
+      ry = dy - dx * lean
+      return bump(math.hypot(rx / max(wide, 1e-6), ry / max(tall, 1e-6)))
+
+
+  def motif(kind, u, v):
+      """How proud one cell of the pattern stands, 0 to 1.
+
+      u runs across one repeat around the vase, v up one row of the band. Every
+      one of these is a garden: a stem and what grows off it, or a flower seen
+      face on, or the frame a flower sits in.
+      """
+      if kind == "vine":
+          # A stem that wanders, with a leaf on the outside of each bend.
+          stem = ribbon(u, 0.5 + 0.26 * math.sin(TAU * v), 0.16)
+          leaf = max(
+              blob(u, v, 0.5 + 0.26 * math.sin(TAU * 0.25) + 0.24, 0.27, 0.2, 0.13, 0.3),
+              blob(u, v, 0.5 + 0.26 * math.sin(TAU * 0.75) - 0.24, 0.77, 0.2, 0.13, -0.3),
+          )
+          return max(stem, leaf * 0.92)
+      if kind == "laurel":
+          # A spray: a stem that sways as it rises, with leaves alternating up
+          # it. The sway is not decoration -- see SWAY_MIN. Alternating rather
+          # than opposite leaves is how a real spray grows anyway.
+          sway = SWAY * math.sin(TAU * v)
+          best = ribbon(u, 0.5 + sway, 0.16)
+          for k in range(5):
+              lift = 0.11 + 0.195 * k
+              side = 1.0 if k % 2 == 0 else -1.0
+              best = max(
+                  best,
+                  blob(
+                      u, v,
+                      0.5 + SWAY * math.sin(TAU * lift) + side * 0.22,
+                      lift, 0.21, 0.13, side * 0.3,
+                  ),
+              )
+          return best
+      if kind == "fern":
+          # A frond: a rachis that curves, and pinnae that shorten as they rise.
+          sway = SWAY * math.sin(TAU * v)
+          best = ribbon(u, 0.5 + sway, 0.15) * (1.0 - 0.3 * v)
+          for k in range(7):
+              lift = 0.08 + 0.14 * k
+              reach = 0.24 * (1.0 - 0.5 * lift)
+              side = 1.0 if k % 2 == 0 else -1.0
+              best = max(
+                  best,
+                  blob(
+                      u, v,
+                      0.5 + SWAY * math.sin(TAU * lift) + side * reach,
+                      lift, max(reach * 0.95, 0.18), 0.105, side * 0.3,
+                  ),
+              )
+          return best
+      if kind == "blossom":
+          # Five petals seen face on, with a boss in the middle.
+          x, y = (u - 0.5) * 2.0, (v - 0.5) * 2.0
+          radius = math.hypot(x, y)
+          edge = 0.46 + 0.3 * math.cos(PETALS * math.atan2(y, x))
+          if radius >= edge:
+              return 0.0
+          return max(bump(radius / max(edge, 1e-6)) * 0.85, bump(radius / 0.2))
+      if kind == "rose":
+          # A coiled bud: one ridge spiralling out from the middle.
+          x, y = (u - 0.5) * 2.0, (v - 0.5) * 2.0
+          radius = math.hypot(x, y)
+          if radius >= 0.95:
+              return 0.0
+          coil = (math.atan2(y, x) / TAU + radius * 1.7) % 1.0
+          return ribbon(coil, 0.5, 0.4) * bump(radius / 0.95)
+      if kind == "lily":
+          # Three petals rising out of a tie band: the fleur.
+          x, y = (u - 0.5 - SWAY * math.sin(TAU * v)) * 2.0, (v - 0.5) * 2.0
+          best = bump(math.hypot(x / 0.34, (y - 0.3) / 0.62))
+          for side in (-1.0, 1.0):
+              dx, dy = x - side * 0.42, y - 0.05
+              best = max(
+                  best,
+                  bump(math.hypot(
+                      (dx * 0.94 + dy * side * 0.34) / 0.3,
+                      (dy * 0.94 - dx * side * 0.34) / 0.5,
+                  )),
+              )
+          band = plateau((y + 0.62) / 0.11, 0.5) * plateau(x / 0.6, 0.35)
+          return max(best, band)
+      if kind == "damask":
+          # The ogee: two curves meeting at a point above and below, with a
+          # flower held inside them.
+          half = 0.5 * abs(math.sin(math.pi * v))
+          frame = max(ribbon(u, 0.5 - half, 0.17), ribbon(u, 0.5 + half, 0.17))
+          return max(frame, blob(u, v, 0.5, 0.5, 0.19, 0.24, 0.0))
+      if kind == "trellis":
+          # A leafy lattice: two diagonals crossing, a leaf in each opening.
+          lattice = max(
+              bump((((u + v) % 1.0) - 0.5) / 0.21),
+              bump((((u - v) % 1.0) - 0.5) / 0.21),
+          )
+          return max(lattice * 0.8, blob(u, v, 0.5, 0.5, 0.17, 0.22, 0.0))
+      if kind == "scale":
+          # Imbricated petals, the way an artichoke or a pinecone is built.
+          x = (u - 0.5) * 2.0
+          radius = math.hypot(x, (v - 0.12) * 1.4)
+          return bump(radius) * plateau((v - 0.45) / 0.62, 0.35)
+      return 0.0
+
+
+  def emboss_at(angle, t):
+      """How far the relief stands proud here, in millimetres."""
+      if not HAS_EMBOSS or t < BAND_LO or t > BAND_HI:
+          return 0.0
+      step = (t - BAND_LO) / max(BAND_HI - BAND_LO, 1e-6)
+      value = motif(
+          EMBOSS,
+          (angle * EMBOSS_COUNT / TAU) % 1.0,
+          (step * EMBOSS_ROWS) % 1.0,
+      )
+      if value <= 0.0:
+          return 0.0
+      # Nothing stands proud right at the edge of the band. A crest that runs
+      # into the plate, the rim, or the plain wall above the band meets it at a
+      # feather edge, and a feather edge is what the thickness pass measures.
+      fade = min(
+          1.0,
+          (t - BAND_LO) * HEIGHT_MM / EDGE_MM,
+          (BAND_HI - t) * HEIGHT_MM / EDGE_MM,
+      )
+      return EMBOSS_MM * value * max(0.0, fade)
+
+
+  def outer_radius(angle, t, embossed=False):
       spin = math.radians(TWIST_DEG) * t
-      return radius_at(t) * facet_shape(angle + spin) + flute(angle + spin) + ripple(t)
+      radius = radius_at(t) * facet_shape(angle + spin) + flute(angle + spin) + ripple(t)
+      if embossed:
+          radius += emboss_at(angle + spin, t)
+      return radius
 
 
-  def section(t, inset, height, closed_curve=True):
+  def section(t, inset, height, closed_curve=True, embossed=False, count=0):
       """One closed cross-section, as a face on its own plane."""
       points = []
-      for i in range(POINTS):
-          angle = TAU * i / POINTS
-          r = max(0.4, outer_radius(angle, t) - inset)
+      count = count or POINTS
+      for i in range(count):
+          angle = TAU * i / count
+          r = max(0.4, outer_radius(angle, t, embossed) - inset)
           points.append((r * math.cos(angle), r * math.sin(angle)))
       plane = Plane.XY.offset(height)
       with BuildLine(plane) as line:
@@ -430,8 +736,13 @@ source: |
 
   # --- 3. outer skin ----------------------------------------------------------
   SMOOTH = FACETS == 0 or FACET_ROUND > 0.15
+  # The relief goes on the outer skin alone. It is raised, so it can only add
+  # material to the outside of the wall: the cavity is lofted from the plain
+  # silhouette, the wall under a crest comes out thicker rather than thinner,
+  # and the inside of the vase stays smooth enough to clean.
   outer_sections = [
-      section(i / SECTIONS, 0.0, HEIGHT_MM * i / SECTIONS, SMOOTH) for i in range(SECTIONS + 1)
+      section(i / SECTIONS, 0.0, HEIGHT_MM * i / SECTIONS, SMOOTH, True)
+      for i in range(SECTIONS + 1)
   ]
   # Ruled, not smooth: a C2 loft through twisted sections bulges between them,
   # and a cavity that bulges through its own outer skin cuts to nothing -- a
@@ -442,7 +753,16 @@ source: |
   # --- 4. the cavity ----------------------------------------------------------
   # The wall is measured perpendicular to the surface: on a sloped shoulder a
   # purely radial inset is thinner than it looks, by the cosine of the slope.
-  INNER_STEPS = SECTIONS
+  #
+  # The cavity is lofted at its *own* resolution, and that is the whole reason a
+  # vase can afford relief at all. Both skins go into one boolean, and what a
+  # boolean costs is the two face counts multiplied -- so sampling the inside at
+  # the resolution the outside needs to draw a fern on it spends the entire
+  # memory budget on a smooth surface nobody will ever see. The cavity carries
+  # the flutes and the facets, because those are what keep the wall an even
+  # thickness; it does not carry the flowers, because those are raised.
+  INNER_POINTS = POINTS if not HAS_EMBOSS else min(POINTS, max(48, LOBES * 6, FACETS * 8))
+  INNER_STEPS = SECTIONS if not HAS_EMBOSS else int(min(96, max(26, RIPPLES * 6, SPIRAL)))
   inner_sections = []
   for i in range(INNER_STEPS + 1):
       z = BASE_MM + (HEIGHT_MM + 4.0 - BASE_MM) * i / INNER_STEPS
@@ -457,7 +777,7 @@ source: |
           # Thicken the last 10 mm into a lip you can pick the vase up by.
           near_rim = max(0.0, (z - (HEIGHT_MM - 10.0)) / 10.0)
           wall += RIM_BAND_MM * min(1.0, near_rim)
-      inner_sections.append(section(t, wall, z, SMOOTH))
+      inner_sections.append(section(t, wall, z, SMOOTH, False, INNER_POINTS))
   cavity = loft(inner_sections, ruled=True)
 
   result = outer - cavity
