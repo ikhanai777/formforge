@@ -3945,7 +3945,786 @@ function towerShuffle(next, base, seed) {
 }
 
 /* =================================================================
-   7. Three.js stage
+   7. The cup holder: the tableware_cup_holder template, ported the
+      same way. One lofted body again, but the surface is a *field*
+      rather than a shape: three registers of relief, each carrying a
+      motif drawn as a function of where you are round the holder and
+      how far up its register you have got, with bead mouldings on the
+      joints and framed panels over the body. The socket is bored down
+      from the rim and the handles are cast brackets fused to the
+      sides.
+   ================================================================= */
+const CUPHOLDER_SCHEMA = [
+  {k:"height_mm",   g:"form", label:"Height",     min:40,  max:170, step:2,   v:92,  unit:"mm",
+   note:"Plate to the rim, foot included."},
+  {k:"wall_mm",     g:"form", label:"Wall",       min:1.6, max:7,   step:0.2, v:3.2, unit:"mm",
+   note:"Between the socket and the outside, before any relief is added to it."},
+  {k:"belly",       g:"form", label:"Belly",      min:0,   max:0.45,step:0.02,v:0.1, unit:""},
+  {k:"waist",       g:"form", label:"Waist",      min:0,   max:0.45,step:0.02,v:0.1, unit:"",
+   note:"Taken only as far as the wall over the socket allows: the bore runs straight."},
+  {k:"waist_pos",   g:"form", label:"Waist height", min:0.25, max:0.8, step:0.02, v:0.55, unit:""},
+  {k:"foot_mm",     g:"form", label:"Foot spread", min:0,  max:26,  step:0.5, v:7,   unit:"mm",
+   note:"It spreads on a cone rather than a disc, so it needs no support."},
+  {k:"foot_h_mm",   g:"form", label:"Foot height", min:0,  max:34,  step:0.5, v:8,   unit:"mm"},
+
+  {k:"bore_d_mm",   g:"socket", label:"Socket",   min:55,  max:105, step:1,   v:78,  unit:"mm",
+   note:"A mug is about 80 across, a takeaway cup 88 at the lip, a tea glass 70."},
+  {k:"bore_taper",  g:"socket", label:"Socket taper", min:0, max:0.35, step:0.02, v:0.14, unit:"",
+   note:"Cups are tapered; this is what makes one sit rather than rattle."},
+  {k:"bore_depth",  g:"socket", label:"Socket depth", min:0.35, max:0.95, step:0.02, v:0.78, unit:""},
+  {k:"floor_mm",    g:"socket", label:"Floor",    min:0,   max:10,  step:0.5, v:3,   unit:"mm",
+   note:"0 leaves it open at both ends, which is a sleeve rather than a holder."},
+
+  {k:"band_low",    g:"band", label:"Lower band",
+   choices:["plain","flute","rope","bead","dentil","guilloche","lattice","scallop","eggdart","acanthus"], v:"rope"},
+  {k:"band_mid",    g:"band", label:"Body band",
+   choices:["plain","flute","rope","bead","dentil","guilloche","lattice","scallop","eggdart","acanthus"], v:"acanthus"},
+  {k:"band_high",   g:"band", label:"Upper band",
+   choices:["plain","flute","rope","bead","dentil","guilloche","lattice","scallop","eggdart","acanthus"], v:"eggdart"},
+  {k:"split_low",   g:"band", label:"Lower split", min:0.08, max:0.45, step:0.02, v:0.24, unit:""},
+  {k:"split_high",  g:"band", label:"Upper split", min:0.5,  max:0.95, step:0.02, v:0.8,  unit:""},
+  {k:"bead_mm",     g:"band", label:"Mouldings", min:0, max:3, step:0.05, v:0.8, unit:"mm",
+   note:"The raised beads on the joints. They stop two motifs meeting in mid-air."},
+
+  {k:"emboss_mm",   g:"emboss", label:"Relief",   min:0,   max:3,   step:0.05,v:1.1, unit:"mm",
+   note:"Raised, never sunk: what a motif adds to the radius cannot thin the wall."},
+  {k:"emboss_count",g:"emboss", label:"Repeats",  min:4,   max:16,  step:1,   v:12,  unit:"",
+   note:"The ceiling is memory: the booleans after the loft carry the whole surface."},
+  {k:"emboss_rows", g:"emboss", label:"Rows",     min:1,   max:3,   step:1,   v:2,   unit:""},
+  {k:"emboss_sharp",g:"emboss", label:"Crispness",min:0,   max:1,   step:0.05,v:0.6, unit:"",
+   note:"0 is a soft swell, 1 a crisp cast edge. It is also the overhang slider."},
+  {k:"panels",      g:"emboss", label:"Panels",   min:0,   max:8,   step:1,   v:6,   unit:"",
+   note:"Cartouches round the body. The motif locks to the panel when there is one."},
+  {k:"panel_frame", g:"emboss", label:"Frame width", min:0.05, max:0.4, step:0.02, v:0.18, unit:""},
+
+  {k:"handle_count",g:"handle", label:"Handles",  min:0,   max:2,   step:1,   v:1,   unit:""},
+  {k:"handle_mm",   g:"handle", label:"Reach",    min:4,   max:40,  step:0.5, v:18,  unit:"mm",
+   note:"Out and back at 45°, so it needs twice its reach in height to do it in."},
+  {k:"handle_lo",   g:"handle", label:"Base",     min:0.05,max:0.6, step:0.02,v:0.2, unit:""},
+  {k:"handle_hi",   g:"handle", label:"Top",      min:0.4, max:0.98,step:0.02,v:0.86,unit:""},
+  {k:"handle_t_mm", g:"handle", label:"Thickness",min:3,   max:14,  step:0.5, v:7,   unit:"mm"},
+  {k:"handle_pierce",g:"handle",label:"Opening",  min:0,   max:0.8, step:0.05,v:0.5, unit:"",
+   note:"0 leaves a solid ear; high leaves a loop you can get a finger through."}
+];
+
+/* Generated from the generator's own STYLES, so the two cannot drift. */
+const CUPHOLDER_PRESETS = {
+  podstakannik: {height_mm:104, bore_d_mm:72, bore_taper:0.16, bore_depth:0.86, wall_mm:3.4, floor_mm:0, belly:0.06, waist:0.12, waist_pos:0.6, foot_mm:9, foot_h_mm:9, band_low:"guilloche", band_mid:"acanthus", band_high:"eggdart", split_low:0.2, split_high:0.82, emboss_mm:1.2, emboss_count:12, emboss_rows:1, emboss_sharp:0.7, panels:6, panel_frame:0.2, bead_mm:1, handle_count:1, handle_mm:22, handle_lo:0.18, handle_hi:0.9, handle_t_mm:7, handle_pierce:0.6},
+  victorian: {height_mm:94, bore_d_mm:80, bore_taper:0.12, bore_depth:0.8, wall_mm:3.6, floor_mm:3.5, belly:0.12, waist:0.1, waist_pos:0.52, foot_mm:8, foot_h_mm:9, band_low:"rope", band_mid:"acanthus", band_high:"eggdart", split_low:0.24, split_high:0.78, emboss_mm:1.2, emboss_count:12, emboss_rows:1, emboss_sharp:0.65, panels:6, panel_frame:0.22, bead_mm:1.1, handle_count:2, handle_mm:16, handle_lo:0.24, handle_hi:0.82, handle_t_mm:7, handle_pierce:0.5},
+  doric: {height_mm:100, bore_d_mm:78, bore_taper:0.06, bore_depth:0.86, wall_mm:4, floor_mm:4, belly:0.02, waist:0.04, waist_pos:0.5, foot_mm:10, foot_h_mm:11, band_low:"plain", band_mid:"flute", band_high:"plain", split_low:0.14, split_high:0.88, emboss_mm:1.6, emboss_count:16, emboss_rows:1, emboss_sharp:0.9, panels:0, panel_frame:0.18, bead_mm:1.4, handle_count:0},
+  mug: {height_mm:82, bore_d_mm:84, bore_taper:0.1, bore_depth:0.78, wall_mm:3.2, floor_mm:3, belly:0.06, waist:0.04, waist_pos:0.5, foot_mm:5, foot_h_mm:6, band_low:"bead", band_mid:"plain", band_high:"dentil", split_low:0.18, split_high:0.76, emboss_mm:1, emboss_count:14, emboss_rows:1, emboss_sharp:0.8, panels:0, panel_frame:0.18, bead_mm:0.9, handle_count:1, handle_mm:20, handle_lo:0.2, handle_hi:0.88, handle_t_mm:8, handle_pierce:0.55},
+  sleeve: {height_mm:88, bore_d_mm:88, bore_taper:0.2, bore_depth:0.95, wall_mm:2.6, floor_mm:0, belly:0, waist:0, waist_pos:0.5, foot_mm:2, foot_h_mm:4, band_low:"plain", band_mid:"rope", band_high:"plain", split_low:0.2, split_high:0.8, emboss_mm:0.9, emboss_count:14, emboss_rows:2, emboss_sharp:0.5, panels:0, panel_frame:0.18, bead_mm:0.7, handle_count:0},
+  chalice: {height_mm:120, bore_d_mm:76, bore_taper:0.18, bore_depth:0.62, wall_mm:3.6, floor_mm:5, belly:0.18, waist:0.24, waist_pos:0.42, foot_mm:18, foot_h_mm:22, band_low:"flute", band_mid:"scallop", band_high:"bead", split_low:0.3, split_high:0.8, emboss_mm:1.4, emboss_count:12, emboss_rows:1, emboss_sharp:0.55, panels:0, panel_frame:0.18, bead_mm:1.2, handle_count:0},
+  lattice: {height_mm:96, bore_d_mm:78, bore_taper:0.12, bore_depth:0.84, wall_mm:3.4, floor_mm:3.5, belly:0.08, waist:0.06, waist_pos:0.55, foot_mm:7, foot_h_mm:8, band_low:"bead", band_mid:"lattice", band_high:"bead", split_low:0.16, split_high:0.86, emboss_mm:1.2, emboss_count:14, emboss_rows:3, emboss_sharp:0.75, panels:0, panel_frame:0.18, bead_mm:1, handle_count:0},
+  nautical: {height_mm:90, bore_d_mm:82, bore_taper:0.1, bore_depth:0.8, wall_mm:3.4, floor_mm:3.5, belly:0.08, waist:0.06, waist_pos:0.5, foot_mm:8, foot_h_mm:8, band_low:"rope", band_mid:"plain", band_high:"rope", split_low:0.26, split_high:0.74, emboss_mm:1.5, emboss_count:10, emboss_rows:1, emboss_sharp:0.4, panels:0, panel_frame:0.18, bead_mm:1.3, handle_count:1, handle_mm:18, handle_lo:0.22, handle_hi:0.84, handle_t_mm:8, handle_pierce:0.45},
+  tankard: {height_mm:86, bore_d_mm:92, bore_taper:0.08, bore_depth:0.78, wall_mm:3.8, floor_mm:4, belly:0.1, waist:0.12, waist_pos:0.58, foot_mm:10, foot_h_mm:9, band_low:"dentil", band_mid:"plain", band_high:"bead", split_low:0.22, split_high:0.8, emboss_mm:1.3, emboss_count:14, emboss_rows:1, emboss_sharp:0.85, panels:0, panel_frame:0.18, bead_mm:1.2, handle_count:1, handle_mm:24, handle_lo:0.16, handle_hi:0.92, handle_t_mm:9, handle_pierce:0.65},
+  shell: {height_mm:92, bore_d_mm:78, bore_taper:0.14, bore_depth:0.8, wall_mm:3.6, floor_mm:4, belly:0.16, waist:0.14, waist_pos:0.48, foot_mm:11, foot_h_mm:10, band_low:"plain", band_mid:"scallop", band_high:"eggdart", split_low:0.18, split_high:0.8, emboss_mm:1.5, emboss_count:10, emboss_rows:1, emboss_sharp:0.5, panels:8, panel_frame:0.16, bead_mm:1.1, handle_count:0},
+  caddy: {height_mm:128, bore_d_mm:70, bore_taper:0.04, bore_depth:0.92, wall_mm:3.2, floor_mm:4, belly:0.02, waist:0.02, waist_pos:0.5, foot_mm:7, foot_h_mm:8, band_low:"dentil", band_mid:"guilloche", band_high:"dentil", split_low:0.16, split_high:0.84, emboss_mm:1.1, emboss_count:12, emboss_rows:3, emboss_sharp:0.7, panels:0, panel_frame:0.18, bead_mm:1, handle_count:0},
+  laurel: {height_mm:98, bore_d_mm:76, bore_taper:0.14, bore_depth:0.82, wall_mm:3.4, floor_mm:3.5, belly:0.1, waist:0.16, waist_pos:0.56, foot_mm:9, foot_h_mm:10, band_low:"eggdart", band_mid:"plain", band_high:"guilloche", split_low:0.28, split_high:0.74, emboss_mm:1.3, emboss_count:12, emboss_rows:1, emboss_sharp:0.6, panels:0, panel_frame:0.18, bead_mm:1.1, handle_count:2, handle_mm:14, handle_lo:0.3, handle_hi:0.76, handle_t_mm:6, handle_pierce:0.4}
+};
+const CUPHOLDER_LABELS = {
+  podstakannik:"Podstakannik", victorian:"Victorian", doric:"Doric", mug:"Mug", sleeve:"Sleeve", chalice:"Chalice", lattice:"Lattice", nautical:"Nautical", tankard:"Tankard", shell:"Shell", caddy:"Caddy", laurel:"Laurel"
+};
+const CUPHOLDER_JITTER = {
+  height_mm:["rel",0.12], bore_taper:["abs",0.04], bore_depth:["abs",0.06], wall_mm:["abs",0.3], floor_mm:["abs",0.8], belly:["abs",0.05], waist:["abs",0.06], waist_pos:["abs",0.07], foot_mm:["rel",0.25], foot_h_mm:["rel",0.25], split_low:["abs",0.04], split_high:["abs",0.04], emboss_mm:["rel",0.18], emboss_sharp:["abs",0.15], panel_frame:["abs",0.03], bead_mm:["rel",0.2], handle_mm:["rel",0.15], handle_lo:["abs",0.04], handle_hi:["abs",0.04], handle_t_mm:["abs",0.8], handle_pierce:["abs",0.1]
+};
+const CUPHOLDER_DEFAULTS = {};
+CUPHOLDER_SCHEMA.forEach(f => CUPHOLDER_DEFAULTS[f.k] = f.v);
+const CUPHOLDER_SOURCE_B64 = [
+  "ZnJvbSBidWlsZDEyM2QgaW1wb3J0ICoKCmltcG9ydCBtYXRoCgojIC0tLSBzbGlkZXJzIC0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tCkhFSUdIVF9NTSA9IDkyLjAKQk9SRV9EX01NID0g",
+  "NzguMApCT1JFX1RBUEVSID0gMC4xNApCT1JFX0RFUFRIID0gMC43OApXQUxMX01NID0gMy4yCkZMT09SX01NID0gMy4wCkJF",
+  "TExZID0gMC4xMApXQUlTVCA9IDAuMTgKV0FJU1RfUE9TID0gMC41NQpGT09UX01NID0gNy4wCkZPT1RfSF9NTSA9IDguMApC",
+  "QU5EX0xPVyA9ICJyb3BlIgpCQU5EX01JRCA9ICJhY2FudGh1cyIKQkFORF9ISUdIID0gImVnZ2RhcnQiClNQTElUX0xPVyA9",
+  "IDAuMjQKU1BMSVRfSElHSCA9IDAuODAKRU1CT1NTX01NID0gMC45CkVNQk9TU19DT1VOVCA9IDE2CkVNQk9TU19ST1dTID0g",
+  "MgpFTUJPU1NfU0hBUlAgPSAwLjYwClBBTkVMUyA9IDgKUEFORUxfRlJBTUUgPSAwLjE4CkJFQURfTU0gPSAwLjgKSEFORExF",
+  "X0NPVU5UID0gMQpIQU5ETEVfTU0gPSAxOC4wCkhBTkRMRV9MTyA9IDAuMjAKSEFORExFX0hJID0gMC44NgpIQU5ETEVfVF9N",
+  "TSA9IDcuMApIQU5ETEVfUElFUkNFID0gMC41MApTRUVEID0gMQoKVEFVID0gNi4yODMxODUzMDcxNzk1ODYKT1ZFUiA9IDIu",
+  "MAojIEhvdyBzdGVlcCB0aGUgc2lkZSBvZiBhIG1vdGlmIGlzIGFsbG93ZWQgdG8gZ2V0LiBUaGUgcmVsaWVmIGlzIHJhaXNl",
+  "ZCwgc28KIyB0aGUgb25seSBvdmVyaGFuZyBpdCBjYW4gbWFrZSBpcyBpdHMgb3duIGZsYW5rLCBhbmQgYSBjb3NpbmUgYnVt",
+  "cCBydW4KIyB0aHJvdWdoIHRoaXMgZXhwb25lbnQgaXMgYmV0d2VlbiAyMCBhbmQgNDAgZGVncmVlcyBvZmYgdmVydGljYWwu",
+  "CiMKIyBUaGUgZmxvb3Igb2YgMSBpcyBub3QgdGFzdGUsIGl0IGlzIHdoYXQgYSBzcGxpbmUgY2FuIGJlIGRyYXduIHRocm91",
+  "Z2guIEJlbG93CiMgMSBhIHJhaXNlZCBjb3NpbmUgaGFzIGFuIGluZmluaXRlIHNsb3BlIHdoZXJlIGl0IG1lZXRzIHplcm8s",
+  "IGFuZCBhIHNlY3Rpb24KIyBkcmF3biB0aHJvdWdoIGEgaHVuZHJlZCBhbmQgZmlmdHkgcG9pbnRzIHRoYXQgZWFjaCBzaXQg",
+  "b24gc3VjaCBhIGNvcm5lcgojIG92ZXJzaG9vdHMgaW50byBpdHNlbGY6IHRoZSBsb2Z0IHRoZW4gY29tZXMgb3V0IGFzIGEg",
+  "aHVuZHJlZCBhbmQgdGhpcnR5CiMgc2xpdmVycyByYXRoZXIgdGhhbiBhIGN1cC4gQXQgMSB0aGUgYnVtcCBtZWV0cyB0aGUg",
+  "d2FsbCB0YW5nZW50aWFsbHkuCkdBTU1BID0gMS4wICsgMS42ICogKDEuMCAtIEVNQk9TU19TSEFSUCkKUk9QRV9MRUFOID0g",
+  "MC44ClNIRUxMX1JJQlMgPSA1LjAKVkVJTiA9IDAuMDcKQkVBRF9TUEFOID0gMi4yCgoKZGVmIGhhc2gwMShpbmRleCwgc2Fs",
+  "dCk6CiAgICAiIiJEZXRlcm1pbmlzdGljIHBzZXVkby1yYW5kb20gaW4gWzAsMSk6IHRoZSBzYW1lIHNlZWQsIHRoZSBzYW1l",
+  "IGhvbGRlci4iIiIKICAgIHggPSBtYXRoLnNpbigoaW5kZXggKyAxKSAqIDEyLjk4OTggKyAoU0VFRCArIDEpICogNzguMjMz",
+  "ICsgc2FsdCAqIDM3LjcxOSkgKiA0Mzc1OC41NDUzCiAgICByZXR1cm4geCAtIG1hdGguZmxvb3IoeCkKCgpkZWYgYnVtcCh4",
+  "KToKICAgICIiIkEgY29zaW5lIGh1bXAsIDEgYXQgdGhlIG1pZGRsZSBhbmQgMCBhdCB8eHwgPSAxLiIiIgogICAgaWYgeCA8",
+  "PSAtMS4wIG9yIHggPj0gMS4wOgogICAgICAgIHJldHVybiAwLjAKICAgIHJldHVybiAoMC41ICsgMC41ICogbWF0aC5jb3Mo",
+  "bWF0aC5waSAqIHgpKSAqKiBHQU1NQQoKCmRlZiBwbGF0ZWF1KHgsIHJhbXApOgogICAgIiIiQSBmbGF0LXRvcHBlZCBibG9j",
+  "ayB3aXRoIGEgcmFtcCBvZiB0aGF0IHdpZHRoIGF0IGVhY2ggc2lkZS4iIiIKICAgIHJldHVybiBtaW4oMS4wLCBtYXgoMC4w",
+  "LCAoMS4wIC0gYWJzKHgpKSAvIG1heChyYW1wLCAxZS02KSkpCgoKZGVmIHJpYmJvbih1LCBjZW50cmUsIHdpZHRoKToKICAg",
+  "ICIiIkEgcmFpc2VkIGJhbmQgcnVubmluZyBhbG9uZyBgY2VudHJlYCwgd3JhcHBpbmcgcm91bmQgdGhlIHJlcGVhdC4iIiIK",
+  "ICAgIHJldHVybiBidW1wKCgoKHUgLSBjZW50cmUgKyAwLjUpICUgMS4wKSAtIDAuNSkgLyBtYXgod2lkdGgsIDFlLTYpKQoK",
+  "CiMgLS0tIDEuIHRoZSBtb3RpZnMgLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tLQojIEVhY2ggaXMgYSBmaWVsZCBvdmVyIG9uZSBjZWxsIG9mIHRoZSBwYXR0ZXJuOiB1IHJ1bnMgYWNyb3NzIG9u",
+  "ZSByZXBlYXQKIyBhcm91bmQsIHYgdXAgb25lIHJvdyBvZiB0aGUgcmVnaXN0ZXIuIEFsbCBvZiB0aGVtIGFyZSByYWlzZWQg",
+  "LS0gdGhlIHZhbHVlIGlzCiMgYWRkZWQgdG8gdGhlIHJhZGl1cyAtLSB3aGljaCBpcyB3aGF0IG1ha2VzIHRoZSBvcm5hbWVu",
+  "dCBmcmVlIG9mIG92ZXJoYW5ncwojIHdoYXRldmVyIGl0IGRyYXdzLgpkZWYgbW90aWYoa2luZCwgdSwgdik6CiAgICBpZiBr",
+  "aW5kID09ICJmbHV0ZSI6CiAgICAgICAgcmV0dXJuIGJ1bXAoMi4wICogKHUgLSAwLjUpKQogICAgaWYga2luZCA9PSAicm9w",
+  "ZSI6CiAgICAgICAgcmV0dXJuIGJ1bXAoMi4wICogKCgodSArIHYgKiBST1BFX0xFQU4pICUgMS4wKSAtIDAuNSkpCiAgICBp",
+  "ZiBraW5kID09ICJiZWFkIjoKICAgICAgICByZXR1cm4gYnVtcCgyLjMgKiAodSAtIDAuNSkpICogYnVtcCgyLjMgKiAodiAt",
+  "IDAuNSkpCiAgICBpZiBraW5kID09ICJkZW50aWwiOgogICAgICAgIHJldHVybiBwbGF0ZWF1KDIuMCAqICh1IC0gMC41KSwg",
+  "MC4zKSAqIHBsYXRlYXUoMi4yICogKHYgLSAwLjUpLCAwLjM1KQogICAgaWYga2luZCA9PSAiZ3VpbGxvY2hlIjoKICAgICAg",
+  "ICBzd2luZyA9IDAuNSAqIG1hdGguc2luKFRBVSAqIHYpCiAgICAgICAgcmV0dXJuIG1heChyaWJib24odSwgMC41ICsgc3dp",
+  "bmcsIDAuMTcpLCByaWJib24odSwgMC41IC0gc3dpbmcsIDAuMTcpKQogICAgaWYga2luZCA9PSAibGF0dGljZSI6CiAgICAg",
+  "ICAgcmV0dXJuIG1heCgKICAgICAgICAgICAgYnVtcCgoKCh1ICsgdikgJSAxLjApIC0gMC41KSAvIDAuMiksIGJ1bXAoKCgo",
+  "dSAtIHYpICUgMS4wKSAtIDAuNSkgLyAwLjIpCiAgICAgICAgKQogICAgaWYga2luZCA9PSAic2NhbGxvcCI6CiAgICAgICAg",
+  "eCwgeSA9ICh1IC0gMC41KSAqIDIuMCwgdiAqIDEuMgogICAgICAgIHJhZGl1cyA9IG1hdGguaHlwb3QoeCwgeSkKICAgICAg",
+  "ICBpZiByYWRpdXMgPj0gMS4wOgogICAgICAgICAgICByZXR1cm4gMC4wCiAgICAgICAgcmlicyA9IDAuNSArIDAuNSAqIG1h",
+  "dGguY29zKFNIRUxMX1JJQlMgKiBtYXRoLmF0YW4yKHksIHgpKQogICAgICAgIHJldHVybiBtaW4oMS4wLCAoMS4wIC0gcmFk",
+  "aXVzKSAqIDIuNCkgKiAoMC41NSArIDAuNDUgKiByaWJzKQogICAgaWYga2luZCA9PSAiZWdnZGFydCI6CiAgICAgICAgaWYg",
+  "dSA8IDAuNToKICAgICAgICAgICAgcmV0dXJuIGJ1bXAoKHUgLSAwLjI1KSAvIDAuMjEpICogYnVtcCgodiAtIDAuNSkgLyAw",
+  "LjQ2KQogICAgICAgIHJldHVybiBidW1wKCh1IC0gMC43NSkgLyAwLjA5KSAqIG1heCgwLjAsIDEuMCAtIHYgKiAwLjgpCiAg",
+  "ICBpZiBraW5kID09ICJhY2FudGh1cyI6CiAgICAgICAgIyBUaGUgbGVhZiBuYXJyb3dzIGFzIGl0IHJpc2VzIGJ1dCBuZXZl",
+  "ciB0byBhIHBvaW50OiBhIGxvYmUgb2YgemVybwogICAgICAgICMgd2lkdGggaXMgYSBzcGlrZSBvbmUgc2FtcGxlIHdpZGUs",
+  "IHdoaWNoIGlzIHRoZSBzYW1lIG92ZXJzaG9vdC4KICAgICAgICBoYWxmID0gbWF4KDAuNSAqICgxLjAgLSB2ICogMC43Miks",
+  "IDAuMDYpCiAgICAgICAgbG9iZSA9IGJ1bXAoKHUgLSAwLjUpIC8gaGFsZikKICAgICAgICBpZiBsb2JlIDw9IDAuMDoKICAg",
+  "ICAgICAgICAgcmV0dXJuIDAuMAogICAgICAgIGdyb292ZSA9IDEuMCAtIDAuNSAqIGJ1bXAoKHUgLSAwLjUpIC8gVkVJTikK",
+  "ICAgICAgICBzaWRlID0gMC42MiArIDAuMzggKiBtYXRoLmNvcygyLjAgKiBUQVUgKiAodSAtIDAuNSkpCiAgICAgICAgcmV0",
+  "dXJuIGxvYmUgKiBncm9vdmUgKiBtYXgoMC4wLCBzaWRlKSAqICgxLjAgLSAwLjIyICogdikKICAgIHJldHVybiAwLjAKCgoj",
+  "IC0tLSAyLiB0aGUgcmVnaXN0ZXJzIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0KTE9XID0gbWluKG1heChTUExJVF9MT1csIDAuMDUpLCAwLjQ1KQpISUdIID0gbWluKG1heChTUExJVF9ISUdILCBM",
+  "T1cgKyAwLjIpLCAwLjk2KQpCQU5EUyA9IFsoMC4wLCBMT1csIEJBTkRfTE9XLCAwKSwgKExPVywgSElHSCwgQkFORF9NSUQs",
+  "IDEpLCAoSElHSCwgMS4wLCBCQU5EX0hJR0gsIDIpXQpDT1VOVCA9IG1heChpbnQoRU1CT1NTX0NPVU5UKSwgMSkKUk9XUyA9",
+  "IG1heChpbnQoRU1CT1NTX1JPV1MpLCAxKQpQQU5FTF9OID0gaW50KFBBTkVMUykKIyBBIG1vdWxkaW5nIGlzIGEgYmVhZCBy",
+  "dW4gcm91bmQgdGhlIGpvaW50IGJldHdlZW4gdHdvIHJlZ2lzdGVycy4gSXRzIGhlaWdodAojIGlzIHNldCBieSBpdHMgb3du",
+  "IGRlcHRoIHJhdGhlciB0aGFuIGJ5IGEgc2xpZGVyIG9mIGl0cyBvd246IGEgYmVhZCB0aGF0IGlzCiMgdGFsbGVyIHRoYW4g",
+  "aXQgaXMgcHJvdWQgaXMgYSBmaWxsZXQsIGFuZCBvbmUgdGhhdCBpcyBzaG9ydGVyIGlzIGEgc2NyYXRjaC4KQkVBRF9UID0g",
+  "bWF4KEJFQURfTU0sIDAuNCkgKiBCRUFEX1NQQU4gLyBtYXgoSEVJR0hUX01NLCAxZS02KQojIFRoZSBzZWVkIHR1cm5zIGVh",
+  "Y2ggcmVnaXN0ZXIgcm91bmQgcmF0aGVyIHRoYW4gdmFyeWluZyBpdCByZXBlYXQgYnkgcmVwZWF0LgojIEEgcGVyLXJlcGVh",
+  "dCB2YXJpYXRpb24gaXMgYSBzdGVwIGluIHRoZSBmaWVsZCwgYW5kIGEgc3RlcCBpbiB0aGUgZmllbGQgaXMgYQojIGNvcm5l",
+  "ciB0aGUgc2VjdGlvbiBzcGxpbmUgb3ZlcnNob290cy4KUEhBU0UgPSBbaGFzaDAxKGssIDIuMCkgZm9yIGsgaW4gcmFuZ2Uo",
+  "MyldCgoKZGVmIHJlbGllZl9hdChhbmdsZSwgdCk6CiAgICAiIiJIb3cgZmFyIHRoZSBvcm5hbWVudCBzdGFuZHMgcHJvdWQg",
+  "YXQgdGhpcyBhbmdsZSBhbmQgaGVpZ2h0LCBpbiBtbS4iIiIKICAgIHRvdGFsID0gMC4wCiAgICBpZiBCRUFEX01NID4gMC4w",
+  "NToKICAgICAgICBmb3IgZWRnZSBpbiAoTE9XLCBISUdIKToKICAgICAgICAgICAgdG90YWwgPSBtYXgodG90YWwsIEJFQURf",
+  "TU0gKiBidW1wKCh0IC0gZWRnZSkgLyBCRUFEX1QpKQogICAgaWYgRU1CT1NTX01NIDw9IDAuMDU6CiAgICAgICAgcmV0dXJu",
+  "IHRvdGFsCiAgICBmb3IgbG93LCBoaWdoLCBraW5kLCBpbmRleCBpbiBCQU5EUzoKICAgICAgICBpZiBraW5kID09ICJwbGFp",
+  "biIgb3IgdCA8IGxvdyBvciB0ID4gaGlnaDoKICAgICAgICAgICAgY29udGludWUKICAgICAgICBzcGFuID0gbWF4KGhpZ2gg",
+  "LSBsb3csIDFlLTYpCiAgICAgICAgdiA9ICgodCAtIGxvdykgLyBzcGFuICogUk9XUykgJSAxLjAKICAgICAgICAjIFRoZSBi",
+  "b2R5IHJlZ2lzdGVyIGNhbiBiZSBicm9rZW4gaW50byBmcmFtZWQgcGFuZWxzLCBhbmQgd2hlbiBpdCBpcywKICAgICAgICAj",
+  "IHRoZSByZXBlYXQgKmlzKiB0aGUgcGFuZWw6IGEgY2FydG91Y2hlIHdpdGggYSBsZWFmIGFuZCB0d28gdGhpcmRzIG9mCiAg",
+  "ICAgICAgIyBhbm90aGVyIG9uZSBpbiBpdCBpcyBub3QgYSBjYXJ0b3VjaGUuIFNvIHRoZSBtb3RpZiBpcyBsb2NrZWQgdG8g",
+  "dGhlCiAgICAgICAgIyBjZWxsIHJhdGhlciB0aGFuIGNvdW50ZWQgcm91bmQgaW5kZXBlbmRlbnRseSBvZiBpdC4KICAgICAg",
+  "ICBmcmFtZWQgPSBpbmRleCA9PSAxIGFuZCBQQU5FTF9OID49IDIKICAgICAgICBpZiBmcmFtZWQ6CiAgICAgICAgICAgIHUg",
+  "PSAoYW5nbGUgKiBQQU5FTF9OIC8gVEFVICsgUEhBU0VbaW5kZXhdKSAlIDEuMAogICAgICAgIGVsc2U6CiAgICAgICAgICAg",
+  "IHUgPSAoYW5nbGUgKiBDT1VOVCAvIFRBVSArIFBIQVNFW2luZGV4XSkgJSAxLjAKICAgICAgICB2YWx1ZSA9IG1vdGlmKGtp",
+  "bmQsIHUsIHYpCiAgICAgICAgaWYgZnJhbWVkOgogICAgICAgICAgICAjIEhvdyBmYXIgaW50byB0aGUgY2VsbCB0aGlzIHBv",
+  "aW50IGlzLCAwIGF0IGl0cyBib3JkZXIgYW5kIDEgYXQKICAgICAgICAgICAgIyBpdHMgY2VudHJlLCBtZWFzdXJlZCB0aGUg",
+  "c2FtZSB3YXkgYWNyb3NzIGFuZCB1cC4gVGhlIGZyYW1lIGlzIGEKICAgICAgICAgICAgIyByaWRnZSBydW5uaW5nIGF0IGEg",
+  "Zml4ZWQgaW5zZXQgZnJvbSB0aGF0IGJvcmRlciwgYW5kIHRoZSBtb3RpZgogICAgICAgICAgICAjIG9ubHkgc3RhcnRzIG9u",
+  "Y2UgdGhlIGZyYW1lIGhhcyBmaW5pc2hlZCAtLSBhIGNhcnRvdWNoZSBpcyBjYXN0CiAgICAgICAgICAgICMgaW4gb25lIHBp",
+  "ZWNlLCBzbyBpdHMgYm9yZGVyIGlzIHBhcnQgb2YgdGhlIHNhbWUgZmllbGQuCiAgICAgICAgICAgIGluc2V0ID0gbWluKG1p",
+  "bih1LCAxLjAgLSB1KSwgbWluKHYsIDEuMCAtIHYpKSAqIDIuMAogICAgICAgICAgICB3aWRlID0gbWF4KFBBTkVMX0ZSQU1F",
+  "LCAxZS02KQogICAgICAgICAgICBmcmFtZSA9IGJ1bXAoKGluc2V0IC0gd2lkZSkgLyB3aWRlKQogICAgICAgICAgICBjbGVh",
+  "ciA9IG1pbigxLjAsIG1heCgwLjAsIChpbnNldCAtIHdpZGUgKiAyLjApIC8gd2lkZSkpCiAgICAgICAgICAgIHZhbHVlID0g",
+  "bWF4KHZhbHVlICogY2xlYXIsIGZyYW1lKQogICAgICAgIGlmIHZhbHVlID4gMC4wOgogICAgICAgICAgICB0b3RhbCA9IG1h",
+  "eCh0b3RhbCwgRU1CT1NTX01NICogdmFsdWUpCiAgICByZXR1cm4gdG90YWwKCgojIC0tLSAzLiB0aGUgc2lsaG91ZXR0ZSAt",
+  "LS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KIyBUaGUgc29ja2V0IGZpcnN0",
+  "LCBiZWNhdXNlIHRoZSBvdXRzaWRlIGlzIG5vdCBmcmVlIHRvIGdvIHdoZXJldmVyIHRoZSB3YWlzdAojIHNsaWRlciBwb2lu",
+  "dHM6IHRoZSBib3JlIHJ1bnMgc3RyYWlnaHQgZG93biBpbnNpZGUgaXQsIGFuZCBhIHdhaXN0IG1lYXN1cmVkCiMgYWdhaW5z",
+  "dCB0aGUgcmltIGNhbiBlYXNpbHkgYmUgZGVlcGVyIHRoYW4gdGhlIHdob2xlIHdhbGwuIEF0IHRoZSBkZWZhdWx0CiMgaGVy",
+  "ZSBpdCB3b3VsZCBiZSAtLSAxOCUgb2YgYSA0MiBtbSByYWRpdXMgaXMgNy42IG1tIG91dCBvZiBhIDMuMiBtbSB3YWxsIC0t",
+  "CiMgc28gdGhlIHdhaXN0IGlzIHRha2VuIGFzIGZhciBhcyB0aGUgd2FsbCBhbGxvd3MgYW5kIG5vIGZ1cnRoZXIsIGFuZCB0",
+  "aGUKIyBzZWN0aW9uIGNsYW1wcyBpdCBhZ2FpbiBpbiBjYXNlIHRoZSBjdXJ2ZSBiZXR3ZWVuIGNvbnRyb2wgcG9pbnRzIGRp",
+  "cHMuCk1JTl9XQUxMID0gMS4yCkhBTkRMRV9CVVJZID0gMS4yCkhBTkRMRV9DTEVBUiA9IDAuNgpSSU1fUiA9IEJPUkVfRF9N",
+  "TSAvIDIgKyBXQUxMX01NCkRFUFRIID0gbWluKEJPUkVfREVQVEggKiBIRUlHSFRfTU0sIEhFSUdIVF9NTSAtIG1heChGTE9P",
+  "Ul9NTSwgMC4wKSkKQk9SRV9UT1AgPSBCT1JFX0RfTU0gLyAyCkJPUkVfQk9UID0gQk9SRV9UT1AgKiAoMS4wIC0gQk9SRV9U",
+  "QVBFUikKQk9SRV9TVEFSVCA9IDAuMCBpZiBGTE9PUl9NTSA8PSAwLjA1IGVsc2UgSEVJR0hUX01NIC0gREVQVEgKCgpkZWYg",
+  "Ym9yZV9hdCh0KToKICAgICIiIlRoZSBzb2NrZXQncyByYWRpdXMgYXQgaGVpZ2h0IGZyYWN0aW9uIHQsIG9yIG5vdGhpbmcg",
+  "YmVsb3cgaXRzIGZsb29yLiIiIgogICAgeiA9IEhFSUdIVF9NTSAqIHQKICAgIGlmIHogPD0gQk9SRV9TVEFSVDoKICAgICAg",
+  "ICByZXR1cm4gMC4wCiAgICBydW4gPSBIRUlHSFRfTU0gLSBCT1JFX1NUQVJUCiAgICByZXR1cm4gQk9SRV9CT1QgKyAoQk9S",
+  "RV9UT1AgLSBCT1JFX0JPVCkgKiAoeiAtIEJPUkVfU1RBUlQpIC8gbWF4KHJ1biwgMWUtNikKCgojIE5ldmVyIHplcm86IHRo",
+  "ZSBmb3VyIGNvbnRyb2wgcG9pbnRzIGFyZSB0aGUga25vdHMgb2YgYW4gaW50ZXJwb2xhdGlvbiwgYW5kCiMgdHdvIGtub3Rz",
+  "IGF0IHRoZSBzYW1lIGhlaWdodCBpcyBhIGRpdmlzaW9uIGJ5IHRoZSBnYXAgYmV0d2VlbiB0aGVtLiBBIGZvb3QKIyBvZiBu",
+  "byBoZWlnaHQgaXMgYSBmb290IHRoYXQgc3ByZWFkcyBvdmVyIG9uZSByb3cgb2YgdGhlIGxvZnQsIHdoaWNoIGlzIHdoYXQK",
+  "IyBhIGZvb3Qgb2Ygbm8gaGVpZ2h0IHNob3VsZCBsb29rIGxpa2UgYW55d2F5LgpGT09UX1QgPSBtaW4oMC45NSwgbWF4KEZP",
+  "T1RfSF9NTSAvIG1heChIRUlHSFRfTU0sIDFlLTYpLCAwLjAyKSkKV0FJU1RfVCA9IG1pbigwLjkyLCBtYXgoRk9PVF9UICsg",
+  "MC4wNSwgV0FJU1RfUE9TKSkKV0FJU1RfUiA9IG1heChSSU1fUiAqICgxLjAgLSBXQUlTVCksIGJvcmVfYXQoV0FJU1RfVCkg",
+  "KyBNSU5fV0FMTCkKQ09OVFJPTCA9IFsKICAgICgwLjAsIFJJTV9SICsgRk9PVF9NTSksCiAgICAoRk9PVF9ULCBSSU1fUiAq",
+  "ICgxLjAgKyBCRUxMWSkpLAogICAgKFdBSVNUX1QsIFdBSVNUX1IpLAogICAgKDEuMCwgUklNX1IpLApdCgoKZGVmIG1vbm90",
+  "b25lX3Nsb3Blcyh4cywgeXMpOgogICAgIiIiRnJpdHNjaC1DYXJsc29uIHRhbmdlbnRzOiBhIGN1cnZlIHRocm91Z2ggdGhl",
+  "IGNvbnRyb2wgcG9pbnRzIHRoYXQgbmV2ZXIKICAgIG92ZXJzaG9vdHMgdGhlbSwgc28gdGhlIHNpbGhvdWV0dGUgaXMgdGhl",
+  "IG9uZSB0aGUgc2xpZGVycyBkZXNjcmliZS4iIiIKICAgIG4gPSBsZW4oeHMpCiAgICBkZWx0YXMgPSBbKHlzW2kgKyAxXSAt",
+  "IHlzW2ldKSAvICh4c1tpICsgMV0gLSB4c1tpXSkgZm9yIGkgaW4gcmFuZ2UobiAtIDEpXQogICAgc2xvcGVzID0gW2RlbHRh",
+  "c1swXV0gKyBbMC4wXSAqIChuIC0gMikgKyBbZGVsdGFzWy0xXV0KICAgIGZvciBpIGluIHJhbmdlKDEsIG4gLSAxKToKICAg",
+  "ICAgICBpZiBkZWx0YXNbaSAtIDFdICogZGVsdGFzW2ldIDw9IDA6CiAgICAgICAgICAgIHNsb3Blc1tpXSA9IDAuMAogICAg",
+  "ICAgIGVsc2U6CiAgICAgICAgICAgIHcxID0gMiAqICh4c1tpICsgMV0gLSB4c1tpXSkgKyAoeHNbaV0gLSB4c1tpIC0gMV0p",
+  "CiAgICAgICAgICAgIHcyID0gKHhzW2kgKyAxXSAtIHhzW2ldKSArIDIgKiAoeHNbaV0gLSB4c1tpIC0gMV0pCiAgICAgICAg",
+  "ICAgIHNsb3Blc1tpXSA9ICh3MSArIHcyKSAvICh3MSAvIGRlbHRhc1tpIC0gMV0gKyB3MiAvIGRlbHRhc1tpXSkKICAgIHJl",
+  "dHVybiBzbG9wZXMKCgpDWCA9IFtjWzBdIGZvciBjIGluIENPTlRST0xdCkNZID0gW2NbMV0gZm9yIGMgaW4gQ09OVFJPTF0K",
+  "Q00gPSBtb25vdG9uZV9zbG9wZXMoQ1gsIENZKQoKCmRlZiByYWRpdXNfYXQodCk6CiAgICB0ID0gbWluKDEuMCwgbWF4KDAu",
+  "MCwgdCkpCiAgICBmb3IgaSBpbiByYW5nZShsZW4oQ1gpIC0gMSk6CiAgICAgICAgaWYgQ1hbaV0gPD0gdCA8PSBDWFtpICsg",
+  "MV06CiAgICAgICAgICAgIGggPSBDWFtpICsgMV0gLSBDWFtpXQogICAgICAgICAgICBzID0gKHQgLSBDWFtpXSkgLyBoCiAg",
+  "ICAgICAgICAgIG0wLCBtMSA9IENNW2ldICogaCwgQ01baSArIDFdICogaAogICAgICAgICAgICByZXR1cm4gKAogICAgICAg",
+  "ICAgICAgICAgKDIgKiBzKiozIC0gMyAqIHMqKjIgKyAxKSAqIENZW2ldCiAgICAgICAgICAgICAgICArIChzKiozIC0gMiAq",
+  "IHMqKjIgKyBzKSAqIG0wCiAgICAgICAgICAgICAgICArICgtMiAqIHMqKjMgKyAzICogcyoqMikgKiBDWVtpICsgMV0KICAg",
+  "ICAgICAgICAgICAgICsgKHMqKjMgLSBzKioyKSAqIG0xCiAgICAgICAgICAgICkKICAgIHJldHVybiBDWVstMV0KCgojIC0t",
+  "LSA0LiByZXNvbHV0aW9uIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0KIyBQb2ludHMgcm91bmQgdGhlIHNlY3Rpb24gaGF2ZSB0byBkcmF3IHRoZSBmaW5lc3QgdGhpbmcgaW4gdGhlIHBhdHRl",
+  "cm4sIHdoaWNoCiMgaXMgZWl0aGVyIGEgcmVwZWF0IG9mIHRoZSBtb3RpZiBvciBhIHBhbmVsIGZyYW1lLiBTZWN0aW9ucyB1",
+  "cCB0aGUgaGVpZ2h0IGFyZQojIHBsYWNlZCB1bmV2ZW5seSBvbiBwdXJwb3NlOiBhIGJlYWQgbW91bGRpbmcgaXMgYSBtaWxs",
+  "aW1ldHJlLXNjYWxlIGZlYXR1cmUgb24KIyBhIGh1bmRyZWQtbWlsbGltZXRyZSBvYmplY3QsIGFuZCBzcGFjaW5nIHRoZSB3",
+  "aG9sZSBsb2Z0IGZpbmVseSBlbm91Z2ggZm9yIGl0CiMgd291bGQgc3BlbmQgdGhlIGVudGlyZSBidWRnZXQgb24gdHdvIHJp",
+  "bmdzLgojIFNpeCBzYW1wbGVzIGFjcm9zcyBhIHJlcGVhdCBpcyB0aGUgZmxvb3I6IGEgcmFpc2VkIGNvc2luZSBkcmF3biB0",
+  "aHJvdWdoCiMgZmV3ZXIgdGhhbiB0aGF0IGlzIGEgc3BsaW5lIHJlY29uc3RydWN0aW5nIGEgYnVtcCBpdCBoYXMgYmFyZWx5",
+  "IHNlZW4sIGFuZAojIHdoYXQgaXQgcmVjb25zdHJ1Y3RzIG92ZXJzaG9vdHMuIEV2ZXJ5dGhpbmcgYWJvdmUgdGhlIGZsb29y",
+  "IGlzIHNwZW50IG9uIHRoZQojIGJvb2xlYW5zIHJhdGhlciB0aGFuIG9uIHRoZSBtZXNoIC0tIHRoZSBsb2Z0IGl0c2VsZiBp",
+  "cyBuZWFybHkgZnJlZSwgYW5kIGVhY2gKIyBib29sZWFuIGFnYWluc3QgaXQgY29zdHMgYWJvdXQgaGFsZiBhIGdpZ2FieXRl",
+  "IGF0IHRoZSBkZWZhdWx0IHJlc29sdXRpb24sCiMgd2hpY2ggaXMgd2hhdCB0aGUgc3VyZmFjZSBidWRnZXQgaW4gdGhlIHBy",
+  "ZWNvbmRpdGlvbnMgaXMgbWVhc3VyaW5nLgpERVRBSUwgPSBtYXgoQ09VTlQsIFBBTkVMX04gKiAyLCA4KQpQT0lOVFMgPSBp",
+  "bnQobWluKDk2LCBtYXgoNjAsIERFVEFJTCAqIDYpKSkKUk9XU19UT1RBTCA9IFJPV1MgKiAzCkJBU0VfU0VDVElPTlMgPSBp",
+  "bnQobWluKDcyLCBtYXgoMjQsIFJPV1NfVE9UQUwgKiA3KSkpCgp0cyA9IFtdCmZvciBpIGluIHJhbmdlKEJBU0VfU0VDVElP",
+  "TlMgKyAxKToKICAgIHRzLmFwcGVuZChpIC8gQkFTRV9TRUNUSU9OUykKU1RFUCA9IDEuMCAvIEJBU0VfU0VDVElPTlMKaWYg",
+  "QkVBRF9NTSA+IDAuMDU6CiAgICBTVEVQID0gbWluKFNURVAsIEJFQURfVCAvIDMuMCkKICAgIGZvciBlZGdlIGluIChMT1cs",
+  "IEhJR0gpOgogICAgICAgIGZvciBrIGluIHJhbmdlKC00LCA1KToKICAgICAgICAgICAgdmFsdWUgPSBlZGdlICsgQkVBRF9U",
+  "ICogayAvIDMuMAogICAgICAgICAgICBpZiAwLjAgPCB2YWx1ZSA8IDEuMDoKICAgICAgICAgICAgICAgIHRzLmFwcGVuZCh2",
+  "YWx1ZSkKIyBUd28gZmFtaWxpZXMgb2Ygc3RhdGlvbnMgbGFpZCBvdmVyIGVhY2ggb3RoZXIgd2lsbCBzb29uZXIgb3IgbGF0",
+  "ZXIgcHV0IHR3bwojIG9mIHRoZW0gYSBtaWNyb24gYXBhcnQsIGFuZCBhIGxvZnQgYmFuZCBhIG1pY3JvbiB0YWxsIGlzIGEg",
+  "ZmFjZSB3aXRoIG5vCiMgYXJlYSAtLSB3aGljaCB0aGUgbWVzaGVyIHRvbGVyYXRlcyBhbmQgdGhlIGJvb2xlYW4gYWZ0ZXIg",
+  "aXQgZG9lcyBub3QuIFNvCiMgYm90aCBmYW1pbGllcyBhcmUgc25hcHBlZCB0byB0aGUgc2FtZSBncmlkLCBvbmUgc3RlcCBv",
+  "ZiB3aGljaCBpcyB0aGUgZmluZXN0CiMgc3BhY2luZyBlaXRoZXIgb2YgdGhlbSBhc2tlZCBmb3I6IHN0YXRpb25zIHRoYXQg",
+  "d2VyZSBtZWFudCB0byBiZSBkaXN0aW5jdAojIHN0YXkgZGlzdGluY3QsIGFuZCBzdGF0aW9ucyB0aGF0IHdlcmUgYWNjaWRl",
+  "bnRhbGx5IGFkamFjZW50IGJlY29tZSBvbmUuCnRzID0gc29ydGVkKHNldChpbnQocm91bmQodmFsdWUgLyBTVEVQKSkgZm9y",
+  "IHZhbHVlIGluIHRzKSkKdHMgPSBbdmFsdWUgKiBTVEVQIGZvciB2YWx1ZSBpbiB0cyBpZiAwLjAgPD0gdmFsdWUgKiBTVEVQ",
+  "IDw9IDEuMF0KdHMgPSBbdmFsdWUgZm9yIHZhbHVlIGluIHRzIGlmIFNURVAgLyAyIDwgdmFsdWUgPCAxLjAgLSBTVEVQIC8g",
+  "Ml0KdHMgPSBbMC4wXSArIHRzICsgWzEuMF0KCgpkZWYgc2VjdGlvbih0KToKICAgIHBvaW50cyA9IFtdCiAgICB6ID0gSEVJ",
+  "R0hUX01NICogdAogICAgYmFzZSA9IG1heChyYWRpdXNfYXQodCksIGJvcmVfYXQodCkgKyBNSU5fV0FMTCkKICAgIGZvciBp",
+  "IGluIHJhbmdlKFBPSU5UUyk6CiAgICAgICAgYW5nbGUgPSBUQVUgKiBpIC8gUE9JTlRTCiAgICAgICAgciA9IGJhc2UgKyBy",
+  "ZWxpZWZfYXQoYW5nbGUsIHQpCiAgICAgICAgcG9pbnRzLmFwcGVuZCgociAqIG1hdGguY29zKGFuZ2xlKSwgciAqIG1hdGgu",
+  "c2luKGFuZ2xlKSkpCiAgICB3aXRoIEJ1aWxkTGluZShQbGFuZS5YWS5vZmZzZXQoeikpIGFzIGxpbmU6CiAgICAgICAgU3Bs",
+  "aW5lKCpwb2ludHMsIHBvaW50c1swXSkKICAgIHJldHVybiBtYWtlX2ZhY2UobGluZS5saW5lKQoKCiMgQSBzcGxpbmUgc2Vj",
+  "dGlvbiwgbm90IGEgcG9seWxpbmUgLS0gYW5kIHRoZSBjaG9pY2UgaXMgd29ydGggc3RhdGluZywgYmVjYXVzZQojIHRoZSB3",
+  "YXRjaHRvd2VyIG5leHQgZG9vciBtYWtlcyB0aGUgb3Bwb3NpdGUgb25lIGZvciB0aGUgb3Bwb3NpdGUgcmVhc29uLiBBCiMg",
+  "cG9seWxpbmUgc2VjdGlvbiBnaXZlcyB0aGUgbG9mdCBvbmUgZmFjZSBwZXIgcG9pbnQgcGVyIGJhbmQsIHdoaWNoIG1lc2hl",
+  "cyB0bwojIGV4YWN0bHkgaXRzIG93biBmYWNldCBjb3VudCBhbmQgbmV2ZXIgZ2V0cyBzdWJkaXZpZGVkOyB0aGF0IGlzIHRo",
+  "ZSByaWdodAojIHRyYWRlIGZvciBhIGZhY2V0ZWQgdG93ZXIsIHdoZXJlIGEgaHVuZHJlZCBhbmQgZmlmdHkgZmFjZXMgaXMg",
+  "dGhlIHdob2xlCiMgbW9kZWwuIE9ybmFtZW50IG5lZWRzIGEgaHVuZHJlZCBhbmQgZmlmdHkgcG9pbnRzIHJvdW5kICpvbmUg",
+  "c2VjdGlvbiosIGFuZCBhdAojIHRoYXQgd2lkdGggYSBwb2x5bGluZSBsb2Z0IGNvc3RzIHRocmVlIGFuZCBhIGhhbGYgdGhv",
+  "dXNhbmQgZmFjZXMgYW5kIGVpZ2h0ZWVuCiMgc2Vjb25kcyBiZWZvcmUgYSBzaW5nbGUgbW90aWYgaXMgZHJhd24gb24gaXQu",
+  "IEEgc3BsaW5lIHNlY3Rpb24gaXMgb25lIGVkZ2UsCiMgc28gdGhlIGxvZnQgaXMgb25lIGZhY2UgcGVyIGJhbmQgYW5kIHRo",
+  "ZSBib29sZWFuIGFmdGVyIGl0IGlzIGNoZWFwOyB3aGF0IGl0CiMgY29zdHMgaW5zdGVhZCBpcyBtZXNoaW5nLCBhbmQgdGhh",
+  "dCBpcyBhZmZvcmRhYmxlIGhlcmUgcHJlY2lzZWx5IGJlY2F1c2UgdGhlCiMgcmVsaWVmIGlzIHNoYWxsb3cuIEEgYnVtcCBh",
+  "IG1pbGxpbWV0cmUgcHJvdWQgb3ZlciBmaWZ0ZWVuIG9mIGFyYyBoYXMgdmVyeQojIGxpdHRsZSBjdXJ2YXR1cmUgZm9yIHRo",
+  "ZSBtZXNoZXIgdG8gY2hhc2UuCnJlc3VsdCA9IGxvZnQoW3NlY3Rpb24odCkgZm9yIHQgaW4gdHNdLCBydWxlZD1UcnVlKQoK",
+  "IyAtLS0gNS4gdGhlIHNvY2tldCAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0t",
+  "LS0tLS0tCiMgV2lkZXIgYXQgdGhlIHRvcCwgYmVjYXVzZSB0aGF0IGlzIHRoZSB3YXkgYSBjdXAgaXM6IGEgY29uZSB0aGUg",
+  "b3RoZXIgd2F5IHVwCiMgaXMgYW4gdW5kZXJjdXQsIGFuZCBvbiBhIGhvbGRlciB3aXRoIGEgZmxvb3IgaXQgY3V0cyB0aGUg",
+  "Zm9vdCBjbGVhbiBvZmYuCmlmIEZMT09SX01NIDw9IDAuMDU6CiAgICByZXN1bHQgPSByZXN1bHQgLSBQb3MoMCwgMCwgSEVJ",
+  "R0hUX01NIC8gMikgKiBDb25lKAogICAgICAgIEJPUkVfQk9ULCBCT1JFX1RPUCwgSEVJR0hUX01NICsgT1ZFUiArIE9WRVIK",
+  "ICAgICkKZWxzZToKICAgIEdST1cgPSBCT1JFX1RBUEVSICogQk9SRV9UT1AgKiBPVkVSIC8gbWF4KERFUFRILCAxZS02KQog",
+  "ICAgcmVzdWx0ID0gcmVzdWx0IC0gUG9zKDAsIDAsIEhFSUdIVF9NTSAtIERFUFRIICsgKERFUFRIICsgT1ZFUikgLyAyKSAq",
+  "IENvbmUoCiAgICAgICAgQk9SRV9CT1QsIEJPUkVfVE9QICsgR1JPVywgREVQVEggKyBPVkVSCiAgICApCgojIC0tLSA2LiB0",
+  "aGUgaGFuZGxlcyAtLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KIyBB",
+  "IHBsYXRlIGluIHRoZSBwbGFuZSB0aHJvdWdoIHRoZSBheGlzLCB3aG9zZSBvdXRsaW5lIGdvZXMgb3V0IGF0IDQ1IGRlZ3Jl",
+  "ZXMsCiMgcnVucyBzdHJhaWdodCB1cCwgYW5kIGNvbWVzIGJhY2sgaW4gYXQgNDUuIEEgcm91bmQgbG9vcCB3b3VsZCBiZSB0",
+  "aGUgb2J2aW91cwojIHNoYXBlIGFuZCB3b3VsZCBuZWVkIHN1cHBvcnQgdW5kZXIgdGhlIHdob2xlIG9mIGl0cyBsb3dlciBm",
+  "bGFuazsgdGhpcyBvbmUgaXMKIyBhIGNhc3QgYnJhY2tldCwgd2hpY2ggaXMgYm90aCB0aGUgcGVyaW9kIGRldGFpbCBhbmQg",
+  "dGhlIHByaW50YWJsZSBhbnN3ZXIgLS0KIyA0NSBvdXQgaXMgdGhlIHN0ZWVwZXN0IG92ZXJoYW5nIGEgcHJpbnRlciBuZXZl",
+  "ciBoYXMgdG8gYmUgdG9sZCBhYm91dCwgYW5kIDQ1CiMgYmFjayBpbiBpcyBub3QgYW4gb3ZlcmhhbmcgYXQgYWxsLgppZiBI",
+  "QU5ETEVfQ09VTlQgPj0gMSBhbmQgSEFORExFX01NID4gMS4wOgogICAgTE9fWiA9IEhBTkRMRV9MTyAqIEhFSUdIVF9NTQog",
+  "ICAgSElfWiA9IEhBTkRMRV9ISSAqIEhFSUdIVF9NTQogICAgTUlEX1ogPSAoTE9fWiArIEhJX1opIC8gMgogICAgUkVBQ0gg",
+  "PSBtaW4oSEFORExFX01NLCAoSElfWiAtIExPX1opIC8gMikKICAgICMgVGhlIHBsYXRlIGlzIGJ1cmllZCBpbiB0aGUgYm9k",
+  "eSByYXRoZXIgdGhhbiBsYWlkIGFnYWluc3QgaXQ6IGEgcGxhdGUKICAgICMgdGhhdCBvbmx5IHJlYWNoZXMgdGhlIHN1cmZh",
+  "Y2UgdG91Y2hlcyBhIGN1cnZlIHRhbmdlbnRpYWxseSBhbmQgdGhlIGZ1c2UKICAgICMgbGVhdmVzIGtuaWZlIGVkZ2VzIGFs",
+  "b25nIHRoZSBqb2luLiBCdXQgdGhlIGJ1cmlhbCBoYXMgdG8gZm9sbG93IHRoZQogICAgIyBib2R5LCBub3QgY3V0IGEgc3Ry",
+  "YWlnaHQgY2hvcmQgdGhyb3VnaCBpdCAtLSBhIHZlcnRpY2FsIGlubmVyIGVkZ2UgZGVlcAogICAgIyBlbm91Z2ggdG8gYml0",
+  "ZSBhdCB0aGUgd2Fpc3QgaXMgZGVlcCBlbm91Z2ggdG8gY3Jvc3MgdGhlIHNvY2tldCBhdCB0aGUKICAgICMgcmltLCBhbmQg",
+  "YSBwbGF0ZSB0aGF0IHBva2VzIGludG8gdGhlIGJvcmUgaGFuZHMgdGhlIGZ1c2UgYSBzb2xpZCB0aGF0CiAgICAjIGxhcHMg",
+  "aXRzIG93biBjYXZpdHkuIFNvIHRoZSBpbm5lciBlZGdlIGlzIGEgY2hhaW4gdGhhdCBzdGF5cyBhIGZpeGVkCiAgICAjIGRl",
+  "cHRoIHVuZGVyIHRoZSBzaWxob3VldHRlIGFuZCBhIGZpeGVkIGNsZWFyYW5jZSBvdXRzaWRlIHRoZSBzb2NrZXQsCiAgICAj",
+  "IHdoaWNoZXZlciBvZiB0aGUgdHdvIGJpbmRzIGF0IHRoYXQgaGVpZ2h0LgogICAgU1BBTiA9IFtIQU5ETEVfTE8gKyAoSEFO",
+  "RExFX0hJIC0gSEFORExFX0xPKSAqIGsgLyA4LjAgZm9yIGsgaW4gcmFuZ2UoOSldCiAgICBJTk5FUiA9IFsKICAgICAgICAo",
+  "CiAgICAgICAgICAgIG1heChyYWRpdXNfYXQodCkgLSBIQU5ETEVfQlVSWSwgYm9yZV9hdCh0KSArIEhBTkRMRV9DTEVBUiks",
+  "CiAgICAgICAgICAgIHQgKiBIRUlHSFRfTU0sCiAgICAgICAgKQogICAgICAgIGZvciB0IGluIFNQQU4KICAgIF0KICAgIElO",
+  "X1IgPSBtYXgocFswXSBmb3IgcCBpbiBJTk5FUikKICAgIE9VVF9SID0gbWF4KAogICAgICAgIHJhZGl1c19hdCgoSEFORExF",
+  "X0xPICsgSEFORExFX0hJKSAvIDIpICsgRU1CT1NTX01NICsgUkVBQ0gsCiAgICAgICAgSU5fUiArIEhBTkRMRV9UX01NLAog",
+  "ICAgKQogICAgIyBUaGUgdHdvIGRpYWdvbmFscyByaXNlIGV4YWN0bHkgYXMgZmFyIGFzIHRoZXkgcmVhY2gsIHdoaWNoIGlz",
+  "IHdoYXQgbWFrZXMKICAgICMgdGhlbSA0NSBkZWdyZWVzOyB0aGUgc3RyYWlnaHQgcnVuIGJldHdlZW4gdGhlbSBpcyB3aGF0",
+  "ZXZlciBoZWlnaHQgaXMKICAgICMgbGVmdCBvdmVyLCBhbmQgdGhlIHByZWNvbmRpdGlvbiBndWFyYW50ZWVzIHRoZXJlIGlz",
+  "IHNvbWUuCiAgICBCT1RfUiA9IElOTkVSWzBdWzBdCiAgICBUT1BfUiA9IElOTkVSWy0xXVswXQogICAgS05FRV9MTyA9IG1p",
+  "bihMT19aICsgT1VUX1IgLSBCT1RfUiwgTUlEX1opCiAgICBLTkVFX0hJID0gbWF4KEhJX1ogLSAoT1VUX1IgLSBUT1BfUiks",
+  "IE1JRF9aKQogICAgb3V0bGluZSA9IFsoT1VUX1IsIEtORUVfTE8pXQogICAgaWYgS05FRV9ISSA+IEtORUVfTE8gKyAwLjA1",
+  "OgogICAgICAgIG91dGxpbmUuYXBwZW5kKChPVVRfUiwgS05FRV9ISSkpCiAgICBvdXRsaW5lID0gb3V0bGluZSArIElOTkVS",
+  "Wzo6LTFdCiAgICB3aXRoIEJ1aWxkTGluZShQbGFuZS5YWikgYXMgZWFyOgogICAgICAgIFBvbHlsaW5lKCpvdXRsaW5lLCBv",
+  "dXRsaW5lWzBdKQogICAgcGxhdGUgPSBleHRydWRlKG1ha2VfZmFjZShlYXIubGluZSksIGFtb3VudD1IQU5ETEVfVF9NTSAv",
+  "IDIsIGJvdGg9VHJ1ZSkKICAgICMgVGhlIG9wZW5pbmcgaXMgdGhlIHNhbWUgc2hhcGUgaW5zZXQgYnkgdGhlIHdlYiAtLSB0",
+  "aGUgc3RyYXAgb2YgbWV0YWwKICAgICMgbGVmdCByb3VuZCBpdCAtLSBzbyB0aGUgYnJhY2tldCBrZWVwcyBpdHMgNDUtZGVn",
+  "cmVlIGNvcm5lcnMgd2hhdGV2ZXIgdGhlCiAgICAjIHNsaWRlciBkb2VzLCBhbmQgdGhlIHdlYiBpcyBhIHByaW50ZWQgd2Fs",
+  "bCB3aGVyZXZlciBpdCBpcyBtZWFzdXJlZC4KICAgIFdFQiA9IG1heCgyLjAsIChPVVRfUiAtIElOX1IpICogKDEuMCAtIG1p",
+  "bihIQU5ETEVfUElFUkNFLCAwLjg1KSkgLyAyKQogICAgSF9JTiA9IElOX1IgKyBXRUIKICAgIEhfT1VUID0gT1VUX1IgLSBX",
+  "RUIKICAgICMgQSBkaWFnb25hbCBzZXQgYmFjayBieSB0aGUgd2ViIGhhcyB0byBtb3ZlIHVwIGJ5IHRoZSB3ZWIgdGltZXMg",
+  "cm9vdCB0d28sCiAgICAjIG5vdCBieSB0aGUgd2ViOiBpbnNldCBpcyBtZWFzdXJlZCBhY3Jvc3MgdGhlIGVkZ2UsIG5vdCBh",
+  "bG9uZyBhbiBheGlzLgogICAgTElGVCA9IFdFQiAqIDEuNDE0MgogICAgSF9MT19JTiA9IExPX1ogLSBCT1RfUiArIEhfSU4g",
+  "KyBMSUZUCiAgICBIX0xPX09VVCA9IExPX1ogLSBCT1RfUiArIEhfT1VUICsgTElGVAogICAgSF9ISV9JTiA9IEhJX1ogKyBU",
+  "T1BfUiAtIEhfSU4gLSBMSUZUCiAgICBIX0hJX09VVCA9IEhJX1ogKyBUT1BfUiAtIEhfT1VUIC0gTElGVAogICAgaWYgKAog",
+  "ICAgICAgIEhBTkRMRV9QSUVSQ0UgPiAwLjA1CiAgICAgICAgYW5kIEhfT1VUIC0gSF9JTiA+IDEuNQogICAgICAgIGFuZCBI",
+  "X0hJX0lOIC0gSF9MT19JTiA+IDEuNQogICAgICAgIGFuZCBIX0hJX09VVCAtIEhfTE9fT1VUID4gMS41CiAgICApOgogICAg",
+  "ICAgIGhvbGUgPSBbCiAgICAgICAgICAgIChIX0lOLCBIX0xPX0lOKSwKICAgICAgICAgICAgKEhfT1VULCBIX0xPX09VVCks",
+  "CiAgICAgICAgICAgIChIX09VVCwgSF9ISV9PVVQpLAogICAgICAgICAgICAoSF9JTiwgSF9ISV9JTiksCiAgICAgICAgXQog",
+  "ICAgICAgIHdpdGggQnVpbGRMaW5lKFBsYW5lLlhaKSBhcyBnYXA6CiAgICAgICAgICAgIFBvbHlsaW5lKCpob2xlLCBob2xl",
+  "WzBdKQogICAgICAgIHBsYXRlID0gcGxhdGUgLSBleHRydWRlKAogICAgICAgICAgICBtYWtlX2ZhY2UoZ2FwLmxpbmUpLCBh",
+  "bW91bnQ9SEFORExFX1RfTU0gLyAyICsgT1ZFUiwgYm90aD1UcnVlCiAgICAgICAgKQogICAgZWFycyA9IFtSb3QoMCwgMCwg",
+  "MTgwLjAgKiBrKSAqIHBsYXRlIGZvciBrIGluIHJhbmdlKGludChIQU5ETEVfQ09VTlQpKV0KICAgIHJlc3VsdCA9IHJlc3Vs",
+  "dC5mdXNlKCplYXJzKQo="
+].join("");
+
+/* ---- the field the ornament is drawn in ---- */
+function cupGamma(p) { return 1 + 1.6 * (1 - p.emboss_sharp); }
+function cupBump(x, gamma) {
+  if (x <= -1 || x >= 1) return 0;
+  return Math.pow(0.5 + 0.5 * Math.cos(Math.PI * x), gamma);
+}
+function cupPlateau(x, ramp) {
+  return Math.min(1, Math.max(0, (1 - Math.abs(x)) / Math.max(ramp, 1e-6)));
+}
+function cupRibbon(u, centre, width, gamma) {
+  return cupBump((((u - centre + 0.5) % 1 + 1) % 1 - 0.5) / Math.max(width, 1e-6), gamma);
+}
+/* Each motif is a field over one cell: u across a repeat, v up a row. All of
+   them are raised, which is what makes the ornament free of overhangs. */
+function cupMotif(kind, u, v, gamma) {
+  const ROPE_LEAN = 0.8, SHELL_RIBS = 5, VEIN = 0.07;
+  if (kind === "flute") return cupBump(2 * (u - 0.5), gamma);
+  if (kind === "rope") return cupBump(2 * ((((u + v * ROPE_LEAN) % 1) + 1) % 1 - 0.5), gamma);
+  if (kind === "bead") return cupBump(2.3 * (u - 0.5), gamma) * cupBump(2.3 * (v - 0.5), gamma);
+  if (kind === "dentil") return cupPlateau(2 * (u - 0.5), 0.3) * cupPlateau(2.2 * (v - 0.5), 0.35);
+  if (kind === "guilloche") {
+    const swing = 0.5 * Math.sin(TAU * v);
+    return Math.max(cupRibbon(u, 0.5 + swing, 0.17, gamma), cupRibbon(u, 0.5 - swing, 0.17, gamma));
+  }
+  if (kind === "lattice") {
+    return Math.max(cupBump(((((u + v) % 1) + 1) % 1 - 0.5) / 0.2, gamma),
+                    cupBump(((((u - v) % 1) + 1) % 1 - 0.5) / 0.2, gamma));
+  }
+  if (kind === "scallop") {
+    const x = (u - 0.5) * 2, y = v * 1.2;
+    const radius = Math.hypot(x, y);
+    if (radius >= 1) return 0;
+    const ribs = 0.5 + 0.5 * Math.cos(SHELL_RIBS * Math.atan2(y, x));
+    return Math.min(1, (1 - radius) * 2.4) * (0.55 + 0.45 * ribs);
+  }
+  if (kind === "eggdart") {
+    if (u < 0.5) return cupBump((u - 0.25) / 0.21, gamma) * cupBump((v - 0.5) / 0.46, gamma);
+    return cupBump((u - 0.75) / 0.09, gamma) * Math.max(0, 1 - v * 0.8);
+  }
+  if (kind === "acanthus") {
+    /* The leaf narrows as it rises but never to a point: a lobe of zero width
+       is a spike one sample wide, and one sample wide is what overshoots. */
+    const half = Math.max(0.5 * (1 - v * 0.72), 0.06);
+    const lobe = cupBump((u - 0.5) / half, gamma);
+    if (lobe <= 0) return 0;
+    const groove = 1 - 0.5 * cupBump((u - 0.5) / VEIN, gamma);
+    const side = 0.62 + 0.38 * Math.cos(2 * TAU * (u - 0.5));
+    return lobe * groove * Math.max(0, side) * (1 - 0.22 * v);
+  }
+  return 0;
+}
+
+/* The three registers, the bead mouldings on their joints, and the panels. */
+function cupRelief(p) {
+  const gamma = cupGamma(p);
+  const low = Math.min(Math.max(p.split_low, 0.05), 0.45);
+  const high = Math.min(Math.max(p.split_high, low + 0.2), 0.96);
+  const bands = [[0, low, p.band_low, 0], [low, high, p.band_mid, 1], [high, 1, p.band_high, 2]];
+  const count = Math.max(Math.round(p.emboss_count), 1);
+  const rows = Math.max(Math.round(p.emboss_rows), 1);
+  const panels = Math.round(p.panels);
+  const beadT = Math.max(p.bead_mm, 0.4) * 2.2 / Math.max(p.height_mm, 1e-6);
+  /* The seed turns each register rather than varying it repeat by repeat: a
+     per-repeat step is a corner, and a corner is what the section overshoots. */
+  const phase = [hash01(0, 2, p.seed), hash01(1, 2, p.seed), hash01(2, 2, p.seed)];
+  return (angle, t) => {
+    let total = 0;
+    if (p.bead_mm > 0.05) {
+      for (const edge of [low, high]) {
+        total = Math.max(total, p.bead_mm * cupBump((t - edge) / beadT, gamma));
+      }
+    }
+    if (p.emboss_mm <= 0.05) return total;
+    for (const [lo, hi, kind, index] of bands) {
+      if (kind === "plain" || t < lo || t > hi) continue;
+      const span = Math.max(hi - lo, 1e-6);
+      const v = (((t - lo) / span * rows) % 1 + 1) % 1;
+      const framed = index === 1 && panels >= 2;
+      const u = framed
+        ? ((angle * panels / TAU + phase[index]) % 1 + 1) % 1
+        : ((angle * count / TAU + phase[index]) % 1 + 1) % 1;
+      let value = cupMotif(kind, u, v, gamma);
+      if (framed) {
+        const inset = Math.min(Math.min(u, 1 - u), Math.min(v, 1 - v)) * 2;
+        const wide = Math.max(p.panel_frame, 1e-6);
+        const frame = cupBump((inset - wide) / wide, gamma);
+        const clear = Math.min(1, Math.max(0, (inset - wide * 2) / wide));
+        value = Math.max(value * clear, frame);
+      }
+      if (value > 0) total = Math.max(total, p.emboss_mm * value);
+    }
+    return total;
+  };
+}
+
+/* The socket first, because the outside is not free to go wherever the waist
+   slider points: a waist measured against the rim can be deeper than the whole
+   wall, and what breaks out then is the bore. */
+function cupProfile(p) {
+  const MIN_WALL = 1.2;
+  const H = p.height_mm;
+  const rim = p.bore_d_mm / 2 + p.wall_mm;
+  const depth = Math.min(p.bore_depth * H, H - Math.max(p.floor_mm, 0));
+  const boreTop = p.bore_d_mm / 2;
+  const boreBot = boreTop * (1 - p.bore_taper);
+  const start = p.floor_mm <= 0.05 ? 0 : H - depth;
+  const boreAt = t => {
+    const z = H * t;
+    if (z <= start) return 0;
+    return boreBot + (boreTop - boreBot) * (z - start) / Math.max(H - start, 1e-6);
+  };
+  const footT = Math.min(0.95, Math.max(p.foot_h_mm / Math.max(H, 1e-6), 0.02));
+  const waistT = Math.min(0.92, Math.max(footT + 0.05, p.waist_pos));
+  const waistR = Math.max(rim * (1 - p.waist), boreAt(waistT) + MIN_WALL);
+  const mono = monotoneProfile([0, footT, waistT, 1],
+    [rim + p.foot_mm, rim * (1 + p.belly), waistR, rim], 0.5, H);
+  const radiusAt = t => Math.max(mono.radiusAt(t), boreAt(t) + MIN_WALL);
+  return {radiusAt, bare: mono.radiusAt, boreAt, rim, boreTop, boreBot, start, depth, H};
+}
+
+/* The cast bracket: out at 45°, up, and back in at 45°, with the same shape
+   inset by the web for its opening. */
+function cupHandle(p, prof) {
+  if (Math.round(p.handle_count) < 1 || p.handle_mm <= 1) return null;
+  const H = p.height_mm, BURY = 1.2, CLEAR = 0.6;
+  const lo = p.handle_lo * H, hi = p.handle_hi * H;
+  if (hi - lo < 2) return null;
+  const reach = Math.min(p.handle_mm, (hi - lo) / 2);
+  const inner = [];
+  for (let k = 0; k <= 8; k++) {
+    const t = p.handle_lo + (p.handle_hi - p.handle_lo) * k / 8;
+    inner.push([Math.max(prof.bare(t) - BURY, prof.boreAt(t) + CLEAR), t * H]);
+  }
+  const inR = Math.max(...inner.map(q => q[0]));
+  const outR = Math.max(prof.bare((p.handle_lo + p.handle_hi) / 2) + p.emboss_mm + reach,
+                        inR + p.handle_t_mm);
+  const botR = inner[0][0], topR = inner[inner.length - 1][0], mid = (lo + hi) / 2;
+  const kneeLo = Math.min(lo + outR - botR, mid);
+  const kneeHi = Math.max(hi - (outR - topR), mid);
+  const outline = [[outR, kneeLo]];
+  if (kneeHi > kneeLo + 0.05) outline.push([outR, kneeHi]);
+  for (let k = inner.length - 1; k >= 0; k--) outline.push(inner[k]);
+  /* A diagonal set back by the web moves up by the web times root two, not by
+     the web: an inset is measured across the edge, not along an axis. */
+  const web = Math.max(2, (outR - inR) * (1 - Math.min(p.handle_pierce, 0.85)) / 2);
+  const hIn = inR + web, hOut = outR - web, lift = web * 1.4142;
+  const loIn = lo - botR + hIn + lift, loOut = lo - botR + hOut + lift;
+  const hiIn = hi + topR - hIn - lift, hiOut = hi + topR - hOut - lift;
+  let hole = null;
+  if (p.handle_pierce > 0.05 && hOut - hIn > 1.5 && hiIn - loIn > 1.5 && hiOut - loOut > 1.5) {
+    hole = [[hIn, loIn], [hOut, loOut], [hOut, hiOut], [hIn, hiIn]];
+  }
+  return {outline, hole, half: p.handle_t_mm / 2};
+}
+
+/* Both loops resampled to the same count, so the frame between them comes out
+   as one quad strip rather than a polygon triangulation. */
+function cupResample(loop, count) {
+  const runs = [];
+  let total = 0;
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i], b = loop[(i + 1) % loop.length];
+    const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    runs.push(d); total += d;
+  }
+  const out = [];
+  for (let k = 0; k < count; k++) {
+    let want = total * k / count, i = 0;
+    while (i < runs.length - 1 && want > runs[i]) { want -= runs[i]; i++; }
+    const a = loop[i], b = loop[(i + 1) % loop.length];
+    const s = runs[i] > 1e-9 ? want / runs[i] : 0;
+    out.push([a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s]);
+  }
+  return out;
+}
+
+function cupEar(handle, angle) {
+  const build = new Builder();
+  const ca = Math.cos(angle), sa = Math.sin(angle), t = handle.half;
+  const at = ([r, z], s) => [r * ca - s * t * sa, r * sa + s * t * ca, z];
+  let loop = handle.outline.slice();
+  let area = 0;
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i], b = loop[(i + 1) % loop.length];
+    area += a[0] * b[1] - b[0] * a[1];
+  }
+  if (area < 0) loop.reverse();
+  if (!handle.hole) {
+    let cx = 0, cz = 0;
+    loop.forEach(q => { cx += q[0]; cz += q[1]; });
+    const c = [cx / loop.length, cz / loop.length];
+    for (let i = 0; i < loop.length; i++) {
+      const a = loop[i], b = loop[(i + 1) % loop.length];
+      build.tri(at(c, 1), at(a, 1), at(b, 1));
+      build.tri(at(c, -1), at(b, -1), at(a, -1));
+      build.quad(at(a, -1), at(b, -1), at(b, 1), at(a, 1));
+    }
+    return build;
+  }
+  const M = 32;
+  const outer = cupResample(loop, M);
+  let hole = handle.hole.slice();
+  let harea = 0;
+  for (let i = 0; i < hole.length; i++) {
+    const a = hole[i], b = hole[(i + 1) % hole.length];
+    harea += a[0] * b[1] - b[0] * a[1];
+  }
+  if (harea < 0) hole.reverse();
+  const inner = cupResample(hole, M);
+  for (let i = 0; i < M; i++) {
+    const j = (i + 1) % M;
+    build.quad(at(outer[i], 1), at(outer[j], 1), at(inner[j], 1), at(inner[i], 1));
+    build.quad(at(outer[j], -1), at(outer[i], -1), at(inner[i], -1), at(inner[j], -1));
+    build.quad(at(outer[i], -1), at(outer[j], -1), at(outer[j], 1), at(outer[i], 1));
+    build.quad(at(inner[j], -1), at(inner[i], -1), at(inner[i], 1), at(inner[j], 1));
+  }
+  return build;
+}
+
+/* The stations up the loft, placed the way the template places them: evenly,
+   plus a cluster round each bead, and everything snapped to one grid so two
+   families never land a micron apart. */
+function cupStations(p, base) {
+  const beadT = Math.max(p.bead_mm, 0.4) * 2.2 / Math.max(p.height_mm, 1e-6);
+  const low = Math.min(Math.max(p.split_low, 0.05), 0.45);
+  const high = Math.min(Math.max(p.split_high, low + 0.2), 0.96);
+  const raw = [];
+  for (let i = 0; i <= base; i++) raw.push(i / base);
+  let step = 1 / base;
+  if (p.bead_mm > 0.05) {
+    step = Math.min(step, beadT / 3);
+    for (const edge of [low, high]) {
+      for (let k = -4; k <= 4; k++) {
+        const value = edge + beadT * k / 3;
+        if (value > 0 && value < 1) raw.push(value);
+      }
+    }
+  }
+  const keys = Array.from(new Set(raw.map(v => Math.round(v / step)))).sort((a, b) => a - b);
+  const ts = keys.map(k => k * step).filter(v => v > step / 2 && v < 1 - step / 2);
+  return [0].concat(ts, [1]);
+}
+
+function cupMesh(p, quality) {
+  const prof = cupProfile(p);
+  const relief = cupRelief(p);
+  const H = p.height_mm;
+  const detail = Math.max(Math.round(p.emboss_count), Math.round(p.panels) * 2, 8);
+  /* Columns are kept a whole multiple of the repeat, so every cell of the
+     pattern is drawn through the same samples as every other one. */
+  let cols = Math.min(quality === "export" ? 384 : 240, Math.max(120, detail * 14));
+  cols = Math.round(cols / detail) * detail;
+  const ts = cupStations(p, quality === "export" ? 110 : 72);
+  const rows = ts.length - 1;
+
+  const build = new Builder();
+  /* The socket's own radius, drawn rather than evaluated: `boreAt` returns
+     nothing at the floor plane itself, which is right for the wall rule that
+     reads it and wrong for a ring of vertices that has to close against the
+     disc underneath it. */
+  const boreR = t => {
+    const z = H * t;
+    if (z < prof.start - 1e-9) return 0;
+    return prof.boreBot + (prof.boreTop - prof.boreBot)
+      * (z - prof.start) / Math.max(H - prof.start, 1e-6);
+  };
+  const outer = [], bore = [];
+  for (let j = 0; j < cols; j++) {
+    const a = TAU * j / cols;
+    const skin = [], core = [];
+    for (let i = 0; i <= rows; i++) {
+      const t = ts[i], z = H * t;
+      const r = prof.radiusAt(t) + relief(a, t);
+      skin.push([r * Math.cos(a), r * Math.sin(a), z]);
+      const br = boreR(t);
+      core.push([br * Math.cos(a), br * Math.sin(a), z]);
+    }
+    outer.push(skin); bore.push(core);
+  }
+  /* The socket's floor is snapped to a station, so the ring that closes it and
+     the bottom of the bore wall are the same circle. */
+  let iFloor = 0;
+  while (iFloor < rows && H * ts[iFloor] < prof.start - 1e-9) iFloor++;
+  const floorR = boreR(ts[iFloor]);
+
+  for (let j = 0; j < cols; j++) {
+    const k = (j + 1) % cols;
+    for (let i = 0; i < rows; i++) {
+      build.quad(outer[j][i], outer[k][i], outer[k][i + 1], outer[j][i + 1]);
+    }
+    for (let i = iFloor; i < rows; i++) {
+      build.quad(bore[k][i], bore[j][i], bore[j][i + 1], bore[k][i + 1]);
+    }
+    /* The rim between the bore and the outside, and the floor at the bottom of
+       the socket -- or, when the holder is open at both ends, nothing at all
+       down there but the ring under the foot. */
+    build.quad(outer[j][rows], outer[k][rows], bore[k][rows], bore[j][rows]);
+    const a = TAU * j / cols, b = TAU * k / cols;
+    const fj = [floorR * Math.cos(a), floorR * Math.sin(a), H * ts[iFloor]];
+    const fk = [floorR * Math.cos(b), floorR * Math.sin(b), H * ts[iFloor]];
+    if (iFloor > 0) {
+      build.tri([0, 0, H * ts[iFloor]], fj, fk);
+      build.tri([0, 0, 0], outer[k][0], outer[j][0]);
+    } else {
+      build.quad(outer[k][0], outer[j][0], bore[j][0], bore[k][0]);
+    }
+  }
+
+  const handle = cupHandle(p, prof);
+  if (handle) {
+    const n = Math.round(p.handle_count);
+    for (let k = 0; k < n; k++) build.merge(cupEar(handle, Math.PI * k));
+  }
+  const positions = new Float32Array(build.pos);
+  positions.materialVolume = Math.abs(build.volume());
+  return positions;
+}
+
+function cupCheck(p) {
+  const out = [];
+  const girth = Math.PI * (p.bore_d_mm + p.wall_mm * 2);
+  const rows = Math.max(Math.round(p.emboss_rows), 1);
+  if (!(p.emboss_mm <= p.wall_mm * 0.8))
+    out.push(["The relief stands further out than the wall it is cast on.",
+              "less relief, or a thicker wall"]);
+  if (!(p.bead_mm <= p.wall_mm * 0.8))
+    out.push(["The bead mouldings stand further out than the wall.",
+              "smaller mouldings, or a thicker wall"]);
+  if (!(p.split_high >= p.split_low + 0.3))
+    out.push(["The body register has no height left between the two splits.",
+              "a lower split below, or a higher one above"]);
+  if (!(rows * 3 <= p.split_low * p.height_mm))
+    out.push(["The lower register is too short for that many rows.",
+              "fewer rows, or a higher lower split"]);
+  if (!(rows * 3 <= (1 - p.split_high) * p.height_mm))
+    out.push(["The upper register is too short for that many rows.",
+              "fewer rows, or a lower upper split"]);
+  if (!(girth / Math.max(p.emboss_count, 1) >= 3))
+    out.push(["One repeat comes out narrower than the nozzle can draw.",
+              "fewer repeats, or a bigger socket"]);
+  if (p.panels >= 2 && !(p.panel_frame * girth / Math.max(p.panels, 1) >= 1.4))
+    out.push(["The panel frames come out thinner than the nozzle can lay.",
+              "fewer panels, or a wider frame"]);
+  if (!(p.floor_mm + 2 <= p.bore_depth * p.height_mm))
+    out.push(["The floor is thicker than the socket is deep.",
+              "a thinner floor, or a deeper socket"]);
+  if (!(p.bore_depth * p.height_mm + p.foot_h_mm <= p.height_mm + 2))
+    out.push(["The socket is bored down into the foot.",
+              "a shallower socket, or a shorter foot"]);
+  if (p.handle_count >= 1) {
+    if (!(p.handle_hi >= p.handle_lo + 0.25))
+      out.push(["The handle has no height to reach out and back in.",
+                "a lower base, or a higher top"]);
+    if (!(p.handle_mm * 2 <= (p.handle_hi - p.handle_lo) * p.height_mm))
+      out.push(["The handle reaches further out than 45° from where it starts.",
+                "less reach, or more height to do it in"]);
+  }
+  if (!(p.bore_d_mm + p.wall_mm * 2 >= 60))
+    out.push(["The body is too small to hold the plate.", "a bigger socket, or a thicker wall"]);
+  const cost = cupSurfaceCost(p);
+  if (p.handle_count >= 1 && !(cost <= 4600))
+    out.push(["The surface is too big to fuse a handle onto inside the sandbox.",
+              "fewer repeats or rows, or no handle"]);
+  if (!(cost <= 7000))
+    out.push(["The surface is too big to bore inside the sandbox.", "fewer repeats or rows"]);
+  return out;
+}
+
+/* Points round times sections up, computed the way the template computes it.
+   This is a memory figure rather than a triangle figure. */
+function cupSurfaceCost(p) {
+  const detail = Math.max(Math.round(p.emboss_count), Math.round(p.panels) * 2, 8);
+  const points = Math.min(96, Math.max(60, detail * 6));
+  const sections = Math.min(72, Math.max(24, Math.max(Math.round(p.emboss_rows), 1) * 21));
+  return points * sections;
+}
+
+function cupSilhouette(preset) {
+  const p = Object.assign({}, CUPHOLDER_DEFAULTS, preset, {seed: 1});
+  const prof = cupProfile(p);
+  const line = [];
+  for (let i = 0; i <= 24; i++) line.push([prof.radiusAt(i / 24), p.height_mm * i / 24]);
+  const maxR = Math.max(...line.map(q => q[0])) || 1;
+  const k = Math.min(12 / maxR, 28 / Math.max(p.height_mm, 1));
+  const put = ([r, z]) => `${(16 + r * k).toFixed(1)},${(30 - z * k).toFixed(1)}`;
+  return `<svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><path d="M` +
+    line.map(put).join("L") + "L" +
+    line.slice().reverse().map(([r, z]) =>
+      `${(16 - r * k).toFixed(1)},${(30 - z * k).toFixed(1)}`).join("L") +
+    `Z"/></svg>`;
+}
+
+/* Shuffle: the proportion and feasibility nodes, as the generator runs them.
+   The foot and the handle follow the height; the repeats and the panels are
+   counts and follow the circumference; the relief keeps its millimetre. */
+function cupShuffle(next, base, seed) {
+  const scale = next.height_mm / Math.max(base.height_mm, 1e-6);
+  ["foot_h_mm", "foot_mm", "handle_mm"].forEach(name => {
+    next[name] = base[name] * scale * (1 + 0.07 * (hash01(name.length, 5, seed) * 2 - 1));
+  });
+  const girth = Math.PI * (next.bore_d_mm + next.wall_mm * 2);
+  const ref = Math.PI * (base.bore_d_mm + base.wall_mm * 2);
+  ["emboss_count", "panels"].forEach(name => {
+    if (base[name] >= 2) next[name] = Math.max(2, Math.round(base[name] * girth / ref));
+  });
+  next.wall_mm = Math.min(7, Math.max(next.wall_mm, 1.6, (60 - next.bore_d_mm) / 2));
+  next.emboss_count = Math.min(16, Math.max(4, Math.round(next.emboss_count)));
+  next.panels = Math.min(8, Math.max(0, Math.round(next.panels)));
+  next.emboss_rows = Math.min(3, Math.max(1, Math.round(next.emboss_rows)));
+  next.emboss_mm = Math.min(next.emboss_mm, next.wall_mm * 0.8, 3);
+  next.bead_mm = Math.min(next.bead_mm, next.wall_mm * 0.8, 3);
+  next.height_mm = Math.min(170, Math.max(40, next.height_mm));
+  while (next.emboss_count > 4 && girth / next.emboss_count < 3) next.emboss_count -= 1;
+  while (next.panels >= 2 && next.panel_frame * girth / next.panels < 1.4) {
+    if (next.panel_frame < 0.4) next.panel_frame = Math.min(0.4, 1.4 * next.panels / girth);
+    else next.panels -= 1;
+  }
+  if (next.panels < 2) next.panels = 0;
+  if (next.handle_count >= 1) {
+    while (next.emboss_rows > 1 && cupSurfaceCost(next) > 4600) next.emboss_rows -= 1;
+    while (next.emboss_count > 4 && cupSurfaceCost(next) > 4600) {
+      next.emboss_count -= 1;
+      if (next.panels * 2 > next.emboss_count) next.panels = next.panels > 2 ? next.panels - 1 : 0;
+    }
+    if (cupSurfaceCost(next) > 4600) next.handle_count = 0;
+  }
+  while (next.emboss_rows > 1 && cupSurfaceCost(next) > 7000) next.emboss_rows -= 1;
+
+  const rows = Math.max(next.emboss_rows, 1);
+  next.split_low = Math.min(Math.max(next.split_low, rows * 3 / next.height_mm, 0.08), 0.45);
+  next.split_high = Math.min(Math.max(next.split_high, next.split_low + 0.3, 0.5),
+                             1 - rows * 3 / next.height_mm, 0.95);
+  if (next.split_high < next.split_low + 0.3) {
+    next.split_low = Math.max(0.08, next.split_high - 0.3);
+  }
+  next.bore_depth = Math.min(0.95, Math.max(0.35, next.bore_depth));
+  if (next.floor_mm > 0.05) {
+    next.floor_mm = Math.min(next.floor_mm, next.bore_depth * next.height_mm - 2.2);
+    if (next.floor_mm < 1.5) next.floor_mm = 0;
+  }
+  next.foot_h_mm = Math.min(Math.max(next.foot_h_mm, 0),
+                            next.height_mm + 1.8 - next.bore_depth * next.height_mm, 34);
+  if (next.handle_count >= 1) {
+    next.handle_hi = Math.min(Math.max(next.handle_hi, next.handle_lo + 0.25), 0.98);
+    if (next.handle_hi - next.handle_lo < 0.25) next.handle_lo = next.handle_hi - 0.25;
+    const span = (next.handle_hi - next.handle_lo) * next.height_mm;
+    next.handle_mm = Math.min(Math.max(next.handle_mm, 4), span / 2, 40);
+  }
+}
+
+/* =================================================================
+   8. Three.js stage
    ================================================================= */
 const canvas = document.getElementById("view");
 const renderer = new THREE.WebGLRenderer({canvas, antialias: true, alpha: true, preserveDrawingBuffer: false});
@@ -4023,7 +4802,7 @@ function paintTheme() {
 }
 
 /* =================================================================
-   8. Rebuild + readouts
+   9. Rebuild + readouts
    ================================================================= */
 let lastPositions = null;
 let refit = true;
@@ -4083,7 +4862,7 @@ function command() {
 }
 
 /* =================================================================
-   9. Controls
+   10. Controls
    ================================================================= */
 let inputs = {};
 function fmt(f, value) {
@@ -4264,7 +5043,7 @@ document.getElementById("reset").addEventListener("click", () => {
 });
 
 /* =================================================================
-   10. Export
+   11. Export
    ================================================================= */
 let downloads = null;
 if (window.claude && typeof window.claude.use === "function") {
@@ -4412,7 +5191,7 @@ document.getElementById("copy-cmd").addEventListener("click", async () => {
 });
 
 /* =================================================================
-   11. The five models, and the switch between them
+   12. The six models, and the switch between them
 
       Everything above this point is either shared machinery or one
       model's own port of its template. A model is the pairing: its
@@ -4565,6 +5344,37 @@ const MODELS = {
     check: towerCheck,
     shuffle: towerShuffle,
     silhouette: towerSilhouette
+  }  ,
+  cupholder: {
+    title: "Cup Holder",
+    noun: "cup-holder",
+    templateId: "tableware_cup_holder",
+    presetHeading: "Styles",
+    variantKey: "style",
+    sizeKey: "height_mm",
+    seed: 1,
+    tagline: "Every slider below is a parameter of the <code>tableware_cup_holder</code> " +
+      "template. A sleeve a cup drops into, ornamented the way a cast one is: three " +
+      "registers of relief &mdash; rope, guilloche, lattice, shells, egg-and-dart, acanthus " +
+      "&mdash; divided by bead mouldings, framed into panels, with a tapered socket bored " +
+      "from the rim and cast brackets at the sides.",
+    seedNote: "The seed turns each register round rather than varying it repeat by repeat: " +
+      "a step in the ornament is a corner the section overshoots. The socket never moves &mdash; " +
+      "a mug is 80 mm across whatever you wrap round it.",
+    stepDetail: "whose body is one lofted surface and whose socket is still a bored cone " +
+      "you can move or resize",
+    groups: [["form", "Silhouette"], ["socket", "Socket"], ["band", "Registers"],
+             ["emboss", "Relief"], ["handle", "Handles"]],
+    schema: CUPHOLDER_SCHEMA,
+    presets: CUPHOLDER_PRESETS,
+    labels: CUPHOLDER_LABELS,
+    jitter: CUPHOLDER_JITTER,
+    defaults: CUPHOLDER_DEFAULTS,
+    sourceB64: CUPHOLDER_SOURCE_B64,
+    mesh: cupMesh,
+    check: cupCheck,
+    shuffle: cupShuffle,
+    silhouette: cupSilhouette
   }
 };
 
@@ -4590,7 +5400,7 @@ function useModel(name) {
 }
 
 /* =================================================================
-   12. Boot
+   13. Boot
    ================================================================= */
 function buildTabs() {
   const host = document.getElementById("tabs");
