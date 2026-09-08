@@ -1,6 +1,14 @@
-# FormForge web app — monetization spec
+# FormForge web app — monetization spec and phased plan
 
-Specification only. Nothing in this document is built yet.
+Specification and implementation plan only. **Nothing is built yet — each
+phase in §11 requires explicit approval before work on it starts.**
+
+Decided (2026-09-08): hosted paid studio is the model, the free technical
+path (CLI/MCP/offline templates) stays free, launch targets individual
+makers on credits, and B2B licensing is deliberately deferred to a later
+phase pending demand evidence rather than designed now. §10's open
+questions 1 and 2 are resolved by this; 3 and 4 remain open and are called
+out again at the point in §11 where they'd first block a phase.
 
 "Monetizing FormForge" is not one product — it could mean a hosted generator
 people pay to use, a marketplace for templates, or a licensing deal with
@@ -210,8 +218,9 @@ Worth stating so this doesn't get read as "rewrite FormForge":
 
 ## 9. Explicitly out of scope for this spec
 
-- B2B API/licensing surface for print farms (mentioned in §0's rejected
-  table as a plausible phase-2, not designed here).
+- B2B API/licensing surface for print farms — deliberately deferred past
+  Phase 3 (§11), pending the demand signal Phase 3's metrics (§8) produce.
+  Not designed here at all, and not one of the numbered phases below.
 - Template marketplace / revenue share for third-party generator authors.
 - Mobile native app — the mobile-responsive web work already done on
   `studio.html` this session covers the mobile web case; a native app is a
@@ -220,19 +229,122 @@ Worth stating so this doesn't get read as "rewrite FormForge":
   pricing in §2 is a placeholder pending real measurement, not a geometry
   ask.
 
-## 10. Open questions for the person who wanted this monetized
+## 10. Open questions — status
 
-These are the calls only the user can make; everything above assumes an
-answer and says which one, so any of these can flip a section without
-starting over:
+1. ~~Hosted paid studio vs. marketplace vs. B2B~~ — **resolved**: hosted
+   studio, per the 2026-09-08 decision at the top of this document.
+2. ~~Metered credits vs. flat subscription~~ — **resolved**: metered
+   credits, per the same decision.
+3. Free tier at 3 builds/month — still open, no data to set it by yet.
+   Phase 1 (§11) ships with this as a guess and §8's metrics are what
+   should move it, not another guess.
+4. Infra preference (Stripe assumed for billing; cloud provider assumed
+   generic S3-compatible storage) — still open. This blocks Phase 0 concretely
+   (§11) and should be answered before that phase is approved, since it
+   changes which SDKs get pulled in.
 
-1. Does §0's framing (hosted paid generator, CLI stays free) match the
-   intent, or was "monetizing FormForge" actually about the marketplace or
-   B2B-licensing rows in that rejected-options table?
-2. Is metered credits (§2) the right shape, or is a flat subscription with
-   soft fair-use limits preferred (simpler to explain, harder to keep from
-   losing money on heavy users)?
-3. Free tier at 3 builds/month — too generous, too stingy, or fine as a
-   starting guess pending §8's conversion data?
-4. Any existing infra preference (Stripe is assumed for billing; AWS/GCP/
-   Cloudflare for storage and compute) or is this greenfield?
+## 11. Phased implementation plan
+
+Each phase below ends with a **gate**: a concrete, demo-able state, and a
+line that says what approval unlocks the next phase. No phase's work
+starts before its gate is explicitly approved — including Phase 0. Phases
+are sized to be independently shippable, not to be equal effort.
+
+B2B licensing (the rejected-for-now row in §0) is not a phase here at all
+— per this decision, it's a candidate to *design* only after Phase 3's
+metrics (§8) show individual-maker demand, at which point it gets its own
+spec, not a slot in this plan.
+
+### Phase 0 — Foundations (no user-visible product yet)
+
+The plumbing every later phase depends on, built once so it isn't
+retrofitted under a paying customer.
+
+- Postgres migration: bring up the schema in `docs/schema.sql` (users
+  table added, `vector`/`citext` types), point `formforge.store` at it
+  behind the same interface SQLite implements today. Existing SQLite
+  deployments (CLI users) are unaffected — this is additive, not a cutover
+  of the open-source path.
+- Auth: email+password or OAuth (needs open question 4 answered — which
+  provider) with sessions, no product surface wired to it yet beyond a
+  bare login/signup page.
+- Credits ledger: append-only table (`user_id`, `delta`, `reason`,
+  `job_id?`, `created_at`); a `balance` view, not a stored counter, so a
+  dispute is answerable from history per §6.
+- Billing skeleton: Stripe customer + subscription objects wired to the
+  three tiers in §2, webhook handling for renewal/cancellation/payment
+  failure. No usage-based deduction logic yet — just "does this account
+  have an active paid plan."
+- **Gate**: a developer can sign up, subscribe to a fake $1 test plan via
+  Stripe test mode, and see their credit balance in a database row. Nothing
+  a real customer sees. Unlocks Phase 1 approval.
+
+### Phase 1 — MVP hosted studio, one paid path
+
+The smallest version of §4/§5 that actually charges someone money.
+
+- `/app`: existing `studio.html` generator tabs adapted to call the real
+  backend (`formforge.api.app`) for the "Build" action instead of only the
+  JS preview mesh, per §4's preview-vs-final distinction.
+- Anonymous free tier: 3 builds tracked by signed cookie (§5 step 3), then
+  a signup wall.
+- One paid tier live end to end: Maker only (Studio tier and batch export
+  deferred to Phase 3) — subscribe, consume credits per successful build,
+  see remaining balance, hit a paywall at zero with a clear "upgrade or
+  buy credits" path (pay-as-you-go from §2 included here, since it's the
+  overage backstop for the one tier that exists).
+- Object storage for bundles (STL/3MF/STEP) with signed download URLs;
+  30-day TTL on free-tier outputs.
+- Minimal `/account/billing` (plan, balance, invoices) — no
+  `/account/history` gallery/re-run features yet, those are Phase 3.
+- Rate limiting on the build endpoint, independent of credit balance
+  (§6's last bullet) — this is a security/cost floor, not a nice-to-have,
+  and ships with the MVP rather than after an incident.
+- **Gate**: a real external user can sign up, pay a real card via Stripe
+  live mode, generate and download a real validated STL, and get correctly
+  blocked at zero balance. This is the first phase a non-team member could
+  actually use. Unlocks Phase 2 approval.
+
+### Phase 2 — Launch readiness
+
+Turns the working MVP into something safe to point traffic at.
+
+- `/`, `/pricing`, `/legal/terms`, `/legal/privacy`, `/legal/licensing`
+  (§3's answer written into real copy, reviewed — licensing terms are a
+  legal document, not just a doc-comment, before real customers rely on
+  them commercially).
+- Queue-depth status ("N ahead of you") wired to the existing
+  autoscaled-on-queue-depth geometry tier (§6) — no new sandbox
+  architecture, just surfacing what it already tracks.
+- Basic observability: the §8 metrics (free→paid conversion, credit
+  utilization, per-generation compute cost vs. per-credit price) wired to
+  dashboards, not just described. The pricing table in §2 is a guess until
+  this exists.
+- Load/cost validation: confirm the sandbox's measured CPU/wall time per
+  generator (already produced by `check_templates.py` sweeps) times
+  expected concurrent users doesn't outrun the geometry tier's autoscaling
+  ceiling before real spend is at risk.
+- **Gate**: the site is publicly linkable, legally reviewed, and its own
+  dashboards show unit economics that make sense (cost per credit under
+  price per credit, with real margin). Unlocks Phase 3 approval.
+
+### Phase 3 — Full individual-maker feature set
+
+Everything in §2/§4 that Phase 1 deferred, added once the MVP has proven
+people will pay at all.
+
+- Studio tier (§2): batch export via the generator's existing population
+  mode (`--count N --seed S`), priority queue as a second queue on the
+  same workers (§6).
+- `/account/history`: past generations, thumbnails, re-download,
+  "re-run with changes."
+- `/gallery`: opt-in public feed, doubling as marketing surface (§8's
+  share-rate metric starts meaning something here).
+- Revisit the Phase 1 pricing guesses (free-tier build count, per-tier
+  credit counts) against real Phase 2 dashboard data rather than the
+  placeholders in §2's table.
+- **Gate**: the product matches this spec's §2 pricing table and §4 site
+  map in full for the individual-maker persona (§1). At this point §8's
+  demand signal is real enough to decide whether a B2B spec is worth
+  writing — that decision, and any B2B work, is explicitly not part of
+  this plan.
