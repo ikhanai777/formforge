@@ -1,0 +1,65 @@
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    # The accounts suite is parametrised over SQLite and PostgreSQL and runs
+    # against both. Without a server here the Postgres half *skips* rather than
+    # fails, which would quietly mean the backend that handles real money is
+    # never exercised in CI. Hence the service.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: formforge_test
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      FORMFORGE_TEST_PG: "host=127.0.0.1 port=5432 user=postgres password=postgres dbname=formforge_test"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          # The api extra is what the HTTP tests need; without it they skip,
+          # and a skipped security check is not a passed one.
+          pip install -e ".[dev,api,accounts]"
+
+      - name: Lint the code this branch touched
+        # The repository's lint baseline is noisy; what matters is that a
+        # change does not add to it. Only changed files are checked.
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref || 'main' }} --depth=1 || true
+          CHANGED=$(git diff --name-only FETCH_HEAD...HEAD -- '*.py' || true)
+          if [ -n "$CHANGED" ]; then ruff check $CHANGED; else echo "no python changes"; fi
+
+      - name: Tests
+        run: python -m pytest tests/ -q
+
+      - name: Confirm PostgreSQL was actually exercised
+        # A guard against the failure mode this whole job exists to prevent:
+        # the Postgres parameter silently skipping and CI going green on
+        # SQLite alone.
+        run: |
+          python -m pytest tests/test_accounts.py -q -k postgres 2>&1 | tail -3
+          python -m pytest tests/test_accounts.py --collect-only -q -k postgres \
+            | tail -1 | grep -qv "0 tests" || (echo "postgres tests did not run" && exit 1)

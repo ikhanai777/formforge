@@ -41,10 +41,19 @@ PASSWORD = "correct-horse-battery-staple"
 IGNORED = {"check", "foreign", "primary", "constraint", "unique"}
 
 
-@pytest.fixture
-def accounts() -> AccountStore:
-    with AccountStore.memory() as store:
-        yield store
+def raw(store: AccountStore, sql: str, params: tuple = ()):
+    """Reach past the store's API to set up a state it will not create.
+
+    Written through the dialect rather than a raw connection so these tests
+    run unchanged on both backends -- which is the whole point of the fixture
+    being parametrised.
+    """
+    with store._db.transaction() as conn:
+        cursor = conn.execute(store._db.translate(sql), params)
+        try:
+            return [dict(r) for r in cursor.fetchall()]
+        except Exception:
+            return []
 
 
 @pytest.fixture
@@ -68,7 +77,7 @@ def _webhook(provider: OfflineProvider, payload: dict):
 
 
 class TestCreditsCannotGoWrong:
-    def test_the_last_credit_is_only_spent_once_under_concurrency(self, tmp_path: Path):
+    def test_the_last_credit_is_only_spent_once_under_concurrency(self, accounts_target):
         """The race that gives models away.
 
         Eight threads, each on its own connection, all trying to spend against
@@ -76,7 +85,7 @@ class TestCreditsCannotGoWrong:
         them sees four and proceeds; the balance ends negative and the
         difference was free. Exactly four may win.
         """
-        db = tmp_path / "accounts.db"
+        db = accounts_target
         with AccountStore(db) as setup:
             account = setup.create_user("race@example.com", PASSWORD)
             user_id = account["id"]
@@ -194,10 +203,11 @@ class TestPeriods:
         a test precisely because the condition should be unreachable: if it
         ever is reached, the rollover must not be what quietly cleans it up.
         """
-        accounts._conn.execute(
+        raw(
+            accounts,
             "INSERT INTO credit_ledger (user_id, delta, reason, created_at)"
-            " VALUES (?, -10, 'adjustment', '2026-09-01T00:00:00+00:00')",
-            (user["id"],),
+            " VALUES (?, -10, 'adjustment', ?)",
+            (user["id"], accounts._db.now()),
         )
         assert accounts.balance(user["id"]) == -7
 
@@ -268,7 +278,7 @@ class TestBilling:
         assert apply_event(accounts, event) is True
         assert accounts.balance(user["id"]) == 23
 
-        accounts._conn.execute("DELETE FROM billing_events WHERE event_id = 'evt_a'")
+        raw(accounts, "DELETE FROM billing_events WHERE event_id = 'evt_a'")
         assert apply_event(accounts, event) is True, "the event should look new again"
         assert accounts.balance(user["id"]) == 23, "but the credits must not be granted twice"
 
@@ -452,7 +462,7 @@ class TestAuth:
 class TestSessions:
     def test_a_session_token_is_not_stored(self, accounts, user):
         token = accounts.create_session(user["id"])
-        rows = accounts._conn.execute("SELECT token_hash FROM sessions").fetchall()
+        rows = raw(accounts, "SELECT token_hash FROM sessions")
         assert token not in {row["token_hash"] for row in rows}
         assert accounts.user_for_token(token)["id"] == user["id"]
 
@@ -469,9 +479,12 @@ class TestSessions:
 
     def test_an_expired_session_is_not_accepted(self, accounts, user):
         token = accounts.create_session(user["id"])
-        accounts._conn.execute(
+        from datetime import datetime, timezone
+        past = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        raw(
+            accounts,
             "UPDATE sessions SET expires_at = ? WHERE user_id = ?",
-            ("2000-01-01T00:00:00+00:00", user["id"]),
+            (accounts._db.stamp(past), user["id"]),
         )
         assert accounts.user_for_token(token) is None
 
@@ -520,16 +533,110 @@ class TestSchemaParity:
             )
             if match and match.group(1) not in IGNORED
         }
-        actual = {
-            row["name"]
-            for row in accounts._conn.execute(f"PRAGMA table_info({table})").fetchall()
-        }
+        actual = accounts._db.columns(table)
         assert declared <= actual, f"{table} is missing {sorted(declared - actual)}"
 
     def test_the_balance_view_exists_in_both_dialects(self, accounts, user):
         assert "CREATE VIEW credit_balance AS" in Path("docs/schema.sql").read_text()
-        row = accounts._conn.execute(
-            "SELECT * FROM credit_balance WHERE user_id = ?", (user["id"],)
-        ).fetchone()
+        row = raw(
+            accounts, "SELECT * FROM credit_balance WHERE user_id = ?", (user["id"],)
+        )[0]
         assert row["balance"] == 3
         assert row["email"] == "maker@example.com"
+
+
+class TestMigrations:
+    """Repeatable and safe to re-apply, which is what makes deploying the same
+    migration set to an already-migrated database a non-event."""
+
+    def test_applying_twice_changes_nothing(self, accounts, user):
+        assert accounts._db.migrate() == [], "a second run must apply nothing"
+        assert accounts.balance(user["id"]) == 3
+
+    def test_a_second_store_on_the_same_database_migrates_cleanly(self, accounts_target, user):
+        """Two workers booting against one database. The first applied the
+        revisions; the second must find them applied and carry on, not race
+        the first into a duplicate-object error."""
+        with AccountStore(accounts_target) as second:
+            assert second._db.migrate() == []
+            assert second.get_user_by_email("maker@example.com") is not None
+
+    def test_the_revision_is_recorded(self, accounts):
+        rows = raw(accounts, "SELECT id FROM schema_migrations")
+        assert "0001_accounts" in {r["id"] for r in rows}
+
+
+class TestOpeningGrantVersusPeriodGrant:
+    def test_subscribing_in_the_signup_month_still_grants(self, accounts, user):
+        """A regression with teeth.
+
+        The opening grant and a period's allowance were briefly keyed the same
+        way, so a user who signed up and subscribed inside one calendar month
+        collided with their own signup key. The subscription granted nothing,
+        and it did so *silently* -- a duplicate idempotency key is meant to be
+        a no-op, so there was no error anywhere. Someone would have paid nine
+        dollars for zero credits.
+        """
+        from formforge.accounts.store import current_period
+
+        accounts.start_period(user["id"], current_period(), plan_id="maker")
+        assert accounts.balance(user["id"]) == 60
+        reasons = [e.reason for e in accounts.ledger(user["id"])]
+        assert reasons == ["grant", "expiry", "grant"]
+
+    def test_a_free_account_is_rolled_into_the_new_month_lazily(self, accounts, user):
+        """Nothing bills a free account, so no renewal webhook ever arrives for
+        one. Without a lazy roll a free user gets three credits once, ever."""
+        accounts.spend(user["id"], model_id="m1")
+        assert accounts.balance(user["id"]) == 2
+        # Pretend they last transacted in a previous month.
+        raw(accounts, "UPDATE users SET period_start = '2020-01' WHERE id = ?", (user["id"],))
+        moved = accounts.roll_to_current_period(user["id"])
+        assert [e.reason for e in moved] == ["expiry", "grant"]
+        assert accounts.balance(user["id"]) == 3
+        # And again in the same month is a no-op, however often it is called.
+        assert accounts.roll_to_current_period(user["id"]) == []
+        assert accounts.balance(user["id"]) == 3
+
+    def test_rolling_does_not_touch_a_paid_account(self, accounts, user):
+        """Paid periods are the processor's to declare. Rolling one locally
+        would grant a month nobody was charged for."""
+        accounts.start_period(user["id"], "2020-01", plan_id="maker")
+        assert accounts.roll_to_current_period(user["id"]) == []
+
+
+class TestClawBack:
+    """Refund policy: take back what is unspent, never create a debt."""
+
+    def test_it_takes_only_what_is_left(self, accounts, user):
+        accounts.start_period(user["id"], "2026-10", plan_id="maker")
+        for n in range(40):
+            accounts.spend(user["id"], model_id=f"m{n}")
+        assert accounts.balance(user["id"]) == 20
+        entry = accounts.claw_back(user["id"], 60, idempotency_key="refund:evt_1")
+        assert entry is not None and entry.delta == -20
+        assert accounts.balance(user["id"]) == 0
+
+    def test_it_never_creates_a_debt(self, accounts, user):
+        """The rule the rest of this module depends on: a balance is a number
+        of credits somebody can actually spend."""
+        for n in range(3):
+            accounts.spend(user["id"], model_id=f"m{n}")
+        assert accounts.claw_back(user["id"], 3, idempotency_key="refund:evt_2") is None
+        assert accounts.balance(user["id"]) == 0
+
+    def test_it_is_idempotent(self, accounts, user):
+        first = accounts.claw_back(user["id"], 2, idempotency_key="refund:evt_3")
+        second = accounts.claw_back(user["id"], 2, idempotency_key="refund:evt_3")
+        assert first.delta == -2 and first.applied
+        assert second.id == first.id and not second.applied
+        assert accounts.balance(user["id"]) == 1
+
+
+class TestEntitlement:
+    def test_a_model_is_entitled_because_it_was_paid_for(self, accounts, user):
+        """Entitlement is a ledger fact, not a flag somebody set."""
+        assert accounts.spend_for_model("m1") is None
+        accounts.spend(user["id"], model_id="m1")
+        paid = accounts.spend_for_model("m1")
+        assert paid is not None and paid.user_id == user["id"] and paid.delta == -1

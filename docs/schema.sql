@@ -29,6 +29,12 @@
 -- deduction would silently give models away. Opposite failure policies belong
 -- in different objects, where the difference is structural rather than a
 -- comment someone has to remember.
+--
+-- Those tables are also the ones that actually run on Postgres today:
+-- `formforge/accounts/migrations/0001_accounts.postgres.sql` is the applied
+-- form of everything from `users` down to `billing_events`, and this file is
+-- its reference. The telemetry tables above are still SQLite-only. Both halves
+-- have a test asserting no column has drifted from what is declared here.
 
 CREATE EXTENSION IF NOT EXISTS citext;
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -54,11 +60,17 @@ CREATE TABLE users (
     -- decided, and a column called `stripe_customer_id` is how that decision
     -- gets made by accident, six months before anyone notices they made it.
     billing_customer_id text UNIQUE,
-    -- The start of the billing period the current grant belongs to. What makes
-    -- the monthly grant idempotent under webhook replay -- a second delivery
-    -- for a period already granted lands on the ledger's unique key and is
-    -- refused, rather than doubling someone's credits.
-    period_start  timestamptz,
+    -- The billing period the current grant belongs to, as the processor's own
+    -- *label* for it ("2026-09"). What makes the monthly grant idempotent
+    -- under webhook replay: a second delivery for a period already granted
+    -- lands on the ledger's unique key and is refused, rather than doubling
+    -- someone's credits.
+    --
+    -- `text` rather than `timestamptz`, deliberately. Its only job is to be
+    -- half of an idempotency key, and typing it as a moment invites someone to
+    -- do arithmetic on it -- a period is a named interval, not an instant, and
+    -- the processor is the authority on where its edges are.
+    period_start  text,
     created_at    timestamptz NOT NULL DEFAULT now()
 );
 

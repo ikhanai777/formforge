@@ -20,28 +20,29 @@ than an error anyone would notice:
 ``the concurrent spend``
     Two builds finishing at once for a user with one credit left. Read the
     balance, both see 1, both debit, the balance is -1 and one model was free.
-    Guarded by doing the read and the write inside one ``BEGIN IMMEDIATE``
-    transaction, so the second waits for the first and then sees the truth.
+    Guarded by taking the user's lock before reading the balance and holding it
+    through the write -- `BEGIN IMMEDIATE` on SQLite, `SELECT ... FOR UPDATE`
+    on Postgres. See `dialect.py`; the guarantee is identical, the mechanism is
+    not.
 
 ``the replayed write``
     A retried request, or a payment processor redelivering a webhook it is not
     sure landed. Guarded by ``idempotency_key``: the second attempt hits the
     unique index and is answered with the row the first one wrote, which is
     what makes a retry safe rather than expensive.
+
+The SQL below is written once, with `?` placeholders, and the dialect
+translates it. That is what keeps the two backends from drifting: there is only
+one implementation of `spend` to be right about.
 """
 
 from __future__ import annotations
 
-import json
 import os
-import sqlite3
-import threading
-import uuid
-from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from . import plans
 from .auth import (
@@ -54,104 +55,25 @@ from .auth import (
     session_expiry,
     verify_password,
 )
+from .dialect import Dialect, new_id, open_dialect, to_iso
 
-DEFAULT_PATH = Path(
-    os.environ.get("FORMFORGE_DB", Path.home() / ".formforge" / "formforge.db")
+# One value selects the backend: a Postgres DSN or a SQLite path. Two settings
+# that can disagree about which database is live is a class of outage.
+DEFAULT_TARGET = os.environ.get(
+    "FORMFORGE_ACCOUNTS_DB",
+    os.environ.get("FORMFORGE_DB", str(Path.home() / ".formforge" / "formforge.db")),
 )
 
-# Mirrors the CHECK constraints in docs/schema.sql.
 REASONS = frozenset({"grant", "purchase", "spend", "refund", "expiry", "adjustment"})
 PLAN_STATUSES = frozenset({"active", "past_due", "cancelled"})
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    id                  text PRIMARY KEY,
-    email               text UNIQUE NOT NULL,
-    password_hash       text,
-    plan                text NOT NULL DEFAULT 'free'
-                        CHECK (plan IN ('free','maker','studio')),
-    plan_status         text NOT NULL DEFAULT 'active'
-                        CHECK (plan_status IN ('active','past_due','cancelled')),
-    billing_customer_id text UNIQUE,
-    period_start        text,
-    created_at          text NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
-    token_hash text PRIMARY KEY,
-    user_id    text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at text NOT NULL,
-    expires_at text NOT NULL,
-    revoked_at text
-);
-
-CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
-
-CREATE TABLE IF NOT EXISTS credit_ledger (
-    id              integer PRIMARY KEY AUTOINCREMENT,
-    user_id         text NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    delta           integer NOT NULL CHECK (delta <> 0),
-    reason          text NOT NULL
-                    CHECK (reason IN ('grant','purchase','spend','refund',
-                                      'expiry','adjustment')),
-    -- No REFERENCES models(id) here, unlike the Postgres schema, and it is not
-    -- an oversight. `models` is written by formforge.store, which is a
-    -- different object and may not have created its tables in this file yet --
-    -- an accounts store that cannot record a charge until the telemetry store
-    -- has been constructed would be a startup-order bug waiting to happen. The
-    -- property the Postgres FK provides is ON DELETE SET NULL, i.e. the charge
-    -- outlives the model; a plain column has that property already.
-    model_id        text,
-    idempotency_key text UNIQUE,
-    note            text,
-    created_at      text NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS credit_ledger_user_idx ON credit_ledger (user_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS credit_ledger_model_idx ON credit_ledger (model_id);
-
-CREATE TABLE IF NOT EXISTS billing_events (
-    id          integer PRIMARY KEY AUTOINCREMENT,
-    user_id     text,
-    provider    text NOT NULL,
-    event_id    text NOT NULL,
-    event_type  text NOT NULL,
-    payload     text NOT NULL DEFAULT '{}',
-    handled_at  text,
-    received_at text NOT NULL,
-    UNIQUE (provider, event_id)
-);
-
-CREATE INDEX IF NOT EXISTS billing_events_unhandled_idx ON billing_events (received_at)
-    WHERE handled_at IS NULL;
-"""
-
-# The balance, defined once per dialect and read from nowhere else. Two
-# independent SUMs over the same ledger is how the account page and the paywall
-# end up disagreeing, and the customer sees one number and is refused by the
-# other.
-#
-# IF NOT EXISTS rather than the DROP-then-CREATE that `formforge/store.py` uses
-# for its views, and the difference is not stylistic. Two of these opening the
-# same database at once -- which is what starting a second web worker *is* --
-# race between the DROP and the CREATE: one of them fails outright with "view
-# already exists", and in the window between the two statements the other's
-# balance query has no view to read. A concurrency test caught it on the second
-# run. The cost is that changing this definition needs a migration rather than a
-# restart, which is true of the Postgres side already.
-VIEWS = """
-CREATE VIEW IF NOT EXISTS credit_balance AS
-SELECT
-    u.id                       AS user_id,
-    u.email                    AS email,
-    u.plan                     AS plan,
-    u.plan_status              AS plan_status,
-    coalesce(sum(l.delta), 0)  AS balance,
-    max(l.created_at)          AS last_movement_at
-FROM users u
-LEFT JOIN credit_ledger l ON l.user_id = u.id
-GROUP BY u.id, u.email, u.plan, u.plan_status;
-"""
+# Columns holding a moment. Postgres hands these back as datetimes and SQLite
+# as text; they are normalised to ISO-8601 seconds on the way out so a caller
+# never has to know which engine answered.
+_TIME_COLUMNS = (
+    "created_at", "expires_at", "revoked_at", "received_at",
+    "handled_at", "last_movement_at", "applied_at",
+)
 
 
 class AccountError(Exception):
@@ -188,42 +110,32 @@ class LedgerEntry:
     applied: bool = True
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+def _clean(row: Any) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    record = dict(row)
+    for column in _TIME_COLUMNS:
+        if column in record:
+            record[column] = to_iso(record[column])
+    return record
 
 
 class AccountStore:
     """Users, sessions and credits. Every write raises on failure."""
 
-    def __init__(self, path: Path | str | None = None):
-        self.path = ":memory:" if path == ":memory:" else Path(path or DEFAULT_PATH)
-        self._lock = threading.RLock()
-        if self.path != ":memory:":
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(
-            self.path if self.path == ":memory:" else str(self.path),
-            check_same_thread=False,
-            # The busy timeout. With more than one process on the same file,
-            # a BEGIN IMMEDIATE that collides waits rather than failing.
-            timeout=10.0,
-            # Explicit transactions: `BEGIN IMMEDIATE` is what serialises the
-            # read-then-write in `spend`, and Python's implicit transaction
-            # handling will not issue one.
-            isolation_level=None,
+    def __init__(self, target: Path | str | None = None, *, dialect: Dialect | None = None):
+        self._db = dialect or open_dialect(
+            target if target is not None else DEFAULT_TARGET
         )
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.executescript(SCHEMA)
-        self._conn.executescript(VIEWS)
+        self.backend = self._db.name
+        self._db.migrate()
 
     @classmethod
     def memory(cls) -> "AccountStore":
         return cls(":memory:")
 
     def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+        self._db.close()
 
     def __enter__(self) -> "AccountStore":
         return self
@@ -231,40 +143,19 @@ class AccountStore:
     def __exit__(self, *exc: object) -> None:
         self.close()
 
-    @contextmanager
-    def _transaction(self) -> Iterator[sqlite3.Connection]:
-        """One serialised read-modify-write.
+    # -- plumbing ----------------------------------------------------------
+    def _run(self, conn: Any, sql: str, params: tuple = ()) -> Any:
+        return conn.execute(self._db.translate(sql), params)
 
-        IMMEDIATE rather than DEFERRED: a deferred transaction takes its write
-        lock at the first write, which is *after* the balance has been read,
-        which is exactly the window two concurrent spends need to both see the
-        same credit. Taking the lock up front closes it.
-        """
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
-            try:
-                yield self._conn
-            except BaseException:
-                self._rollback()
-                raise
-            try:
-                self._conn.execute("COMMIT")
-            except BaseException:
-                # A COMMIT can fail -- a full disk, an I/O error, a lock lost
-                # under contention -- and SQLite leaves the transaction open
-                # when it does. Without this the connection is poisoned: every
-                # later BEGIN IMMEDIATE on it fails with "cannot start a
-                # transaction within a transaction", so one failed write turns
-                # into every subsequent write failing, which reads as a much
-                # stranger bug than the disk being full.
-                self._rollback()
-                raise
+    def _one(self, conn: Any, sql: str, params: tuple = ()) -> dict[str, Any] | None:
+        return _clean(self._run(conn, sql, params).fetchone())
 
-    def _rollback(self) -> None:
-        # A rollback that itself fails leaves nothing useful to do, and raising
-        # here would replace the real failure with this one.
-        with suppress(Exception):
-            self._conn.execute("ROLLBACK")
+    def _all(self, conn: Any, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
+        return [_clean(r) for r in self._run(conn, sql, params).fetchall()]  # type: ignore[misc]
+
+    def _read_one(self, sql: str, params: tuple = ()) -> dict[str, Any] | None:
+        with self._db.reader() as conn:
+            return self._one(conn, sql, params)
 
     # -- users -------------------------------------------------------------
     def create_user(
@@ -283,20 +174,19 @@ class AccountStore:
         """
         address = normalise_email(email)
         tier = plans.get(plan)
-        user_id = uuid.uuid4().hex
-        now = _now()
-        stamp = period_start or now
+        user_id = new_id()
+        now = self._db.now()
+        period = period_start or current_period()
         encoded = hash_password(password) if password is not None else None
-        with self._transaction() as conn:
-            if conn.execute("SELECT 1 FROM users WHERE email = ?", (address,)).fetchone():
+        with self._db.transaction() as conn:
+            if self._one(conn, "SELECT 1 AS hit FROM users WHERE email = ?", (address,)):
                 raise DuplicateEmail(f"an account already exists for {address}")
-            conn.execute(
-                """
-                INSERT INTO users (id, email, password_hash, plan, plan_status,
-                                   billing_customer_id, period_start, created_at)
-                VALUES (?,?,?,?,'active',NULL,?,?)
-                """,
-                (user_id, address, encoded, tier.id, stamp, now),
+            self._run(
+                conn,
+                "INSERT INTO users (id, email, password_hash, plan, plan_status,"
+                " billing_customer_id, period_start, created_at)"
+                " VALUES (?,?,?,?,'active',NULL,?,?)",
+                (user_id, address, encoded, tier.id, period, now),
             )
             if tier.credits:
                 self._append(
@@ -304,28 +194,29 @@ class AccountStore:
                     user_id=user_id,
                     delta=tier.credits,
                     reason="grant",
-                    idempotency_key=f"grant:{user_id}:{stamp}",
+                    # `signup:` and not `grant:{user}:{period}`, which is what
+                    # `start_period` uses. Sharing that key namespace meant a
+                    # user who signed up and subscribed in the same calendar
+                    # month collided with their own opening grant, and the
+                    # subscription granted *nothing* -- silently, because a
+                    # duplicate idempotency key is supposed to be a no-op. The
+                    # opening balance and a period's allowance are two
+                    # different grants that happen to land in the same month,
+                    # so they get two different keys.
+                    idempotency_key=f"signup:{user_id}",
                     note=f"{tier.name} plan, opening balance",
                 )
         return self.get_user(user_id)  # type: ignore[return-value]
 
     def get_user(self, user_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM users WHERE id = ?", (user_id,)
-            ).fetchone()
-        return dict(row) if row else None
+        return self._read_one("SELECT * FROM users WHERE id = ?", (user_id,))
 
     def get_user_by_email(self, email: str) -> dict[str, Any] | None:
         try:
             address = normalise_email(email)
         except AuthError:
             return None
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM users WHERE email = ?", (address,)
-            ).fetchone()
-        return dict(row) if row else None
+        return self._read_one("SELECT * FROM users WHERE email = ?", (address,))
 
     def authenticate(self, email: str, password: str) -> dict[str, Any]:
         """Check credentials. Raises AuthError with one message for every kind
@@ -348,28 +239,25 @@ class AccountStore:
 
     def set_password(self, user_id: str, password: str) -> None:
         encoded = hash_password(password)
-        with self._transaction() as conn:
-            changed = conn.execute(
-                "UPDATE users SET password_hash = ? WHERE id = ?", (encoded, user_id)
-            ).rowcount
-            if not changed:
+        with self._db.transaction() as conn:
+            if not self._run(
+                conn, "UPDATE users SET password_hash = ? WHERE id = ?", (encoded, user_id)
+            ).rowcount:
                 raise AccountError(f"no such user: {user_id}")
 
     def set_billing_customer(self, user_id: str, customer_id: str) -> None:
-        with self._transaction() as conn:
-            changed = conn.execute(
+        with self._db.transaction() as conn:
+            if not self._run(
+                conn,
                 "UPDATE users SET billing_customer_id = ? WHERE id = ?",
                 (customer_id, user_id),
-            ).rowcount
-            if not changed:
+            ).rowcount:
                 raise AccountError(f"no such user: {user_id}")
 
     def user_for_billing_customer(self, customer_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM users WHERE billing_customer_id = ?", (customer_id,)
-            ).fetchone()
-        return dict(row) if row else None
+        return self._read_one(
+            "SELECT * FROM users WHERE billing_customer_id = ?", (customer_id,)
+        )
 
     # -- sessions ----------------------------------------------------------
     def create_session(self, user_id: str) -> str:
@@ -378,14 +266,12 @@ class AccountStore:
         if self.get_user(user_id) is None:
             raise AccountError(f"no such user: {user_id}")
         token, digest = new_session_token()
-        now = _now()
-        with self._transaction() as conn:
-            conn.execute(
-                """
-                INSERT INTO sessions (token_hash, user_id, created_at, expires_at, revoked_at)
-                VALUES (?,?,?,?,NULL)
-                """,
-                (digest, user_id, now, session_expiry().isoformat(timespec="seconds")),
+        with self._db.transaction() as conn:
+            self._run(
+                conn,
+                "INSERT INTO sessions (token_hash, user_id, created_at, expires_at, revoked_at)"
+                " VALUES (?,?,?,?,NULL)",
+                (digest, user_id, self._db.now(), self._db.stamp(session_expiry())),
             )
         return token
 
@@ -395,48 +281,56 @@ class AccountStore:
         malformed token is a denial-of-service handed to anyone with curl."""
         if not isinstance(token, str) or not token:
             return None
-        with self._lock:
-            row = self._conn.execute(
-                """
-                SELECT u.* FROM sessions s
-                JOIN users u ON u.id = s.user_id
-                WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?
-                """,
-                (hash_token(token), _now()),
-            ).fetchone()
-        return dict(row) if row else None
+        return self._read_one(
+            "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id"
+            " WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?",
+            (hash_token(token), self._db.now()),
+        )
 
     def revoke_session(self, token: str) -> bool:
-        with self._transaction() as conn:
-            changed = conn.execute(
-                "UPDATE sessions SET revoked_at = ?"
-                " WHERE token_hash = ? AND revoked_at IS NULL",
-                (_now(), hash_token(token)),
-            ).rowcount
-        return bool(changed)
+        with self._db.transaction() as conn:
+            return bool(
+                self._run(
+                    conn,
+                    "UPDATE sessions SET revoked_at = ?"
+                    " WHERE token_hash = ? AND revoked_at IS NULL",
+                    (self._db.now(), hash_token(token)),
+                ).rowcount
+            )
 
     def revoke_all_sessions(self, user_id: str) -> int:
         """Sign a user out everywhere. What a password change should call, and
         what a compromised-account report needs."""
-        with self._transaction() as conn:
-            return conn.execute(
+        with self._db.transaction() as conn:
+            return self._run(
+                conn,
                 "UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
-                (_now(), user_id),
+                (self._db.now(), user_id),
             ).rowcount
 
     # -- credits -----------------------------------------------------------
     def balance(self, user_id: str) -> int:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT balance FROM credit_balance WHERE user_id = ?", (user_id,)
-            ).fetchone()
+        row = self._read_one(
+            "SELECT balance FROM credit_balance WHERE user_id = ?", (user_id,)
+        )
         if row is None:
             raise AccountError(f"no such user: {user_id}")
         return int(row["balance"])
 
+    def account(self, user_id: str) -> dict[str, Any]:
+        """Plan, status and balance in one read, from the one view that
+        defines the balance."""
+        row = self._read_one(
+            "SELECT * FROM credit_balance WHERE user_id = ?", (user_id,)
+        )
+        if row is None:
+            raise AccountError(f"no such user: {user_id}")
+        row["balance"] = int(row["balance"])
+        return row
+
     def _append(
         self,
-        conn: sqlite3.Connection,
+        conn: Any,
         *,
         user_id: str,
         delta: int,
@@ -455,22 +349,19 @@ class AccountStore:
         if reason not in REASONS:
             raise AccountError(f"unknown ledger reason {reason!r}")
         if idempotency_key is not None:
-            existing = conn.execute(
-                "SELECT * FROM credit_ledger WHERE idempotency_key = ?", (idempotency_key,)
-            ).fetchone()
+            existing = self._one(
+                conn, "SELECT * FROM credit_ledger WHERE idempotency_key = ?",
+                (idempotency_key,),
+            )
             if existing is not None:
                 return _entry(existing, applied=False)
-        cursor = conn.execute(
-            """
-            INSERT INTO credit_ledger
-                (user_id, delta, reason, model_id, idempotency_key, note, created_at)
-            VALUES (?,?,?,?,?,?,?)
-            """,
-            (user_id, delta, reason, model_id, idempotency_key, note, _now()),
+        row = self._one(
+            conn,
+            "INSERT INTO credit_ledger"
+            " (user_id, delta, reason, model_id, idempotency_key, note, created_at)"
+            " VALUES (?,?,?,?,?,?,?) RETURNING *",
+            (user_id, delta, reason, model_id, idempotency_key, note, self._db.now()),
         )
-        row = conn.execute(
-            "SELECT * FROM credit_ledger WHERE id = ?", (cursor.lastrowid,)
-        ).fetchone()
         return _entry(row)
 
     def grant(
@@ -483,19 +374,16 @@ class AccountStore:
         note: str | None = None,
     ) -> LedgerEntry:
         """Add credits. Positive `credits` only -- taking them away is `spend`
-        or an explicit `adjust`, both of which have their own guards."""
+        or `claw_back`, both of which have their own guards."""
         if credits <= 0:
             raise AccountError("grant takes a positive number of credits")
-        with self._transaction() as conn:
-            if conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone() is None:
+        with self._db.transaction() as conn:
+            self._db.lock_user(conn, user_id)
+            if not self._one(conn, "SELECT 1 AS hit FROM users WHERE id = ?", (user_id,)):
                 raise AccountError(f"no such user: {user_id}")
             return self._append(
-                conn,
-                user_id=user_id,
-                delta=credits,
-                reason=reason,
-                idempotency_key=idempotency_key,
-                note=note,
+                conn, user_id=user_id, delta=credits, reason=reason,
+                idempotency_key=idempotency_key, note=note,
             )
 
     def spend(
@@ -523,32 +411,29 @@ class AccountStore:
             raise AccountError("spend takes a positive number of credits")
         if idempotency_key is None and model_id is not None:
             idempotency_key = f"spend:{model_id}"
-        with self._transaction() as conn:
-            row = conn.execute(
-                "SELECT balance FROM credit_balance WHERE user_id = ?", (user_id,)
-            ).fetchone()
+        with self._db.transaction() as conn:
+            # Before the balance is read, not after: the window between reading
+            # and writing is exactly what two concurrent spends need to both
+            # see the same last credit.
+            self._db.lock_user(conn, user_id)
+            row = self._one(
+                conn, "SELECT balance FROM credit_balance WHERE user_id = ?", (user_id,)
+            )
             if row is None:
                 raise AccountError(f"no such user: {user_id}")
-            # Checked inside the transaction, which is the entire point: read
-            # it outside and two concurrent spends both see the same credit.
             if idempotency_key is not None:
-                already = conn.execute(
-                    "SELECT * FROM credit_ledger WHERE idempotency_key = ?",
+                already = self._one(
+                    conn, "SELECT * FROM credit_ledger WHERE idempotency_key = ?",
                     (idempotency_key,),
-                ).fetchone()
+                )
                 if already is not None:
                     return _entry(already, applied=False)
             available = int(row["balance"])
             if available < credits:
                 raise InsufficientCredits(available, credits)
             return self._append(
-                conn,
-                user_id=user_id,
-                delta=-credits,
-                reason="spend",
-                model_id=model_id,
-                idempotency_key=idempotency_key,
-                note=note,
+                conn, user_id=user_id, delta=-credits, reason="spend",
+                model_id=model_id, idempotency_key=idempotency_key, note=note,
             )
 
     def refund(
@@ -563,18 +448,64 @@ class AccountStore:
         mistaken for a grant when someone asks where the credits came from."""
         if credits <= 0:
             raise AccountError("refund takes a positive number of credits")
-        key = f"refund:{model_id}" if model_id else None
-        with self._transaction() as conn:
-            if conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone() is None:
+        with self._db.transaction() as conn:
+            self._db.lock_user(conn, user_id)
+            if not self._one(conn, "SELECT 1 AS hit FROM users WHERE id = ?", (user_id,)):
                 raise AccountError(f"no such user: {user_id}")
             return self._append(
-                conn,
-                user_id=user_id,
-                delta=credits,
-                reason="refund",
+                conn, user_id=user_id, delta=credits, reason="refund",
                 model_id=model_id,
-                idempotency_key=key,
+                idempotency_key=f"refund:{model_id}" if model_id else None,
                 note=note,
+            )
+
+    def claw_back(
+        self,
+        user_id: str,
+        credits: int,
+        *,
+        idempotency_key: str,
+        note: str | None = None,
+    ) -> LedgerEntry | None:
+        """Reverse a grant, taking back only what is still unspent.
+
+        The policy, decided deliberately: a payment reversal takes back at most
+        the balance the user still has, never more. Someone who was granted 60,
+        spent 40 and then had the payment refunded loses the 20 that are left.
+
+        The alternative -- reversing the full 60 into a -40 debt -- was
+        rejected. It locks the account behind a balance no ordinary action can
+        clear, and it needs a deliberate exception to the rule that nothing in
+        this module may create a negative balance. That rule is load-bearing:
+        every other guard here assumes a balance is a number of credits
+        somebody can actually spend.
+
+        Returns None when there was nothing left to take, which is a real
+        outcome and not a failure -- the refund still gets its billing_events
+        row either way.
+        """
+        if credits <= 0:
+            raise AccountError("claw_back takes a positive number of credits")
+        with self._db.transaction() as conn:
+            self._db.lock_user(conn, user_id)
+            row = self._one(
+                conn, "SELECT balance FROM credit_balance WHERE user_id = ?", (user_id,)
+            )
+            if row is None:
+                raise AccountError(f"no such user: {user_id}")
+            existing = self._one(
+                conn, "SELECT * FROM credit_ledger WHERE idempotency_key = ?",
+                (idempotency_key,),
+            )
+            if existing is not None:
+                return _entry(existing, applied=False)
+            take = min(credits, max(int(row["balance"]), 0))
+            if take <= 0:
+                return None
+            return self._append(
+                conn, user_id=user_id, delta=-take, reason="adjustment",
+                idempotency_key=idempotency_key,
+                note=note or f"reversal, {take} of {credits} recoverable",
             )
 
     def start_period(
@@ -596,27 +527,25 @@ class AccountStore:
         redelivers a renewal because it never saw our 200 must not be able to
         grant a second month.
         """
-        with self._transaction() as conn:
-            row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-            if row is None:
+        with self._db.transaction() as conn:
+            self._db.lock_user(conn, user_id)
+            user = self._one(conn, "SELECT * FROM users WHERE id = ?", (user_id,))
+            if user is None:
                 raise AccountError(f"no such user: {user_id}")
-            tier = plans.get(plan_id or row["plan"])
+            tier = plans.get(plan_id or user["plan"])
             written: list[LedgerEntry] = []
             balance = int(
-                conn.execute(
-                    "SELECT balance FROM credit_balance WHERE user_id = ?", (user_id,)
-                ).fetchone()["balance"]
+                self._one(
+                    conn, "SELECT balance FROM credit_balance WHERE user_id = ?", (user_id,)
+                )["balance"]
             )
             # Only a positive remainder expires. A negative balance should be
-            # impossible -- `spend` refuses to create one -- and if it somehow
+            # impossible -- `spend` refuses to create one -- and if one somehow
             # exists, wiping it here would be forgiving a debt by accident.
             if balance > 0:
                 written.append(
                     self._append(
-                        conn,
-                        user_id=user_id,
-                        delta=-balance,
-                        reason="expiry",
+                        conn, user_id=user_id, delta=-balance, reason="expiry",
                         idempotency_key=f"expiry:{user_id}:{period_start}",
                         note=f"unused at the end of the period before {period_start}",
                     )
@@ -624,39 +553,66 @@ class AccountStore:
             if tier.credits:
                 written.append(
                     self._append(
-                        conn,
-                        user_id=user_id,
-                        delta=tier.credits,
-                        reason="grant",
+                        conn, user_id=user_id, delta=tier.credits, reason="grant",
                         idempotency_key=f"grant:{user_id}:{period_start}",
                         note=f"{tier.name} plan allowance",
                     )
                 )
-            conn.execute(
-                "UPDATE users SET plan = ?, period_start = ? WHERE id = ?",
+            self._run(
+                conn, "UPDATE users SET plan = ?, period_start = ? WHERE id = ?",
                 (tier.id, period_start, user_id),
             )
             return written
 
+    def roll_to_current_period(self, user_id: str) -> list[LedgerEntry]:
+        """Bring a free account into the current month if it is behind.
+
+        Paid plans are rolled by the processor's renewal webhook. Nothing bills
+        a free account, so nothing would ever renew it -- without this, a free
+        user gets three credits once and never again. Doing it lazily on access
+        rather than from a scheduled job means there is no clock to keep
+        running, and `start_period` is idempotent on the period, so two
+        requests arriving together cannot grant twice.
+        """
+        user = self.get_user(user_id)
+        if user is None:
+            raise AccountError(f"no such user: {user_id}")
+        period = current_period()
+        if user["plan"] != "free" or user["period_start"] == period:
+            return []
+        return self.start_period(user_id, period, plan_id="free")
+
     def set_plan_status(self, user_id: str, status: str) -> None:
         if status not in PLAN_STATUSES:
             raise AccountError(f"unknown plan status {status!r}")
-        with self._transaction() as conn:
-            changed = conn.execute(
-                "UPDATE users SET plan_status = ? WHERE id = ?", (status, user_id)
-            ).rowcount
-            if not changed:
+        with self._db.transaction() as conn:
+            if not self._run(
+                conn, "UPDATE users SET plan_status = ? WHERE id = ?", (status, user_id)
+            ).rowcount:
                 raise AccountError(f"no such user: {user_id}")
 
     def ledger(self, user_id: str, limit: int = 100) -> list[LedgerEntry]:
         """The history behind a balance, newest first. This is what a support
         conversation reads."""
-        with self._lock:
-            rows = self._conn.execute(
+        with self._db.reader() as conn:
+            rows = self._all(
+                conn,
                 "SELECT * FROM credit_ledger WHERE user_id = ? ORDER BY id DESC LIMIT ?",
                 (user_id, limit),
-            ).fetchall()
+            )
         return [_entry(r) for r in rows]
+
+    def spend_for_model(self, model_id: str) -> LedgerEntry | None:
+        """The charge for a model, if it has been paid for.
+
+        This is the entitlement check behind every paid download: a model is
+        downloadable because somebody was charged for it, not because a flag
+        was set somewhere.
+        """
+        row = self._read_one(
+            "SELECT * FROM credit_ledger WHERE idempotency_key = ?", (f"spend:{model_id}",)
+        )
+        return _entry(row) if row else None
 
     # -- billing events ----------------------------------------------------
     def record_billing_event(
@@ -675,34 +631,31 @@ class AccountStore:
         what makes the replay check meaningful: act first and a crash between
         the two turns every redelivery into a second charge.
         """
-        with self._transaction() as conn:
-            existing = conn.execute(
+        with self._db.transaction() as conn:
+            existing = self._one(
+                conn,
                 "SELECT id FROM billing_events WHERE provider = ? AND event_id = ?",
                 (provider, event_id),
-            ).fetchone()
+            )
             if existing is not None:
                 return int(existing["id"]), False
-            cursor = conn.execute(
-                """
-                INSERT INTO billing_events
-                    (user_id, provider, event_id, event_type, payload, handled_at, received_at)
-                VALUES (?,?,?,?,?,NULL,?)
-                """,
+            row = self._one(
+                conn,
+                "INSERT INTO billing_events"
+                " (user_id, provider, event_id, event_type, payload, handled_at, received_at)"
+                " VALUES (?,?,?,?,?,NULL,?) RETURNING id",
                 (
-                    user_id,
-                    provider,
-                    event_id,
-                    event_type,
-                    json.dumps(payload or {}, default=str),
-                    _now(),
+                    user_id, provider, event_id, event_type,
+                    self._db.dumps(payload or {}), self._db.now(),
                 ),
             )
-            return int(cursor.lastrowid), True
+            return int(row["id"]), True
 
     def mark_billing_event_handled(self, row_id: int) -> None:
-        with self._transaction() as conn:
-            conn.execute(
-                "UPDATE billing_events SET handled_at = ? WHERE id = ?", (_now(), row_id)
+        with self._db.transaction() as conn:
+            self._run(
+                conn, "UPDATE billing_events SET handled_at = ? WHERE id = ?",
+                (self._db.now(), row_id),
             )
 
     def unhandled_billing_events(self, limit: int = 50) -> list[dict[str, Any]]:
@@ -712,31 +665,36 @@ class AccountStore:
         what they paid for, which is the billing failure that no error rate
         catches -- the webhook returned 200, the work never happened.
         """
-        with self._lock:
-            rows = self._conn.execute(
-                """
-                SELECT * FROM billing_events WHERE handled_at IS NULL
-                ORDER BY received_at LIMIT ?
-                """,
+        with self._db.reader() as conn:
+            rows = self._all(
+                conn,
+                "SELECT * FROM billing_events WHERE handled_at IS NULL"
+                " ORDER BY received_at LIMIT ?",
                 (limit,),
-            ).fetchall()
-        out = []
+            )
         for row in rows:
-            event = dict(row)
-            event["payload"] = json.loads(event["payload"] or "{}")
-            out.append(event)
-        return out
+            row["payload"] = self._db.loads(row["payload"])
+        return rows
 
 
-def _entry(row: sqlite3.Row, *, applied: bool = True) -> LedgerEntry:
+def current_period() -> str:
+    """The label for the month now in progress.
+
+    A label, not an instant. Its whole job is to be half of an idempotency key,
+    so what matters is that two calls in the same month agree.
+    """
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+def _entry(row: dict[str, Any], *, applied: bool = True) -> LedgerEntry:
     return LedgerEntry(
         id=int(row["id"]),
-        user_id=row["user_id"],
+        user_id=str(row["user_id"]),
         delta=int(row["delta"]),
         reason=row["reason"],
         model_id=row["model_id"],
         idempotency_key=row["idempotency_key"],
         note=row["note"],
-        created_at=row["created_at"],
+        created_at=to_iso(row["created_at"]),
         applied=applied,
     )
