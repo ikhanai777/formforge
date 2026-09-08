@@ -142,6 +142,12 @@ is its own flank, and `emboss_sharp` is the exponent that sets that angle.
 
 ### Two numbers here are measured, and both were surprises
 
+**The relief stops at 3 mm.** The area a section spline loses to a raised bump
+grows with how prominent the bump is -- 3.0 mm costs 2.2% of the vase's volume,
+4.0 costs 3.1% -- so the slider stops where the measurement does rather than at a
+round number. Three millimetres is still nearly twice the wall thickness and half
+again the deepest relief any style uses.
+
 **The exponent stops at 1.8.** An interpolating spline drawn through a narrow
 raised bump undershoots on both sides of it, and how far it undershoots depends
 on the *shape* of the bump and not at all on how densely it is sampled: a stroke

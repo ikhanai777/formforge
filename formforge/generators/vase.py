@@ -374,7 +374,7 @@ def _feasible(params: dict[str, Any]) -> dict[str, Any]:
     # --- the relief -------------------------------------------------------
     if out.get("emboss", "none") != "none" and out["emboss_mm"] > 0.02:
         out["emboss_sharp"] = min(max(out["emboss_sharp"], 0.0), 1.0)
-        out["emboss_mm"] = min(max(out["emboss_mm"], 0.2), 4.0)
+        out["emboss_mm"] = min(max(out["emboss_mm"], 0.2), 3.0)
         out["emboss_lo"] = min(max(out["emboss_lo"], 0.0), 0.85)
         out["emboss_hi"] = min(max(out["emboss_hi"], out["emboss_lo"] + 0.14), 1.0)
         if out["emboss_hi"] - out["emboss_lo"] < 0.14:

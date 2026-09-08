@@ -1404,8 +1404,8 @@ const VASE_SCHEMA = [
   {k:"emboss",      g:"relief", label:"Relief",
    choices:["none","vine","laurel","fern","blossom","rose","lily","damask","trellis","scale"], v:"none",
    note:"Raised, never sunk, so it can only add material to the outside: the cavity is lofted from the plain silhouette."},
-  {k:"emboss_mm",   g:"relief", label:"Relief depth", min:0, max:4, step:0.1, v:1.6, unit:"mm",
-   note:"The ceiling is measured: past 4 mm the section splines lose more area to the bump than this template allows."},
+  {k:"emboss_mm",   g:"relief", label:"Relief depth", min:0, max:3, step:0.1, v:1.6, unit:"mm",
+   note:"The ceiling is measured: past 3 mm the section splines lose more area to the bump than this template allows."},
   {k:"emboss_count",g:"relief", label:"Repeats",  min:1,   max:9,   step:1,   v:6,   unit:"",
    note:"Round the vase. A flower is cast at the size a flower is cast at, so a wider vase gets more of them."},
   {k:"emboss_rows", g:"relief", label:"Rows",     min:1,   max:8,   step:1,   v:3,   unit:""},
@@ -2162,7 +2162,7 @@ function vaseShuffle(next, base, seed) {
     const narrow = Math.min(next.base_d_mm, next.mid_d_mm, next.neck_d_mm, next.rim_d_mm);
     while (next.emboss_count > 1 && Math.PI * narrow / next.emboss_count < 7) next.emboss_count -= 1;
     next.emboss_count = Math.min(Math.max(next.emboss_count, 1), 9);
-    next.emboss_mm = Math.min(Math.max(next.emboss_mm, 0.2), 4);
+    next.emboss_mm = Math.min(Math.max(next.emboss_mm, 0.2), 3);
     if (Math.abs(next.twist_deg) > 340) next.twist_deg = next.twist_deg > 0 ? 340 : -340;
   }
   const detail = Math.max(next.lobes, next.facets, 1);

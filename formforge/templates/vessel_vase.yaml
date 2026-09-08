@@ -179,13 +179,14 @@ param_schema:
     emboss_mm:
       type: number
       minimum: 0
-      maximum: 4
+      maximum: 3
       default: 1.6
       description: >
         How far the relief stands proud of the wall. The ceiling is measured:
         the spline sections lose area to a raised bump in proportion to how
-        prominent it is, and past 4 mm on a 48 mm radius the loss is over the
-        one part in thirty this template holds itself to.
+        prominent it is, and past 3 mm on a 48 mm radius the loss is over the
+        one part in forty this template holds itself to. Three is still nearly
+        twice the wall and half again the deepest relief any style uses.
       ui: { widget: slider, step: 0.1, label: "Relief depth" }
     emboss_count:
       type: integer

@@ -31,7 +31,7 @@ print("%.1f %d %d" % (g["outer"].volume, g["POINTS"], g["SECTIONS"]))
 
 MOTIFS = ("vine", "laurel", "fern", "blossom", "rose", "lily", "damask", "trellis", "scale")
 EXTREMES = [
-    ("emboss_mm", 0.2), ("emboss_mm", 4.0),
+    ("emboss_mm", 0.2), ("emboss_mm", 3.0),
     ("emboss_count", 1), ("emboss_count", 9),
     ("emboss_rows", 1), ("emboss_rows", 8),
     ("emboss_sharp", 0.0), ("emboss_sharp", 1.0),
