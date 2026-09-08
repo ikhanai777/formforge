@@ -170,6 +170,29 @@ spline, so too few points and the curve overshoots inward through the wall.
 and the flower is merely blocky. When the surface budget binds, the bands give
 way and the points never do.
 
+### How much of this is allowed to be left
+
+Comparing the two lofts is the acceptance test for a motif, and the number it
+has to come in under is worth stating carefully, because the first bar set for
+it was too tight and for the wrong reason. Measured across all nine motifs, as
+what the relief adds over the same vase with `emboss = none`:
+
+| repeats | bands | worst motif |
+| --- | --- | --- |
+| 6 | 64 | blossom, +1.06% |
+| 7 | 56 | damask, +1.16% |
+| 8 | 49 | damask, +2.10% |
+| 9 | 43 | vine, +2.05% |
+
+The trend is not the repeats themselves -- it is the bands the budget takes away
+to pay for them. And the right ceiling is not "as near nothing as possible": a
+2% shortfall on a 75 cm3 shell is about 0.03 mm of wall spread over the whole
+surface, which is a fraction of a layer and well under the tessellation
+tolerance. What the test is actually guarding against is the skin *collapsing*
+somewhere -- the straight-stemmed laurel that came back 10% short, which the DFM
+pass then caught as thin walls. So the ceiling is 2.5%, and the DFM pass remains
+the thing that catches a collapse; this test catches it earlier and says why.
+
 ## Printing the relief
 
 No segment of the silhouette may change radius faster than **45 degrees**, in

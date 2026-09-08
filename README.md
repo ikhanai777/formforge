@@ -297,6 +297,7 @@ than in a runbook.
 pytest                                             # the suite
 python -m formforge.eval.check_templates           # every template builds
 python -m formforge.eval.check_templates --extremes  # ...at every range extreme
+python -m formforge.eval.check_vase_relief        # the vase's floral motifs, lofted two ways
 python -m formforge.eval.benchmark                 # the metrics from the spec
 python -m formforge.eval.benchmark --baseline docs/benchmark-baseline.json
 ```
