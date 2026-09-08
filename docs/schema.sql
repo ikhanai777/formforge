@@ -21,6 +21,14 @@
 -- switched off in development, and a table that is empty for the first six
 -- months is worth nothing. Keep the two in step -- tests/test_store.py checks
 -- that every column declared here exists there.
+--
+-- The accounts and billing tables are implemented in `formforge/accounts/`
+-- rather than in `formforge/store.py`, and the split is deliberate: a
+-- telemetry write that fails is swallowed into a counter so it cannot break a
+-- generation someone is waiting on, and applying that same policy to a credit
+-- deduction would silently give models away. Opposite failure policies belong
+-- in different objects, where the difference is structural rather than a
+-- comment someone has to remember.
 
 CREATE EXTENSION IF NOT EXISTS citext;
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -29,15 +37,43 @@ CREATE EXTENSION IF NOT EXISTS vector;
 -- Accounts
 -- ---------------------------------------------------------------------------
 
+-- What a user *is* here is deliberately thin: an identity, a plan, and a
+-- pointer at whoever holds their card. How many generations they have left is
+-- not a column -- see `credit_ledger` below for why.
 CREATE TABLE users (
     id            uuid PRIMARY KEY,
     email         citext UNIQUE NOT NULL,
-    plan          text NOT NULL DEFAULT 'free',
-    quota_month   int  NOT NULL DEFAULT 20,
-    quota_used    int  NOT NULL DEFAULT 0,
-    quota_reset_at timestamptz NOT NULL DEFAULT date_trunc('month', now()) + interval '1 month',
+    -- Null for an account that has never set one (an OAuth identity, or a
+    -- pre-provisioned row). Never the password itself: see formforge/accounts/auth.py.
+    password_hash text,
+    plan          text NOT NULL DEFAULT 'free'
+                  CHECK (plan IN ('free','maker','studio')),
+    plan_status   text NOT NULL DEFAULT 'active'
+                  CHECK (plan_status IN ('active','past_due','cancelled')),
+    -- Deliberately not named after a processor. Which one this is has not been
+    -- decided, and a column called `stripe_customer_id` is how that decision
+    -- gets made by accident, six months before anyone notices they made it.
+    billing_customer_id text UNIQUE,
+    -- The start of the billing period the current grant belongs to. What makes
+    -- the monthly grant idempotent under webhook replay -- a second delivery
+    -- for a period already granted lands on the ledger's unique key and is
+    -- refused, rather than doubling someone's credits.
+    period_start  timestamptz,
     created_at    timestamptz NOT NULL DEFAULT now()
 );
+
+-- Sessions hold a *hash* of the bearer token, never the token. The threat is
+-- specific and ordinary: a database backup, a log line, or a support engineer
+-- with read access should not yield anything that can be replayed as a login.
+CREATE TABLE sessions (
+    token_hash text PRIMARY KEY,
+    user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    expires_at timestamptz NOT NULL,
+    revoked_at timestamptz
+);
+
+CREATE INDEX sessions_user_idx ON sessions (user_id);
 
 -- ---------------------------------------------------------------------------
 -- Template registry
@@ -120,6 +156,75 @@ CREATE INDEX models_public_idx ON models (created_at DESC) WHERE is_public;
 CREATE INDEX models_parent_idx ON models (parent_id) WHERE parent_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
+-- Credits and billing
+-- ---------------------------------------------------------------------------
+
+-- A balance is a sum over this table, never a column someone updates.
+--
+-- The reason is not purity. A credit is the unit a customer paid for, and the
+-- questions that get asked about it are all historical: why is this number
+-- lower than I expect, what did I spend it on, did that failed build charge
+-- me. A mutable counter answers none of them -- it holds the current value and
+-- destroys the evidence for how it got there, which is precisely what a
+-- support ticket needs. `quota_used int` was the first draft of this table and
+-- it was the wrong shape for the same reason a bank does not store your
+-- balance and throw away the transactions.
+--
+-- The rules that make it work:
+--
+--   * Append only. No UPDATE, no DELETE. A correction is a new row with the
+--     opposite sign and a reason of 'adjustment' -- visible, not retroactive.
+--   * `idempotency_key` is the concurrency and replay defence. A retried debit
+--     for a build and a redelivered renewal webhook both carry a key that has
+--     already been written, and the unique index refuses the second one. This
+--     is what stops a customer being charged twice for one model.
+--   * No rollover (unused credits expire at period end) is expressed as an
+--     'expiry' row for the remainder, not as a reset. The expiry is then a
+--     thing that happened at a time, which is what a customer arguing about it
+--     is entitled to see.
+CREATE TABLE credit_ledger (
+    id         bigserial PRIMARY KEY,
+    user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    -- Positive grants, negative spends. Never zero: a row that moves nothing
+    -- is a bug that would otherwise sit in the history looking deliberate.
+    delta      int NOT NULL CHECK (delta <> 0),
+    reason     text NOT NULL
+               CHECK (reason IN ('grant','purchase','spend','refund','expiry','adjustment')),
+    -- Which generation this paid for. ON DELETE SET NULL rather than CASCADE:
+    -- purging an old model must not erase the fact that someone was charged
+    -- for it. The money outlives the geometry.
+    model_id   uuid REFERENCES models(id) ON DELETE SET NULL,
+    idempotency_key text UNIQUE,
+    note       text,
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX credit_ledger_user_idx ON credit_ledger (user_id, created_at DESC);
+CREATE INDEX credit_ledger_model_idx ON credit_ledger (model_id) WHERE model_id IS NOT NULL;
+
+-- Every webhook the payment processor sends, stored raw before it is acted on.
+-- Two jobs: replay protection via the unique (provider, event_id), and an
+-- answer to "the processor says they told us, did we hear it?" that does not
+-- depend on the processor's own dashboard.
+CREATE TABLE billing_events (
+    id          bigserial PRIMARY KEY,
+    user_id     uuid REFERENCES users(id) ON DELETE SET NULL,
+    provider    text NOT NULL,
+    event_id    text NOT NULL,
+    event_type  text NOT NULL,
+    payload     jsonb NOT NULL DEFAULT '{}',
+    -- Null until the event has been turned into whatever it implies (a grant,
+    -- a plan change). A row sitting here unhandled is the thing a health check
+    -- should be looking for.
+    handled_at  timestamptz,
+    received_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (provider, event_id)
+);
+
+CREATE INDEX billing_events_unhandled_idx ON billing_events (received_at)
+    WHERE handled_at IS NULL;
+
+-- ---------------------------------------------------------------------------
 -- Agent-loop telemetry
 -- ---------------------------------------------------------------------------
 
@@ -190,6 +295,22 @@ CREATE INDEX policy_events_user_idx ON policy_events (user_id, created_at DESC)
 -- ---------------------------------------------------------------------------
 -- Views the product actually reads
 -- ---------------------------------------------------------------------------
+
+-- What a user can spend right now. Defined once, here, so the paywall and the
+-- account page cannot disagree about it -- two independent SUMs over the same
+-- ledger is how a customer ends up seeing one number and being refused by
+-- another.
+CREATE VIEW credit_balance AS
+SELECT
+    u.id                          AS user_id,
+    u.email                       AS email,
+    u.plan                        AS plan,
+    u.plan_status                 AS plan_status,
+    coalesce(sum(l.delta), 0)::bigint AS balance,
+    max(l.created_at)             AS last_movement_at
+FROM users u
+LEFT JOIN credit_ledger l ON l.user_id = u.id
+GROUP BY u.id, u.email, u.plan, u.plan_status;
 
 -- Which templates earn their place, and which are quietly failing. A template
 -- with a low success rate is a registry bug that traffic is still being routed

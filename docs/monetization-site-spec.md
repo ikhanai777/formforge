@@ -279,6 +279,48 @@ retrofitted under a paying customer.
   Stripe test mode, and see their credit balance in a database row. Nothing
   a real customer sees. Unlocks Phase 1 approval.
 
+**Status: landed, with two deliberate departures.** `formforge/accounts/`
+implements plans, identities, sessions, the append-only ledger and the
+processor interface; `docs/schema.sql` carries the Postgres target for all
+of it, held in step by a column-parity test per dialect. The gate is met in
+substance — signup grants an opening balance, a subscription event grants a
+month, spending debits it, and the balance is a sum over the ledger — with
+these differences from the text above, both of which are about not shipping
+unverified code:
+
+- *No Postgres driver.* The schema half of the migration is done (tables,
+  views, the `citext` case-folding reproduced in Python). The driver half is
+  not, because there is no Postgres server in the development environment to
+  verify one against, and a database backend that has never connected to a
+  database is the kind of thing that looks finished and is not. Still a
+  dialect change, and still the first thing Phase 1 needs.
+- *No Stripe adapter, so the gate ran on the offline provider rather than
+  Stripe test mode.* Open question 4 is still unanswered, and naming the
+  processor in the code is how that decision gets made by accident. What
+  exists instead is the interface plus a working offline implementation with
+  real HMAC signature verification — so the renewal, cancellation,
+  failed-payment and top-up handlers are tested, and answering question 4
+  means writing one adapter against a handler that already works. Substituting
+  the offline provider for Stripe test mode is a weaker gate than the text
+  asked for, and it is named here rather than quietly counted as a pass.
+- *No login or signup page, and nothing calls any of this.* The phase allowed
+  "a bare login/signup page" as its ceiling and its gate required no user
+  surface, so this is within scope rather than a shortfall — but it is worth
+  being precise: `formforge/accounts/` is a library with tests, the HTTP
+  gateway still has no authentication, and no request anywhere currently
+  passes through a credit check. Wiring it up is Phase 1.
+
+Two things worth flagging because they changed shape on contact:
+
+- The `users` table in `docs/schema.sql` previously declared a mutable quota
+  counter (`quota_used`, `quota_reset_at`). That is a different model from
+  the credits this spec approved, and keeping both would have left two
+  competing answers to "can this user build". The counter is gone; the
+  ledger is authoritative.
+- No-rollover (§2) is implemented as an `expiry` row for the remainder, not
+  as a reset. A customer asking where their credits went gets an entry with
+  a timestamp rather than a number that changed.
+
 ### Phase 1 — MVP hosted studio, one paid path
 
 The smallest version of §4/§5 that actually charges someone money.

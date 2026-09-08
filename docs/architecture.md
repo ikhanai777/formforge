@@ -317,15 +317,38 @@ Stated plainly, so nothing here reads as more finished than it is.
   itself is not implemented.
 - **OpenSCAD execution.** The adapter is written and reports cleanly when the
   binary is absent; it has not been exercised.
-- **Postgres.** The data model is in `docs/schema.sql` and `formforge/store.py`
-  implements it on SQLite — same tables, same column names, same two views. The
-  Postgres-only parts are absent rather than faked: the `vector(1536)` embedding
-  column and its ivfflat index, `citext`, and the `users` table that auth would
-  need. Moving over is a dialect change; §2 has the reasoning for starting on
-  the file-backed one, which is that a persistence layer needing a running
-  database is one that gets switched off in development, and a table empty for
-  six months is worth nothing.
-- **Auth, quotas, billing.** The API has no authentication.
+- **Postgres.** The data model is in `docs/schema.sql`; `formforge/store.py`
+  implements the telemetry half on SQLite and `formforge/accounts/store.py` the
+  accounts half — same tables, same column names, same views, with a test on
+  each side asserting no column has drifted. The Postgres-only parts are absent
+  rather than faked: the `vector(1536)` embedding column and its ivfflat index,
+  and `citext` (whose case-folding `formforge/accounts/auth.py` reproduces in
+  Python, because without it the two dialects disagree about whether two
+  signups are the same person). **No Postgres driver is written and none has
+  been exercised** — there is no server in the development environment to
+  verify one against, and an unverified database backend is exactly the kind of
+  thing that looks finished and is not. Moving over remains a dialect change;
+  §2 has the reasoning for starting on the file-backed one, which is that a
+  persistence layer needing a running database is one that gets switched off in
+  development, and a table empty for six months is worth nothing.
+- **Auth, quotas, billing — partly.** `formforge/accounts/` implements
+  identities, sessions, plans and an append-only credit ledger, with the two
+  hazards that produce wrong money rather than errors both guarded and tested:
+  the concurrent spend (read-then-write inside one `BEGIN IMMEDIATE`, so two
+  builds cannot share one credit) and the replayed write (a unique
+  `idempotency_key`, so a retried debit or a redelivered webhook is answered
+  with the row the first attempt wrote). Payment processors sit behind an
+  interface with a working offline implementation, in the same spirit as
+  `OfflineClient`.
+
+  **What that does not include, stated plainly:** no adapter for a real payment
+  processor — which one has not been decided, and the interface exists so that
+  answering it is one adapter against a tested handler rather than a
+  rewrite — and **the API still has no authentication**. Nothing in
+  `formforge/api/app.py` or the CLI calls any of this yet; the accounts module
+  is a library with tests, not a gate anything currently passes through. It is
+  Phase 0 of `docs/monetization-site-spec.md`, which is deliberately the phase
+  with no user-visible surface.
 - **Physical print testing.** Every template carries a `tested` block, and those
   blocks are *unverified* — no model in this repository has been printed. Spec
   section 13.3 is right that thirty physical prints before launch is the highest
