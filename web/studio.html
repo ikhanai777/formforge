@@ -194,8 +194,82 @@ button, input, select { font: inherit; color: inherit; }
   min-width: 0;
 }
 .studio > * { min-width: 0; }
+/* ---- one column: the model has to stay on screen ------------------
+   Below 981px the sliders are under the viewer rather than beside it, so
+   scrolling to a slider used to scroll the model away and you dragged it blind.
+   The tab bar is fixed to the top and the viewer sticks under it, so whatever
+   you drag, the thing it changes is in the same glance. This is the layout
+   boundary rather than a phone one: a tablet held upright has the same problem.
+
+   .studio goes to block flow to make it possible. A sticky *grid item* is
+   confined to its own grid area -- here one row the height of the viewer -- so
+   it would unstick immediately. In block flow the containing block is the whole
+   column, and it stays put for as long as there is anything left to scroll. */
 @media (max-width: 980px) {
-  .studio { grid-template-columns: minmax(0, 1fr); }
+  /* Declared on a selector, not loose in the media block: a bare declaration
+     there is a parse error, the custom property is dropped, and `top` silently
+     resolves to auto -- a sticky element that never sticks. */
+  :root { --tabbar: 58px; }
+  .studio { grid-template-columns: minmax(0, 1fr); display: block; }
+  .shell { padding-top: calc(var(--tabbar) + 8px); }
+  .studio > div:first-child {
+    position: sticky;
+    /* Pulled up under the bar by the amount it is padded, so the band of paper
+       it carries closes the seam rather than leaving a line of whatever is
+       scrolling underneath showing through. */
+    top: calc(var(--tabbar) - 8px);
+    z-index: 12;
+    background: var(--paper);
+    padding: 8px 0 10px;
+    margin-bottom: 14px;
+  }
+  .mast-right {
+    position: fixed;
+    inset: 0 0 auto 0;
+    z-index: 30;
+    padding: 5px 10px;
+    background: var(--paper);
+    border-bottom: 1px solid var(--line);
+    justify-items: stretch;
+    gap: 0;
+  }
+  /* ---- the status, shrunk to a pill on the model -------------------
+     It is the one thing that has to stay with the viewer: drag a slider past a
+     precondition and the dot goes red as it happens. The explanation is a tap
+     away rather than a panel's worth of screen. */
+  .status {
+    position: absolute;
+    left: 12px;
+    bottom: 48px;
+    z-index: 3;
+    width: auto;
+    max-width: calc(100% - 24px);
+    padding: 5px 11px 5px 9px;
+    border-radius: 999px;
+    gap: 0;
+    cursor: pointer;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(6px);
+  }
+  .status-head { font-size: 12px; gap: 7px; }
+  .status .status-note, .status ul { display: none; }
+  .status.open {
+    border-radius: 12px;
+    padding: 9px 12px 11px;
+    gap: 7px;
+    right: 12px;
+    max-height: calc(100% - 62px);
+    overflow-y: auto;
+  }
+  .status.open .status-note { display: block; font-size: 12px; }
+  .status.open ul { display: grid; }
+  .status-head::after {
+    content: "\2139";
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .status.open .status-head::after { content: "\00D7"; font-size: 14px; }
 }
 
 /* ---- stage ---------------------------------------------------- */
@@ -211,11 +285,15 @@ button, input, select { font: inherit; color: inherit; }
   height: min(78vh, 760px);
   display: grid;
 }
-@media (max-width: 980px) { .stage { height: 56vh; min-height: 380px; } }
+@media (max-width: 980px) { .stage { height: min(44vh, 420px); min-height: 230px; } }
 /* A phone held sideways is 390px tall, and a 380px minimum on the stage leaves
    nothing of the page to scroll to. Short viewports get a stage measured
    against the height they actually have. */
 @media (max-height: 560px) { .stage { height: 74vh; min-height: 190px; } }
+/* No short-viewport escape hatch for the pinned layout, deliberately: the
+   stuck viewer is sized in vh, so it scales with the screen rather than
+   swallowing it. Measured at 390x560 -- the tightest portrait worth having --
+   the model and four sliders are on screen together. */
 #view { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
 #view.dragging { cursor: grabbing; }
 
@@ -504,7 +582,8 @@ input[type="range"]::-moz-range-thumb {
    takes the whole gesture and a viewer you cannot scroll past is a
    viewer you are stuck in. */
 @media (max-width: 700px) {
-  .shell { padding: 12px 12px 18px; gap: 12px; }
+  .shell { padding: 12px 12px 18px; gap: 12px; padding-top: calc(var(--tabbar) + 8px); }
+  .tab { font-size: 12px; padding: 7px 11px; }
   /* The tagline is six lines of prose on a 320px screen, which puts the model
      below the fold on the one device where the model is the whole point. It is
      clamped to three and opens on a tap rather than being cut away. */
@@ -526,7 +605,9 @@ input[type="range"]::-moz-range-thumb {
   /* The readout stops being an overlay and becomes a strip under the model.
      Floated over a 380px stage it wrapped to two lines and sat across the rim
      of whatever it was describing. */
-  .stage { height: min(52vh, 420px); min-height: 260px; grid-template-rows: minmax(0, 1fr) auto; }
+  /* Shorter than it was, because it is now permanently on screen: the height
+     it gives up is four or five sliders visible under it at once. */
+  .stage { height: min(41vh, 340px); min-height: 230px; grid-template-rows: minmax(0, 1fr) auto; }
   .readout {
     position: static;
     grid-row: 2;
@@ -549,6 +630,7 @@ input[type="range"]::-moz-range-thumb {
   .panel { padding: 11px 12px 13px; }
   .species { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; }
   .formats { grid-template-columns: 1fr; }
+
 }
 
 /* ---- touch ----------------------------------------------------
@@ -5573,9 +5655,11 @@ function setExportNote() {
     "writes a <code>.step</code> " + MODEL.stepDetail + " &mdash; editable, not faceted.";
   document.getElementById("export-note").innerHTML = hosted()
     ? stepLine + " Saves here as <code>.txt</code> (rename to <code>.py</code>), because a " +
-      "hosted page may only hand over the file types the viewer allows &mdash; the same " +
-      "reason the mesh saves as <code>.txt</code> rather than <code>.stl</code>. Opened " +
-      "from the repo (<code>web/studio.html</code>), both save under their own extensions."
+      "hosted page may only hand over the file types on the viewer's allowlist, and " +
+      "<code>.stl</code> is not one of them &mdash; the mesh saves as a <code>.txt</code> " +
+      "carrying binary STL, so renaming it to <code>.stl</code> is all a slicer needs. " +
+      "Opened from the repo (<code>web/studio.html</code>), both save under their own " +
+      "extensions with no renaming at all."
     : stepLine + " The STL is this preview triangulated; the command below builds the same " +
       "model in the repo and validates it, with 3MF alongside.";
 }
@@ -5640,7 +5724,12 @@ document.getElementById("export-stl").addEventListener("click", async () => {
   const pos = MODEL.mesh(P, "export");
   if (downloads) {
     try {
-      await downloads.save({filename: `${stamp()}-stl.txt`, data: stlAscii(pos)});
+      /* Binary STL, not ASCII, even though the extension has to be .txt: the
+         hosted save caps at 16 MiB and the densest model here is 16.25 MiB of
+         ASCII, so that export used to fail outright. The same mesh is 4.9 MiB
+         binary. An ArrayBuffer is handed over byte for byte, so renaming the
+         file to .stl gives a slicer exactly what it expects. */
+      await downloads.save({filename: `${stamp()}-stl.txt`, data: stlBinary(pos)});
       toast("Saved. Rename it from .txt to .stl and it opens in any slicer.");
     } catch (err) {
       const code = (err && err.code) || "unavailable";
@@ -5936,6 +6025,12 @@ if (window.matchMedia("(pointer: coarse)").matches) {
   document.getElementById("hint").innerHTML = "drag to turn &middot; pinch to zoom";
 }
 document.getElementById("tagline").addEventListener("click", function () {
+  this.classList.toggle("open");
+});
+/* On a phone the status is a pill pinned over the model. Tapping it opens the
+   note and the list of what is wrong; anything that fixes the model closes it
+   again, so it is never left covering the thing it is describing. */
+document.getElementById("status").addEventListener("click", function () {
   this.classList.toggle("open");
 });
 const themeWatcher = window.matchMedia("(prefers-color-scheme: dark)");
