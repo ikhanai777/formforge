@@ -323,6 +323,16 @@ Two things worth flagging because they changed shape on contact:
 
 ### Phase 1 — MVP hosted studio, one paid path
 
+**Status: the backend is built; the studio front end is not.** Phase 1 was
+scoped to making the Phase 0 foundation usable through a real HTTP surface,
+which is done and tested: PostgreSQL, auth and sessions, Stripe in test mode,
+the credit gate on the export path, storage with expiring per-account download
+links. `docs/api-reference.md` is the contract. What Phase 1 does *not*
+include, and what therefore still stands between here and a paying customer:
+the studio itself being made account-aware, a login/signup page, and the
+landing and pricing pages (those last two are Phase 2). Live Stripe keys are
+deliberately refused in code.
+
 The smallest version of §4/§5 that actually charges someone money.
 
 - `/app`: existing `studio.html` generator tabs adapted to call the real

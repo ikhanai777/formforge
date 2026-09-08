@@ -68,6 +68,7 @@ from ..orchestrator import Orchestrator
 from ..registry import TemplateRegistry
 from ..sandbox import GeometrySandbox
 from ..slicer import slice_model
+from ..storage import LINK_TTL_SECONDS, StorageError, sign_download, verify_download
 from ..store import PRINT_ISSUES, Store
 
 STORE_DIR = Path(os.environ.get("FORMFORGE_STORE", Path.home() / ".formforge" / "models"))
@@ -81,6 +82,18 @@ EVENT_BUFFER = 256
 # meshes but only STL is on the free tier, so they are not interchangeable
 # here; `source` covers the generating script.
 _PLAN_FORMAT = {"3mf": "3mf", "stl": "stl", "step": "step", "source": "source"}
+
+# What each format is called when it reaches the user's disk. One definition,
+# because the session route and the signed-link route must not disagree about
+# the name of the file they are serving.
+_FILENAMES = {
+    "3mf": "model.3mf",
+    "stl": "model.stl",
+    "step": "model.step",
+    "source": "source.py",
+    "params": "params.json",
+    "report": "report.json",
+}
 
 
 @dataclass
@@ -286,6 +299,11 @@ def create_app(
 
     # -- accounts (only when this deployment is metered) ----------------
     metered = accounts is not None
+    # Signs download links. Generated per process when unset, which means a
+    # restart invalidates outstanding links -- acceptable for something that
+    # lives five minutes, and much better than shipping a default that every
+    # deployment shares. Set it explicitly to run more than one worker.
+    _link_secret = os.environ.get("FORMFORGE_LINK_SECRET") or uuid.uuid4().hex
     if metered:
         from .accounts_router import build_accounts_router
         from .security import COOKIE_NAME
@@ -297,7 +315,7 @@ def create_app(
         def _session_user(request) -> dict[str, Any] | None:
             return accounts.user_for_token(request.cookies.get(COOKIE_NAME) or "")
 
-        def _authorise_download(model_id: str, fmt: str, request) -> None:
+        def _authorise_download(model_id: str, fmt: str, request) -> dict[str, Any]:
             """Three separate questions, answered in the order that leaks least.
 
             1. Is anyone signed in?
@@ -324,7 +342,7 @@ def create_app(
             # build cost what it did, and paywalling those makes a refund
             # argument unanswerable.
             if fmt in ("report", "params"):
-                return
+                return user
 
             if accounts.spend_for_model(model_id) is None:
                 raise HTTPException(
@@ -343,6 +361,7 @@ def create_app(
                         f"{', '.join(tier.formats).upper()}. Upgrade to export {fmt.upper()}."
                     ),
                 )
+            return user
 
     # -- generation ----------------------------------------------------
     @app.post("/v1/generate", status_code=202)
@@ -564,6 +583,62 @@ def create_app(
         background.add_task(run)
         return {"job_id": job.job_id, "status": "queued"}
 
+    @app.post("/v1/models/{model_id}/download-link")
+    async def download_link(
+        model_id: str,
+        http: Request,
+        format: str = Query("3mf", pattern="^(3mf|stl|step|source|params|report)$"),
+    ):
+        """A short-lived URL that carries its own authorisation.
+
+        For the cases a session cookie cannot reach -- handing a URL to a
+        download manager, or (once artifacts live in a bucket) letting the
+        bucket serve it directly. The session route is still the primary path.
+
+        The entitlement checks run *here*, at minting time, so a token can only
+        ever exist for a file its holder was already allowed to fetch.
+        """
+        if not metered:
+            raise HTTPException(
+                status_code=404, detail="signed links are only issued on a metered deployment"
+            )
+        user = _authorise_download(model_id, format, http)
+        token = sign_download(
+            _link_secret, user_id=user["id"], model_id=model_id, fmt=format
+        )
+        return {
+            "url": f"/v1/download/{token}",
+            "expires_in": LINK_TTL_SECONDS,
+            "format": format,
+        }
+
+    @app.get("/v1/download/{token}")
+    async def download_signed(token: str):
+        """Serve a file to whoever holds a valid token.
+
+        No session required -- that is the point of the token, and also its
+        cost: within its few minutes it is a bearer credential for exactly one
+        model in exactly one format. Re-checking entitlement here as well as at
+        minting time, because a subscription can lapse or a refund can land in
+        between, and a token is not a promise about the future.
+        """
+        if not metered:
+            raise HTTPException(status_code=404, detail="not found")
+        try:
+            grant = verify_download(_link_secret, token)
+        except StorageError as exc:
+            log.info("rejected a download token: %s", exc)
+            raise HTTPException(status_code=403, detail="This link is invalid or has expired.") \
+                from None
+        record = database.get_model(grant.model_id)
+        if record is None or record.get("user_id") != grant.user_id:
+            raise HTTPException(status_code=404, detail="No such model.")
+        if grant.fmt not in ("report", "params") and accounts.spend_for_model(
+            grant.model_id
+        ) is None:
+            raise HTTPException(status_code=402, detail="This model has not been paid for.")
+        return _serve(grant.model_id, grant.fmt)
+
     @app.get("/v1/models/{model_id}/download")
     async def download(
         model_id: str,
@@ -582,15 +657,7 @@ def create_app(
                     "only produced on the parametric path."
                 ),
             )
-        filename = {
-            "3mf": "model.3mf",
-            "stl": "model.stl",
-            "step": "model.step",
-            "source": "source.py",
-            "params": "params.json",
-            "report": "report.json",
-        }[format]
-        return FileResponse(path, filename=filename)
+        return FileResponse(path, filename=_FILENAMES[format])
 
     # -- catalogue -----------------------------------------------------
     @app.get("/v1/templates")
@@ -726,6 +793,14 @@ def create_app(
         if job is None:
             raise HTTPException(status_code=404, detail=f"no model {model_id}")
         return job
+
+    def _serve(model_id: str, fmt: str):
+        """Hand back one artifact, whoever has already been authorised for it."""
+        job = _require_result(model_id)
+        path = job.result.artifacts.get(fmt)
+        if not path or not Path(path).exists():
+            raise HTTPException(status_code=404, detail=f"this model has no {fmt} artifact")
+        return FileResponse(path, filename=_FILENAMES[fmt])
 
     def _require_result(model_id: str) -> Job:
         job = _require_model(model_id)

@@ -543,3 +543,76 @@ class TestTheFreePathIsStillFree:
                 assert client.get(
                     f"/v1/models/free-model/download?format={fmt}"
                 ).status_code == 200
+
+
+class TestSignedDownloadLinks:
+    """A link that carries its own authorisation. Within its few minutes it is
+    a bearer credential for one model in one format, so what is tested here is
+    that it is exactly that and not one inch more."""
+
+    def test_a_link_serves_the_file_without_a_cookie(self, app, client, files):
+        signup(client)
+        finish_build(app, client, "model-1", files)
+        minted = client.post("/v1/models/model-1/download-link?format=stl")
+        assert minted.status_code == 200
+        url = minted.json()["url"]
+        client.cookies.clear()
+        response = client.get(url)
+        assert response.status_code == 200
+        assert response.content == b"stl bytes"
+
+    def test_a_link_cannot_be_minted_for_a_format_the_plan_excludes(self, app, client, files):
+        """Entitlement is checked at minting time, so a token can only exist
+        for a file its holder was already allowed to fetch."""
+        signup(client)
+        finish_build(app, client, "model-1", files)
+        assert client.post(
+            "/v1/models/model-1/download-link?format=step"
+        ).status_code == 403
+
+    def test_a_link_cannot_be_minted_for_someone_elses_model(self, app, client, files):
+        signup(client)
+        finish_build(app, client, "mine", files)
+        client.post("/v1/auth/logout")
+        client.cookies.clear()
+        signup(client, "intruder@example.com")
+        assert client.post("/v1/models/mine/download-link?format=stl").status_code == 404
+
+    def test_a_link_cannot_be_minted_for_an_unpaid_model(self, app, client, files, accounts):
+        signup(client)
+        user = accounts.get_user_by_email("maker@example.com")
+        accounts.spend(user["id"], 3, idempotency_key="drain")
+        finish_build(app, client, "model-broke", files)
+        assert client.post(
+            "/v1/models/model-broke/download-link?format=stl"
+        ).status_code == 402
+
+    def test_a_forged_or_expired_token_is_refused(self, app, client, files):
+        signup(client)
+        finish_build(app, client, "model-1", files)
+        for token in ("nonsense", "a.b", ""):
+            assert client.get(f"/v1/download/{token}").status_code in (403, 404)
+
+    def test_a_link_stops_working_when_the_model_stops_being_paid_for(
+        self, app, client, provider, accounts, files
+    ):
+        """Entitlement is rechecked when the link is redeemed, not only when it
+        was minted. A subscription can lapse and a refund can land in the few
+        minutes in between, and a token is not a promise about the future."""
+        signup(client)
+        finish_build(app, client, "model-1", files)
+        url = client.post("/v1/models/model-1/download-link?format=stl").json()["url"]
+        assert client.get(url).status_code == 200
+        # Reach into the ledger to undo the charge, which is what a reversal
+        # amounts to as far as entitlement is concerned.
+        raw_delete = "DELETE FROM credit_ledger WHERE idempotency_key = ?"
+        with accounts._db.transaction() as conn:
+            conn.execute(accounts._db.translate(raw_delete), ("spend:model-1",))
+        assert client.get(url).status_code == 402
+
+    def test_the_free_gateway_issues_no_links_at_all(self, tmp_path, monkeypatch, files):
+        monkeypatch.setenv("FORMFORGE_ALLOW_UNSAFE_SANDBOX", "1")
+        open_app = create_app(store_dir=tmp_path / "open", allow_unsafe_sandbox=True)
+        with TestClient(open_app) as free:
+            assert free.post("/v1/models/x/download-link?format=stl").status_code == 404
+            assert free.get("/v1/download/anything").status_code == 404
