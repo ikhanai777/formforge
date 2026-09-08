@@ -616,3 +616,113 @@ class TestSignedDownloadLinks:
         with TestClient(open_app) as free:
             assert free.post("/v1/models/x/download-link?format=stl").status_code == 404
             assert free.get("/v1/download/anything").status_code == 404
+
+
+class TestTheWholeJourney:
+    def test_signup_to_export_to_history(self, app, client, files):
+        """The flow a first customer actually walks, in one test.
+
+        Each step is covered in isolation above; this exists because the
+        interesting failures in a system like this live between the steps --
+        a balance that is right after a build but wrong on the account page, a
+        model that downloads but never appears in history.
+        """
+        account = signup(client).json()
+        assert account["credits"] == 3 and account["plan"] == "free"
+
+        # Sign out and back in: the session, not the signup, is what carries.
+        client.post("/v1/auth/logout")
+        client.cookies.clear()
+        client.post(
+            "/v1/auth/login", json={"email": "maker@example.com", "password": PASSWORD}
+        )
+
+        finish_build(app, client, "journey-1", files)
+
+        assert client.get("/v1/models/journey-1/download?format=stl").content == b"stl bytes"
+
+        credits = client.get("/v1/account/credits").json()
+        assert credits["credits"] == 2
+        assert credits["history"][0]["kind"] == "spend"
+        assert credits["history"][0]["change"] == -1
+
+        history = client.get("/v1/account/history").json()["models"]
+        assert [(m["model_id"], m["paid"]) for m in history] == [("journey-1", True)]
+
+    def test_upgrade_to_export_journey(self, app, client, provider, accounts, files):
+        """The flow that produces revenue: hit the free ceiling, subscribe,
+        and get the formats the free tier withheld."""
+        signup(client)
+        user = accounts.get_user_by_email("maker@example.com")
+        for n in range(3):
+            finish_build(app, client, f"free-{n}", files)
+        assert client.get("/v1/auth/me").json()["credits"] == 0
+        assert client.post("/v1/generate", json={"prompt": "one more"}).status_code == 402
+
+        client.post("/v1/billing/checkout", json={"plan": "studio"})
+        body = json.dumps({
+            "type": "subscription.activated", "id": "evt_up",
+            "customer_id": accounts.get_user(user["id"])["billing_customer_id"],
+            "plan_id": "studio", "period_start": "2026-09", "created": int(time.time()),
+        }).encode()
+        client.post(
+            "/v1/billing/webhook", content=body,
+            headers={"x-formforge-signature": provider.sign(body)},
+        )
+
+        me = client.get("/v1/auth/me").json()
+        assert (me["plan"], me["credits"], me["batch"]) == ("studio", 300, True)
+        finish_build(app, client, "paid-1", files)
+        assert client.get("/v1/models/paid-1/download?format=step").status_code == 200
+
+
+class TestConcurrentSpendOverHttp:
+    def test_simultaneous_builds_cannot_overspend_a_balance(self, app, client, files):
+        """The same race as the store-level test, but driven through the app's
+        own charging path -- because a guarantee that holds in the store and is
+        bypassed by the caller is not a guarantee."""
+        import threading
+
+        signup(client)
+        state = app.state.formforge
+        accounts = state["accounts"]
+        user = accounts.get_user_by_email("maker@example.com")
+        user_id = user["id"]
+        assert accounts.balance(user_id) == 3
+
+        attempts = 8
+        start = threading.Barrier(attempts)
+        errors: list[BaseException] = []
+
+        def build(n: int) -> None:
+            try:
+                job = state["jobs"].create()
+                job.model_id = f"race-{n}"
+                job.owner_id = user_id
+                state["jobs"].by_model[job.model_id] = job
+                result = _Result(job.model_id, files)
+                job.result = result
+                start.wait(timeout=10)
+                state["db"].record_generation(result, user_id=user_id)
+                state["charge"](job, result)
+            except BaseException as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=build, args=(n,)) for n in range(attempts)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+
+        assert not errors, f"unexpected failures: {errors!r}"
+        assert accounts.balance(user_id) == 0, "a balance must never go negative"
+
+        # Exactly three models were paid for; the rest are kept but unpaid and
+        # must not be downloadable.
+        paid = [n for n in range(attempts) if accounts.spend_for_model(f"race-{n}")]
+        assert len(paid) == 3
+        for n in range(attempts):
+            expected = 200 if n in paid else 402
+            assert client.get(
+                f"/v1/models/race-{n}/download?format=stl"
+            ).status_code == expected

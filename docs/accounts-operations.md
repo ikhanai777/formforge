@@ -118,3 +118,107 @@ billing and nothing in the payment path reads it.
 
 `pgvector` is not required by anything here; the templates embedding column in
 `docs/schema.sql` remains unimplemented on both backends.
+
+## Stripe, in test mode
+
+Nothing in this phase may talk to live Stripe. `StripeProvider` refuses a key
+that does not begin `sk_test_` unless `FORMFORGE_ALLOW_LIVE_BILLING=1` is set
+*and* `allow_live=True` is passed — two deliberate steps, because the failure
+mode of getting this wrong is charging real cards.
+
+### Configuration
+
+```sh
+export STRIPE_SECRET_KEY=sk_test_...          # test mode; anything else is refused
+export STRIPE_WEBHOOK_SECRET=whsec_...        # from `stripe listen` or the dashboard
+export STRIPE_PRICE_MAKER=price_...           # a $9/month recurring price
+export STRIPE_PRICE_STUDIO=price_...          # a $29/month recurring price
+export STRIPE_SUCCESS_URL=https://localhost:8000/account?checkout=done
+export STRIPE_CANCEL_URL=https://localhost:8000/pricing
+```
+
+With `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` both set, the gateway
+picks Stripe up automatically. With either missing it falls back to the offline
+provider — deliberately that way round, so a misconfiguration cannot silently
+start talking to a payment processor.
+
+### Walkthrough
+
+1. **Create the prices** in the Stripe test dashboard: two recurring monthly
+   products at $9 and $29. Copy the `price_...` ids into the variables above.
+
+2. **Forward webhooks to the local gateway.** Stripe cannot reach a laptop, so
+   the CLI tunnels for it:
+
+   ```sh
+   stripe listen --forward-to localhost:8000/v1/billing/webhook
+   ```
+
+   It prints a `whsec_...` — that is `STRIPE_WEBHOOK_SECRET` for this session,
+   and it changes each time `stripe listen` restarts.
+
+3. **Start the gateway with accounts on:**
+
+   ```python
+   from formforge.accounts import AccountStore
+   from formforge.api import create_app
+   app = create_app(accounts=AccountStore("postgresql://…"))
+   ```
+
+4. **Sign up and start a checkout:**
+
+   ```sh
+   curl -c jar -X POST localhost:8000/v1/auth/signup \
+     -H 'content-type: application/json' \
+     -d '{"email":"you@example.com","password":"a-long-enough-password"}'
+   # -> {"plan":"free","credits":3,...}
+
+   curl -b jar -X POST localhost:8000/v1/billing/checkout \
+     -H 'content-type: application/json' -d '{"plan":"maker"}'
+   # -> {"checkout_url":"https://checkout.stripe.com/..."}
+   ```
+
+5. **Pay with a test card.** Open the checkout URL and use `4242 4242 4242
+   4242`, any future expiry, any CVC. Stripe's own test cards cover the other
+   cases: `4000 0000 0000 0341` fails at charge time, `4000 0000 0000 9995`
+   declines for insufficient funds.
+
+6. **Watch the grant arrive.** `stripe listen` logs
+   `checkout.session.completed`, the gateway turns it into a period start, and:
+
+   ```sh
+   curl -b jar localhost:8000/v1/auth/me
+   # -> {"plan":"maker","credits":60,...}
+   ```
+
+   If credits do not appear, the webhook is the place to look — check
+   `unhandled_billing_events()`, which is exactly the "they paid and did not
+   get it" signal.
+
+### Exercising the rest without waiting for real events
+
+`stripe trigger` replays any event type against the local endpoint, signed
+properly:
+
+```sh
+stripe trigger invoice.paid                    # a renewal
+stripe trigger invoice.payment_failed          # -> past_due, credits kept
+stripe trigger customer.subscription.deleted   # -> back to free
+stripe trigger charge.refunded                 # -> claw back what is unspent
+```
+
+Deliver the same event twice to confirm the second is a no-op — the response
+says `{"applied": false}` and the balance does not move.
+
+### Verified and unverified
+
+- **Verified here**, against the automated suite: signature verification and
+  rejection, every event's effect on the ledger, idempotency under replay,
+  out-of-order status handling, refund arithmetic, and the credit gate on
+  exports. These run against the offline provider, which uses the same code
+  path and a real HMAC.
+- **Not verified here**: calls to Stripe's own API — creating a customer and a
+  Checkout Session — because this environment has no `sk_test_` key. The
+  request shapes are written against the current SDK but have not been round
+  tripped against Stripe. Step 4 above is the smoke test that closes that gap,
+  and it needs a key.
