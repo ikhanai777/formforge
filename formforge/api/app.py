@@ -48,6 +48,7 @@ try:
         FastAPI,
         HTTPException,
         Query,
+        Request,
         WebSocket,
         WebSocketDisconnect,
     )
@@ -59,6 +60,7 @@ except ImportError:  # pragma: no cover - optional dependency
     FASTAPI_AVAILABLE = False
     BaseModel = object  # type: ignore[assignment,misc]
 
+from ..accounts import InsufficientCredits, plans
 from ..bundle import write_bundle
 from ..dfm import DEFAULT_PROFILE_ID, PROFILES
 from ..llm import build_client
@@ -75,6 +77,11 @@ STORE_DIR = Path(os.environ.get("FORMFORGE_STORE", Path.home() / ".formforge" / 
 # gets the whole story.
 EVENT_BUFFER = 256
 
+# Download formats mapped to the names the plans use. `3mf` and `stl` are both
+# meshes but only STL is on the free tier, so they are not interchangeable
+# here; `source` covers the generating script.
+_PLAN_FORMAT = {"3mf": "3mf", "stl": "stl", "step": "step", "source": "source"}
+
 
 @dataclass
 class Job:
@@ -89,6 +96,9 @@ class Job:
     result: Any = None
     error: str = ""
     parent_id: str | None = None
+    # Whose build this is, on a metered deployment. None on the free
+    # self-hosted path, which is what makes every credit check a no-op there.
+    owner_id: str | None = None
 
     @property
     def progress(self) -> float:
@@ -209,8 +219,21 @@ def create_app(
     store_dir: Path | None = None,
     db: Store | None = None,
     allow_unsafe_sandbox: bool = False,
+    accounts: Any = None,
+    billing_provider: Any = None,
 ):
-    """Build the FastAPI application."""
+    """Build the FastAPI application.
+
+    `accounts` is what turns this from the free self-hosted gateway into the
+    hosted product. Left as None -- which is the default, and what the CLI, the
+    MCP server and anyone running their own copy get -- there are no auth
+    routes, no billing routes, no sessions and no credit check anywhere in the
+    request path. Passing an `AccountStore` mounts all of it.
+
+    The switch is a constructor argument rather than a setting read from the
+    environment inside a handler, so "is this deployment metered?" is decided
+    once, at startup, by the caller who knows.
+    """
     if not FASTAPI_AVAILABLE:
         raise RuntimeError(
             "FastAPI is not installed. Install it with `pip install "
@@ -261,12 +284,126 @@ def create_app(
         ),
     )
 
+    # -- accounts (only when this deployment is metered) ----------------
+    metered = accounts is not None
+    if metered:
+        from .accounts_router import build_accounts_router
+        from .security import COOKIE_NAME
+
+        provider = billing_provider or _default_provider()
+        router = build_accounts_router(accounts, provider, store=database)
+        app.include_router(router)
+
+        def _session_user(request) -> dict[str, Any] | None:
+            return accounts.user_for_token(request.cookies.get(COOKIE_NAME) or "")
+
+        def _authorise_download(model_id: str, fmt: str, request) -> None:
+            """Three separate questions, answered in the order that leaks least.
+
+            1. Is anyone signed in?
+            2. Is this model *theirs*? Answered from the persisted `user_id`,
+               and a model belonging to somebody else gets a 404 rather than a
+               403 -- a 403 confirms the id names something real, which turns
+               this endpoint into an oracle for enumerating other people's
+               model ids.
+            3. Was it paid for, and does their plan include this format?
+
+            Ownership before payment, deliberately: telling a stranger whether
+            somebody else's model has been paid for is a disclosure in itself.
+            """
+            user = _session_user(request)
+            if user is None:
+                raise HTTPException(status_code=401, detail="Not signed in.")
+
+            record = database.get_model(model_id)
+            if record is None or record.get("user_id") != user["id"]:
+                raise HTTPException(status_code=404, detail="No such model.")
+
+            # Metadata about their own build is not the paid artifact; the
+            # report and the parameters are what a user needs to see *why* a
+            # build cost what it did, and paywalling those makes a refund
+            # argument unanswerable.
+            if fmt in ("report", "params"):
+                return
+
+            if accounts.spend_for_model(model_id) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail=(
+                        "This model has not been paid for. Add credits and it "
+                        "will be available."
+                    ),
+                )
+            if not plans.allows_format(user["plan"], _PLAN_FORMAT.get(fmt, fmt)):
+                tier = plans.get(user["plan"])
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"The {tier.name} plan includes "
+                        f"{', '.join(tier.formats).upper()}. Upgrade to export {fmt.upper()}."
+                    ),
+                )
+
     # -- generation ----------------------------------------------------
     @app.post("/v1/generate", status_code=202)
-    async def generate(request: GenerateRequest, background: BackgroundTasks):
+    async def generate(request: GenerateRequest, background: BackgroundTasks, http: Request):
+        owner = None
+        if metered:
+            user = _session_user(http)
+            if user is None:
+                raise HTTPException(status_code=401, detail="Not signed in.")
+            # Checked before the sandbox runs, not after. A build costs real
+            # CPU and a user with no credits cannot pay for it, so refusing up
+            # front is both cheaper and a clearer answer than letting them wait
+            # for a model they will not be allowed to download.
+            #
+            # This is a *pre-check*, not a reservation: the credit is taken
+            # after validation passes. Two builds started together can both
+            # pass here and only one be paid for, which is handled where it
+            # happens -- see `_charge_for`.
+            accounts.roll_to_current_period(user["id"])
+            if accounts.balance(user["id"]) < 1:
+                raise HTTPException(
+                    status_code=402,
+                    detail="You have no credits left. Add credits to keep building.",
+                )
+            owner = user["id"]
         job = jobs.create()
+        job.owner_id = owner
         background.add_task(_run_generation, job, request)
         return {"job_id": job.job_id, "model_id": job.model_id, "status": "queued"}
+
+    def _charge_for(job: Job, result) -> None:
+        """Take the credit for a finished build. Only ever called on success.
+
+        The rule, which resolves retries, refreshes and mid-flight crashes
+        together: one credit per model, keyed on the model id, at the moment
+        validation passes. A second attempt to record the same build is a
+        no-op rather than a second charge, so a retried request is free; and a
+        crash between here and the file reaching the browser leaves the user
+        charged *and* entitled, because entitlement is this ledger row and the
+        artifacts are still on disk.
+
+        If the balance went to zero between the pre-check and here -- two
+        builds racing for one last credit -- the model is kept, unpaid. It
+        becomes downloadable when they have a credit again. Nobody is
+        overcharged and nobody gets a paid export they did not pay for.
+        """
+        if not metered or not job.owner_id or result.status != "ok":
+            return
+        try:
+            accounts.spend(
+                job.owner_id,
+                model_id=result.model_id,
+                note=f"{result.template_id or 'freeform'} build",
+            )
+        except InsufficientCredits:
+            log.warning(
+                "model %s finished but could not be paid for; kept unpaid",
+                result.model_id,
+            )
+        except Exception:
+            log.exception("could not record the charge for model %s", result.model_id)
 
     async def _run_generation(job: Job, request: GenerateRequest) -> None:
         loop = asyncio.get_running_loop()
@@ -289,7 +426,7 @@ def create_app(
                 interactive=request.interactive,
                 on_event=on_event,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.exception("generation %s failed", job.job_id)
             job.status = "failed"
             job.error = f"{type(exc).__name__}: {exc}"
@@ -317,7 +454,10 @@ def create_app(
         # Persisted for every terminal status, not just success: a store that
         # holds only the runs that worked cannot answer a question worth
         # asking. The write is best-effort by design -- see store.Store.
-        database.record_generation(result, parent_id=job.parent_id)
+        database.record_generation(result, user_id=job.owner_id, parent_id=job.parent_id)
+        # After the record, so a charge always has a model row behind it, and
+        # after validation, so only a build that actually succeeded is billable.
+        _charge_for(job, result)
         _record_policy(result)
 
         jobs.publish(
@@ -427,8 +567,11 @@ def create_app(
     @app.get("/v1/models/{model_id}/download")
     async def download(
         model_id: str,
+        http: Request,
         format: str = Query("3mf", pattern="^(3mf|stl|step|source|params|report)$"),
     ):
+        if metered:
+            _authorise_download(model_id, format, http)
         job = _require_result(model_id)
         path = job.result.artifacts.get(format)
         if not path or not Path(path).exists():
@@ -593,9 +736,35 @@ def create_app(
             )
         return job
 
+    # The pieces a test needs to stand in for a real generation. Exposed
+    # deliberately rather than reached for through closures: the alternative is
+    # tests that reimplement the charging and recording steps, which makes them
+    # agree with a copy of the logic rather than with the logic.
+    app.state.formforge = {
+        "jobs": jobs,
+        "db": database,
+        "accounts": accounts,
+        "charge": _charge_for,
+        "store_dir": store,
+        "metered": metered,
+    }
     return app
 
 
 app = None
 if FASTAPI_AVAILABLE and os.environ.get("FORMFORGE_AUTO_APP") == "1":  # pragma: no cover
     app = create_app()
+
+
+def _default_provider():
+    """The billing provider to use when the caller named none.
+
+    Falls back to the offline one rather than to Stripe. A deployment that
+    means to take money says so explicitly; defaulting the other way means a
+    misconfiguration silently starts talking to a payment processor, which is
+    the wrong direction to be wrong in.
+    """
+    from ..accounts import OfflineProvider
+    from ..accounts.stripe_provider import provider_from_env
+
+    return provider_from_env() or OfflineProvider()

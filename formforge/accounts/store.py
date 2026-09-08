@@ -582,6 +582,51 @@ class AccountStore:
             return []
         return self.start_period(user_id, period, plan_id="free")
 
+    def set_plan(self, user_id: str, plan_id: str) -> None:
+        """Move an account between plans without touching its balance.
+
+        Separate from `start_period`, which grants. Used when a subscription
+        ends: the plan reverts to free, and whatever is left of the paid month
+        expires the ordinary way at the next roll rather than being confiscated
+        at the moment the subscription lapses.
+        """
+        tier = plans.get(plan_id)
+        with self._db.transaction() as conn:
+            if not self._run(
+                conn, "UPDATE users SET plan = ? WHERE id = ?", (tier.id, user_id)
+            ).rowcount:
+                raise AccountError(f"no such user: {user_id}")
+
+    def has_newer_status_event(
+        self,
+        user_id: str,
+        moment: Any,
+        *,
+        provider: str,
+        exclude_id: str | None = None,
+    ) -> bool:
+        """Whether a later status-changing event has already been applied.
+
+        Webhooks arrive out of order. A balance movement does not care -- each
+        is idempotent on its own key -- but an account *status* is
+        last-write-wins, so a cancellation delivered after the renewal that
+        followed it would leave the account cancelled while it is paid up.
+
+        An event with no timestamp is treated as *not* stale: refusing to act
+        on an event because the processor told us nothing about when it
+        happened would mean dropping it, and a dropped status change is worse
+        than a possibly-reordered one.
+        """
+        if moment is None:
+            return False
+        row = self._read_one(
+            "SELECT count(*) AS newer FROM billing_events"
+            " WHERE user_id = ? AND provider = ? AND event_created > ?"
+            " AND event_id <> ? AND handled_at IS NOT NULL",
+            (user_id, provider, self._db.stamp(moment), exclude_id or ""),
+        )
+        return bool(row and int(row["newer"]))
+
     def set_plan_status(self, user_id: str, status: str) -> None:
         if status not in PLAN_STATUSES:
             raise AccountError(f"unknown plan status {status!r}")
@@ -623,6 +668,7 @@ class AccountStore:
         payload: dict[str, Any] | None = None,
         *,
         user_id: str | None = None,
+        event_created: Any = None,
     ) -> tuple[int, bool]:
         """Store a webhook before acting on it. Returns `(row_id, is_new)`.
 
@@ -642,11 +688,14 @@ class AccountStore:
             row = self._one(
                 conn,
                 "INSERT INTO billing_events"
-                " (user_id, provider, event_id, event_type, payload, handled_at, received_at)"
-                " VALUES (?,?,?,?,?,NULL,?) RETURNING id",
+                " (user_id, provider, event_id, event_type, payload, handled_at,"
+                "  event_created, received_at)"
+                " VALUES (?,?,?,?,?,NULL,?,?) RETURNING id",
                 (
                     user_id, provider, event_id, event_type,
-                    self._db.dumps(payload or {}), self._db.now(),
+                    self._db.dumps(payload or {}),
+                    self._db.stamp(event_created) if event_created else None,
+                    self._db.now(),
                 ),
             )
             return int(row["id"]), True

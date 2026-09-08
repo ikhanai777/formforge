@@ -62,6 +62,12 @@ CREATE TABLE IF NOT EXISTS billing_events (
     event_type  text NOT NULL,
     payload     text NOT NULL DEFAULT '{}',
     handled_at  text,
+    -- When the *processor* says the event happened, as distinct from when we
+    -- received it. Webhooks can arrive out of order -- a cancellation
+    -- overtaking the renewal it followed -- and applying them in arrival order
+    -- would leave the account in whichever state happened to land last. This
+    -- is what lets a stale status change be recognised and skipped.
+    event_created text,
     received_at text NOT NULL,
     UNIQUE (provider, event_id)
 );

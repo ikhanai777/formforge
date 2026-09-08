@@ -413,6 +413,26 @@ class Store:
             rows = self._conn.execute(sql, args).fetchall()
         return [_row_to_model(r) for r in rows]
 
+    def models_for_user(self, user_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        """One account's models, newest first.
+
+        The `user_id` is in the WHERE clause rather than applied to the results
+        afterwards, and that is the point: an ownership filter that runs in
+        Python is one refactor away from being dropped, and the way that
+        presents is one customer's history appearing in another's account. A
+        falsy user_id returns nothing rather than everything -- the dangerous
+        direction for this particular mistake is obvious.
+        """
+        if not user_id:
+            return []
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM models WHERE user_id = ?"
+                " ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (user_id, limit),
+            ).fetchall()
+        return [_row_to_model(r) for r in rows]
+
     def events_for(self, model_id: str) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(

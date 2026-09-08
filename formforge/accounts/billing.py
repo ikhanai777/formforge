@@ -29,6 +29,7 @@ import json
 import secrets
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from . import plans
@@ -43,9 +44,25 @@ EVENT_TYPES = frozenset(
     {
         "subscription.activated",   # a plan started: grant its allowance
         "subscription.renewed",     # a period rolled: expire, then grant
-        "subscription.cancelled",   # back to free at the end of the period
+        "subscription.cancelled",   # will not renew; still paid up until it ends
+        "subscription.expired",     # it has now ended: back to free
         "payment.failed",           # mark past_due; do not strip credits
+        "payment.refunded",         # money returned: claw back what is unspent
         "credits.purchased",        # pay-as-you-go top-up
+    }
+)
+
+# Events that move the account's *state* rather than its balance. Only these
+# need the out-of-order guard: a balance movement is idempotent on its own key
+# and so is safe in any order, but a status is last-write-wins and a
+# cancellation overtaking the renewal it followed would leave the wrong one
+# standing.
+STATUS_EVENTS = frozenset(
+    {
+        "subscription.activated",
+        "subscription.cancelled",
+        "subscription.expired",
+        "payment.failed",
     }
 )
 
@@ -68,6 +85,9 @@ class BillingEvent:
     plan_id: str | None = None
     credits: int | None = None
     period_start: str | None = None
+    # When the processor says this happened. Used to recognise an event that
+    # has been overtaken; see STATUS_EVENTS.
+    created: datetime | None = None
     # True when this came from the offline stand-in, so nothing downstream can
     # mistake a simulated payment for a real one.
     offline: bool = False
@@ -157,6 +177,14 @@ class OfflineProvider:
             plan_id=payload.get("plan_id"),
             credits=payload.get("credits"),
             period_start=payload.get("period_start"),
+            # Optional, and epoch seconds when present, matching what a real
+            # processor sends. Lets the out-of-order guard be exercised without
+            # a payment provider in the loop.
+            created=(
+                datetime.fromtimestamp(payload["created"], tz=timezone.utc)
+                if isinstance(payload.get("created"), (int, float))
+                else None
+            ),
             offline=True,
             raw=payload,
         )
@@ -185,6 +213,7 @@ def apply_event(
         event.type,
         event.raw,
         user_id=user["id"] if user else None,
+        event_created=event.created,
     )
     if not is_new:
         return False
@@ -206,19 +235,53 @@ def apply_event(
     # renewal did not land.
     period = event.period_start or time.strftime("%Y-%m", time.gmtime())
 
+    # Out-of-order delivery. Only status changes need this: every balance
+    # movement below is idempotent on its own key and therefore order-safe,
+    # but a status is last-write-wins, and a cancellation delivered after the
+    # renewal it preceded would leave the account cancelled when it is paid up.
+    stale = event.type in STATUS_EVENTS and accounts.has_newer_status_event(
+        user_id, event.created, provider=provider, exclude_id=event.id
+    )
+
     if event.type in ("subscription.activated", "subscription.renewed"):
         accounts.start_period(user_id, period, plan_id=event.plan_id or user["plan"])
-        accounts.set_plan_status(user_id, "active")
+        if not stale:
+            accounts.set_plan_status(user_id, "active")
     elif event.type == "subscription.cancelled":
-        # Plan drops to free, credits already granted are left alone. They were
-        # paid for; taking them back at cancellation would be charging for a
-        # month and then confiscating it.
-        accounts.set_plan_status(user_id, "cancelled")
+        # "Will not renew", not "is over". The credits already granted stay:
+        # they were paid for, and confiscating them at the moment somebody
+        # cancels is charging for a month and then taking it back.
+        if not stale:
+            accounts.set_plan_status(user_id, "cancelled")
+    elif event.type == "subscription.expired":
+        # Now it is actually over. Back to the free plan, and still without
+        # touching the balance -- the remainder of a paid month expires the
+        # ordinary way, at the next period roll, as a visible ledger entry.
+        if not stale:
+            accounts.set_plan(user_id, "free")
+            accounts.set_plan_status(user_id, "cancelled")
     elif event.type == "payment.failed":
         # Marked, not stripped. A failed renewal is usually an expired card,
         # and deleting the balance of someone who is about to fix it is how a
-        # recoverable billing problem becomes a cancelled account.
-        accounts.set_plan_status(user_id, "past_due")
+        # recoverable billing problem becomes a cancelled account. Credits
+        # already held stay spendable -- the approved policy.
+        if not stale:
+            accounts.set_plan_status(user_id, "past_due")
+    elif event.type == "payment.refunded":
+        # The approved refund policy: take back what is unspent, floored at
+        # zero, never creating a debt. See AccountStore.claw_back for why the
+        # full reversal into a negative balance was rejected.
+        credits = int(event.credits or 0)
+        if credits <= 0:
+            tier = plans.get(event.plan_id) if event.plan_id else None
+            credits = tier.credits if tier else 0
+        if credits > 0:
+            accounts.claw_back(
+                user_id,
+                credits,
+                idempotency_key=f"refund:{provider}:{event.id}",
+                note="payment refunded",
+            )
     elif event.type == "credits.purchased":
         credits = int(event.credits or 0)
         if credits <= 0:
