@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="same-origin">
+<title>Dashboard · FormForge</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%230d1117"/><path d="M11 9h11v3.4h-7.3v3.6h6.4v3.4h-6.4V24H11z" fill="%234cc2d6"/></svg>'>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-page="dashboard">
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar">
+  <div class="bar-inner">
+    <a class="brand" href="/">Form<span class="mark">Forge</span></a>
+    <nav id="nav" aria-label="Account"></nav>
+  </div>
+</header>
+<main class="shell" id="main">
+
+<h1>Dashboard</h1>
+
+<div class="msg err" id="err" hidden role="alert"></div>
+
+<div class="card">
+  <div class="grid three">
+    <div class="stat"><span class="k">Account</span><span id="email">—</span></div>
+    <div class="stat"><span class="k">Plan</span><span id="plan">—</span></div>
+    <div class="stat"><span class="n" id="credits">—</span><span class="k">Credits</span></div>
+  </div>
+  <p class="hint">Export formats on this plan: <span id="formats">—</span></p>
+  <div class="row" style="margin-top:16px">
+    <a class="btn" href="/create">Create model</a>
+    <a class="btn ghost" href="/account">Account &amp; credits</a>
+  </div>
+</div>
+
+<h2>Your models</h2>
+<div id="models"><p class="spinner">Loading…</p></div>
+</main>
+<footer class="foot shell">
+  <p>FormForge runs locally: SQLite, files on disk, offline billing, an email outbox in a folder. No payment is taken and nothing leaves this machine.</p>
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

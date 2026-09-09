@@ -72,7 +72,15 @@ Homepage = "https://github.com/ikhanai777/the-garden"
 include = ["formforge*"]
 
 [tool.setuptools.package-data]
-formforge = ["templates/*.yaml"]
+formforge = [
+    "templates/*.yaml",
+    # The browser front end. Without this an installed (non-editable) copy
+    # serves a 500 from every page, because the files are next to the code
+    # rather than generated.
+    "api/web/*.html",
+    "api/web/*.css",
+    "api/web/*.js",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1114,6 +1114,22 @@ def create_app(
     # deliberately rather than reached for through closures: the alternative is
     # tests that reimplement the charging and recording steps, which makes them
     # agree with a copy of the logic rather than with the logic.
+    # -- the browser front end -----------------------------------------
+    # Only on a metered deployment, for the same reason the account routes
+    # are: every page here is about an account, and serving a sign-in form
+    # against a gateway with no accounts would be a door onto a wall. A
+    # self-hosted copy keeps the CLI and the JSON API and gains nothing it
+    # has to reason about.
+    #
+    # Same origin as the API, which is what lets the session stay an HttpOnly
+    # cookie: a front end on another origin would need a token JavaScript can
+    # read, and that is strictly worse. These routes serve identical bytes to
+    # everyone; all authorising happens in the JSON API above. See `web.py`.
+    if metered:
+        from .web import build_web_router
+
+        app.include_router(build_web_router())
+
     app.state.formforge = {
         "jobs": jobs,
         "db": database,

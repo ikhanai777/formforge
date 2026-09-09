@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="same-origin">
+<title>Choose a new password · FormForge</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%230d1117"/><path d="M11 9h11v3.4h-7.3v3.6h6.4v3.4h-6.4V24H11z" fill="%234cc2d6"/></svg>'>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-page="reset">
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar">
+  <div class="bar-inner">
+    <a class="brand" href="/">Form<span class="mark">Forge</span></a>
+    <nav id="nav" aria-label="Account"></nav>
+  </div>
+</header>
+<main class="shell narrow" id="main">
+
+<h1>Choose a new password</h1>
+<p class="lede">Signing in again will be required afterwards — every existing session for this account is ended.</p>
+
+<div class="msg err" id="err" hidden role="alert"></div>
+
+<form id="form" class="card" novalidate>
+  <div class="field">
+    <label for="password">New password</label>
+    <input id="password" name="password" type="password" autocomplete="new-password"
+           minlength="10" required aria-describedby="pw-hint">
+    <p class="hint" id="pw-hint">At least 10 characters.</p>
+  </div>
+  <div class="field">
+    <label for="again">Repeat it</label>
+    <input id="again" name="again" type="password" autocomplete="new-password" required>
+  </div>
+  <button id="submit" type="submit">Save new password</button>
+</form>
+</main>
+<footer class="foot shell">
+  <p>FormForge runs locally: SQLite, files on disk, offline billing, an email outbox in a folder. No payment is taken and nothing leaves this machine.</p>
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

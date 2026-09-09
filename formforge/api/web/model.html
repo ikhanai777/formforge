@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="same-origin">
+<title>Model · FormForge</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%230d1117"/><path d="M11 9h11v3.4h-7.3v3.6h6.4v3.4h-6.4V24H11z" fill="%234cc2d6"/></svg>'>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-page="model">
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar">
+  <div class="bar-inner">
+    <a class="brand" href="/">Form<span class="mark">Forge</span></a>
+    <nav id="nav" aria-label="Account"></nav>
+  </div>
+</header>
+<main class="shell" id="main">
+
+<h1>Model</h1>
+<p class="mono sub" id="id">—</p>
+
+<div class="msg err" id="err" hidden role="alert"></div>
+<div class="msg" id="note" hidden role="status"></div>
+
+<div id="body" hidden>
+  <div class="card">
+    <div class="row">
+      <span id="status" aria-live="polite"></span>
+      <span class="sub" id="phase"></span>
+    </div>
+    <dl class="kv" style="margin-top:16px">
+      <dt>Prompt</dt><dd id="prompt">—</dd>
+      <dt>Template</dt><dd id="template">—</dd>
+      <dt>Created</dt><dd id="created">—</dd>
+    </dl>
+  </div>
+
+  <div class="card" id="warnings" hidden></div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Download</h2>
+    <div id="downloads"></div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin-top:0">Parameters</h2>
+    <pre id="params">—</pre>
+  </div>
+
+  <div class="card" id="modify-card" hidden>
+    <h2 style="margin-top:0">Change a parameter</h2>
+    <p class="sub">Rebuilds this model with the values you give. The result is a new model with this one as its parent.</p>
+    <div class="msg err" id="mod-err" hidden role="alert"></div>
+    <form id="modify" novalidate>
+      <div class="field">
+        <label for="changes">Parameter changes (JSON)</label>
+        <textarea id="changes" name="changes" placeholder='{"height_mm": 90}' spellcheck="false"></textarea>
+        <p class="hint">A JSON object of parameter names and values.</p>
+      </div>
+      <button id="mod-submit" type="submit">Rebuild</button>
+    </form>
+  </div>
+</div>
+
+<p class="sub" style="margin-top:24px"><a href="/dashboard">Back to dashboard</a></p>
+</main>
+<footer class="foot shell">
+  <p>FormForge runs locally: SQLite, files on disk, offline billing, an email outbox in a folder. No payment is taken and nothing leaves this machine.</p>
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

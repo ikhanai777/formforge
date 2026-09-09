@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="same-origin">
+<title>Sign in · FormForge</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%230d1117"/><path d="M11 9h11v3.4h-7.3v3.6h6.4v3.4h-6.4V24H11z" fill="%234cc2d6"/></svg>'>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-page="login">
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar">
+  <div class="bar-inner">
+    <a class="brand" href="/">Form<span class="mark">Forge</span></a>
+    <nav id="nav" aria-label="Account"></nav>
+  </div>
+</header>
+<main class="shell narrow" id="main">
+
+<h1>Sign in</h1>
+
+<div class="msg ok" id="note" hidden role="status"></div>
+<div class="msg err" id="err" hidden role="alert"></div>
+
+<form id="form" class="card" novalidate>
+  <div class="field">
+    <label for="email">Email address</label>
+    <input id="email" name="email" type="email" autocomplete="email" required>
+  </div>
+  <div class="field">
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required>
+  </div>
+  <button id="submit" type="submit">Sign in</button>
+</form>
+
+<p class="sub" style="margin-top:16px">
+  <a href="/forgot-password">Forgot your password?</a> ·
+  <a href="/signup">Create an account</a>
+</p>
+</main>
+<footer class="foot shell">
+  <p>FormForge runs locally: SQLite, files on disk, offline billing, an email outbox in a folder. No payment is taken and nothing leaves this machine.</p>
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

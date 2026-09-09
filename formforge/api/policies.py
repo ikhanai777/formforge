@@ -139,6 +139,30 @@ POLICIES: tuple[RoutePolicy, ...] = (
     RoutePolicy("GET", "/v1/meta", Policy.OPERATOR_ONLY),
     RoutePolicy("GET", "/v1/stats", Policy.OPERATOR_ONLY, note="business aggregates"),
     RoutePolicy("GET", "/v1/stats/prints", Policy.OPERATOR_ONLY),
+
+    # -- the browser front end -------------------------------------------
+    # Markup only. Every one of these returns the same bytes to everybody,
+    # signed in or not, and holds no data: the pages fetch from the JSON API
+    # above, which does the authorising. `/models/{model_id}` carries an
+    # identifier in its path and deliberately declares `resource=None`,
+    # because it does not resolve it -- it ignores it. `tests/test_web.py`
+    # holds that claim to account by asking for two different ids and
+    # comparing the responses byte for byte.
+    RoutePolicy("GET", "/", Policy.PUBLIC, note="markup only"),
+    RoutePolicy("GET", "/signup", Policy.PUBLIC, note="markup only"),
+    RoutePolicy("GET", "/login", Policy.PUBLIC, note="markup only"),
+    RoutePolicy("GET", "/dashboard", Policy.PUBLIC,
+                note="markup only; the data behind it needs a session"),
+    RoutePolicy("GET", "/create", Policy.PUBLIC,
+                note="markup only; the data behind it needs a session"),
+    RoutePolicy("GET", "/models/{model_id}", Policy.PUBLIC,
+                note="markup only; identical for every id, and resolves none"),
+    RoutePolicy("GET", "/forgot-password", Policy.PUBLIC, note="markup only"),
+    RoutePolicy("GET", "/reset-password", Policy.PUBLIC, note="markup only"),
+    RoutePolicy("GET", "/account", Policy.PUBLIC,
+                note="markup only; the data behind it needs a session"),
+    RoutePolicy("GET", "/static/app.css", Policy.PUBLIC, note="stylesheet"),
+    RoutePolicy("GET", "/static/app.js", Policy.PUBLIC, note="script"),
 )
 
 BY_ROUTE: dict[tuple[str, str], RoutePolicy] = {
