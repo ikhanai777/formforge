@@ -81,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_account(subparsers)
     _add_artifacts(subparsers)
     _add_outbox(subparsers)
+    _add_preflight(subparsers)
 
     args = parser.parse_args(argv)
     return args.handler(args)
@@ -1328,6 +1329,39 @@ def _cmd_artifacts_sweep(args) -> int:
         removed += 1
     print(f"deleted {removed} artifact(s). The records remain, marked deleted.")
     return 0
+
+
+def _add_preflight(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "preflight",
+        help="check whether an environment is ready to serve",
+        description=(
+            "Validates configuration shape and, where the settings exist, "
+            "whether the thing they name actually answers. Probes nothing "
+            "that is not configured, prints no secret, and refuses to verify "
+            "live billing."
+        ),
+    )
+    parser.add_argument("--environment", default="staging",
+                        choices=("local", "staging", "production"))
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.set_defaults(handler=_cmd_preflight)
+
+
+def _cmd_preflight(args) -> int:
+    import json as _json
+
+    from .preflight import render, run
+
+    report = run(args.environment)
+    if args.json:
+        print(_json.dumps(report.as_dict(), indent=2))
+    else:
+        print(render(report))
+    # Non-zero when something *configured* is broken. A missing setting is a
+    # deployment that is not finished, which is a different thing from one that
+    # is wrong, and a CI gate should be able to tell them apart.
+    return 1 if report.failed else 0
 
 
 def _add_outbox(subparsers) -> None:
