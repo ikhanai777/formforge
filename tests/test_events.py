@@ -348,8 +348,11 @@ class TestTheCreditEventsFire:
         worse than one that reports nothing."""
         from formforge.accounts import AccountError
 
+        # A well-formed id that names nobody. A malformed one would raise a
+        # type error on PostgreSQL, where `users.id` is a uuid column, and the
+        # test would then be about the driver rather than about the rollback.
         with pytest.raises(AccountError):
-            accounts.grant("no-such-user", 5)
+            accounts.grant("00000000-0000-0000-0000-000000000000", 5)
         assert not captured.named(events.CREDIT_GRANTED)
 
     def test_a_refused_spend_is_recorded_without_a_ledger_row(
