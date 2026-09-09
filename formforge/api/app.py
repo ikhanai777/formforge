@@ -71,6 +71,14 @@ except ImportError:  # pragma: no cover - optional dependency
 from ..accounts import InsufficientCredits, plans
 from ..bundle import write_bundle
 from ..config import ConfigError, Mode, Settings
+from ..events import (
+    ARTIFACT_GONE,
+    ARTIFACT_LINK_REJECTED,
+    ARTIFACT_SERVED,
+    AUTHZ_DENIED,
+    CREDIT_REFUSED,
+    emit,
+)
 from ..dfm import DEFAULT_PROFILE_ID, PROFILES
 from ..llm import build_client
 from ..orchestrator import Orchestrator
@@ -377,8 +385,11 @@ def create_app(
             real, which turns every one of these routes into an oracle for
             enumerating other people's models.
             """
+            route = str(request.url.path)
             user = _session_user(request)
             if user is None:
+                emit(log, AUTHZ_DENIED, route=route, reason="no_session",
+                     model_id=model_id)
                 raise HTTPException(status_code=401, detail="Not signed in.")
             job = jobs.for_model(model_id)
             record = database.get_model(model_id)
@@ -386,6 +397,13 @@ def create_app(
                 record.get("user_id") if record else None
             )
             if owner is None or owner != user["id"]:
+                # The caller is told 404 either way. The log keeps the
+                # distinction, because "somebody is walking ids they do not
+                # own" and "an ownerless model exists" are different problems
+                # and only one of them is an attack.
+                emit(log, AUTHZ_DENIED, route=route,
+                     reason="ownerless" if owner is None else "not_owner",
+                     user_id=user["id"], model_id=model_id)
                 raise HTTPException(status_code=404, detail="No such model.")
             return user
 
@@ -403,12 +421,17 @@ def create_app(
             Ownership before payment, deliberately: telling a stranger whether
             somebody else's model has been paid for is a disclosure in itself.
             """
+            route = str(request.url.path)
             user = _session_user(request)
             if user is None:
+                emit(log, AUTHZ_DENIED, route=route, reason="no_session",
+                     model_id=model_id)
                 raise HTTPException(status_code=401, detail="Not signed in.")
 
             record = database.get_model(model_id)
             if record is None or record.get("user_id") != user["id"]:
+                emit(log, AUTHZ_DENIED, route=route, reason="not_owner",
+                     user_id=user["id"], model_id=model_id)
                 raise HTTPException(status_code=404, detail="No such model.")
 
             # Metadata about their own build is not the paid artifact; the
@@ -485,12 +508,18 @@ def create_app(
         if not metered or not job.owner_id or result.status != "ok":
             return
         try:
+            # The `credit.spent` event is emitted by the store, from the one
+            # place every ledger movement passes through and only after the
+            # transaction commits. Emitting a second one here would double
+            # every spend in the stream.
             accounts.spend(
                 job.owner_id,
                 model_id=result.model_id,
                 note=f"{result.template_id or 'freeform'} build",
             )
-        except InsufficientCredits:
+        except InsufficientCredits as exc:
+            emit(log, CREDIT_REFUSED, user_id=job.owner_id,
+                 balance=exc.balance, requested=exc.requested)
             log.warning(
                 "model %s finished but could not be paid for; kept unpaid",
                 result.model_id,
@@ -749,6 +778,9 @@ def create_app(
         try:
             grant = verify_download(_link_secret, token)
         except StorageError as exc:
+            # The token is not a field. It is a bearer credential for one
+            # model, and a rejected one is often a valid one that arrived late.
+            emit(log, ARTIFACT_LINK_REJECTED, reason=type(exc).__name__)
             log.info("rejected a download token: %s", exc)
             raise HTTPException(status_code=403, detail="This link is invalid or has expired.") \
                 from None
@@ -1044,6 +1076,7 @@ def create_app(
                 if row["fmt"] != fmt:
                     continue
                 if row["status"] == "deleted":
+                    emit(log, ARTIFACT_GONE, model_id=model_id, fmt=fmt)
                     raise HTTPException(
                         status_code=410,
                         detail="This file has been deleted under the retention policy.",
@@ -1052,6 +1085,7 @@ def create_app(
                     stream = artifacts.open(row["storage_key"])
                 except StorageError:
                     break  # fall through to the bundle directory
+                emit(log, ARTIFACT_SERVED, model_id=model_id, fmt=fmt, via="storage")
                 return StreamingResponse(
                     stream,
                     media_type="application/octet-stream",
@@ -1063,6 +1097,8 @@ def create_app(
         path = job.result.artifacts.get(fmt)
         if not path or not Path(path).exists():
             raise HTTPException(status_code=404, detail=f"this model has no {fmt} artifact")
+        if metered:
+            emit(log, ARTIFACT_SERVED, model_id=model_id, fmt=fmt, via="bundle")
         return FileResponse(path, filename=_FILENAMES[fmt])
 
     def _require_result(model_id: str) -> Job:

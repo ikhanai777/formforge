@@ -62,6 +62,25 @@ from ..accounts import (
 from ..accounts.auth import MIN_PASSWORD_LENGTH
 from ..accounts.email import Mailer, Message, open_mailer
 from ..config import Settings
+from ..events import (
+    CHECKOUT_FAILED,
+    CHECKOUT_STARTED,
+    LOGIN_FAILED,
+    LOGIN_SUCCEEDED,
+    LOGOUT,
+    RATE_LIMITED,
+    RESET_COMPLETED,
+    RESET_REJECTED,
+    RESET_REQUESTED,
+    RESET_UNDELIVERABLE,
+    SESSION_REJECTED,
+    SIGNUP_REJECTED,
+    SIGNUP_SUCCEEDED,
+    WEBHOOK_NOT_APPLIED,
+    WEBHOOK_SIGNATURE_FAILED,
+    WEBHOOK_UNUSABLE,
+    emit,
+)
 from .security import (
     CHECKOUT_LIMIT,
     COOKIE_NAME,
@@ -124,6 +143,10 @@ def build_accounts_router(
     def guard(request: Request, scope: str, budget: tuple[int, float]) -> None:
         limit, per = budget
         if not limits.check(client_key(request), scope, limit=limit, per_seconds=per):
+            # The bucket, not the client address. Which bucket is saturated is
+            # what an operator acts on; who saturated it is in the access log
+            # and does not need a second copy in the security stream.
+            emit(log, RATE_LIMITED, bucket=scope, route=str(request.url.path))
             raise HTTPException(
                 status_code=429,
                 detail="Too many attempts. Please wait a few minutes and try again.",
@@ -141,6 +164,12 @@ def build_accounts_router(
         """
         user = accounts.user_for_token(formforge_session or "")
         if user is None:
+            # `reason` is deliberately coarse. The store answers None for an
+            # absent cookie, an unknown token, an expired one and a closed
+            # account alike, and inventing a finer reason here would mean
+            # telling them apart -- which the endpoint refuses to do.
+            emit(log, SESSION_REJECTED,
+                 reason="absent" if not formforge_session else "not_current")
             raise HTTPException(status_code=401, detail="Not signed in.")
         return user
 
@@ -161,6 +190,7 @@ def build_accounts_router(
         try:
             user = accounts.create_user(body.email, body.password)
         except DuplicateEmail:
+            emit(log, SIGNUP_REJECTED, reason="duplicate_address")
             # Deliberately the same shape of answer as a successful signup
             # would give a *different* address: 409 with no detail about the
             # existing account. It still discloses that the address is taken,
@@ -170,7 +200,9 @@ def build_accounts_router(
                 status_code=409, detail="That email address is already registered."
             ) from None
         except AuthError as exc:
+            emit(log, SIGNUP_REJECTED, reason="password_rejected")
             raise HTTPException(status_code=400, detail=str(exc)) from None
+        emit(log, SIGNUP_SUCCEEDED, user_id=user["id"], plan=user["plan"])
         return sign_in(response, user)
 
     @router.post("/v1/auth/login")
@@ -180,10 +212,15 @@ def build_accounts_router(
             user = accounts.authenticate(body.email, body.password)
         except AuthError:
             # One message for a wrong password and for no such account. The
-            # difference is an oracle for which addresses have accounts here.
+            # difference is an oracle for which addresses have accounts here --
+            # and the log must not become the oracle the response refuses to
+            # be, so `reason` is the same word for both and the address is not
+            # a field.
+            emit(log, LOGIN_FAILED, reason="rejected")
             raise HTTPException(
                 status_code=401, detail="Email or password is incorrect."
             ) from None
+        emit(log, LOGIN_SUCCEEDED, user_id=user["id"])
         return sign_in(response, user)
 
     @router.post("/v1/auth/logout", status_code=204)
@@ -198,8 +235,11 @@ def build_accounts_router(
         logging out on a shared machine.
         """
         if formforge_session:
+            user = accounts.user_for_token(formforge_session)
             with _quiet("revoking a session"):
                 accounts.revoke_session(formforge_session)
+            if user is not None:
+                emit(log, LOGOUT, user_id=user["id"])
         response.delete_cookie(COOKIE_NAME, path="/")
         return Response(status_code=204)
 
@@ -236,7 +276,7 @@ def build_accounts_router(
             # account. Logged without the address, because a log of every
             # address somebody probed for is the same list the endpoint is
             # refusing to hand out.
-            log.info("password reset requested for an address with no account")
+            emit(log, RESET_REQUESTED, known=False)
             return generic
 
         try:
@@ -253,10 +293,15 @@ def build_accounts_router(
                     "and you can ignore this message."
                 ),
             ))
-        except Exception:
+            emit(log, RESET_REQUESTED, known=True, user_id=user["id"])
+        except Exception as exc:
             # Never surfaced: a failure here that reached the caller would
             # distinguish "we tried to mail this account" from "there is no
             # account", which is the distinction the endpoint exists to hide.
+            # It is loud in the log instead, because the user is now holding a
+            # reset token they will never see.
+            emit(log, RESET_UNDELIVERABLE, error=type(exc).__name__,
+                 user_id=user["id"])
             log.exception("could not send a password reset")
         return generic
 
@@ -278,7 +323,9 @@ def build_accounts_router(
         if user_id is None:
             # Unknown, expired and already-used all answer the same. Telling
             # them apart tells somebody holding a stolen token which kind of
-            # stolen it is.
+            # stolen it is -- so the log does not tell them apart either, and
+            # the token is not a field on this event.
+            emit(log, RESET_REJECTED, reason="invalid_or_expired")
             raise HTTPException(
                 status_code=400, detail="This reset link is invalid or has expired."
             )
@@ -286,7 +333,7 @@ def build_accounts_router(
             killed = accounts.reset_password(user_id, body.password)
         except AuthError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
-        log.info("password reset completed; %d session(s) revoked", killed)
+        emit(log, RESET_COMPLETED, user_id=user_id, sessions_revoked=killed)
         response.delete_cookie(COOKIE_NAME, path="/")
         return Response(status_code=204)
 
@@ -341,11 +388,13 @@ def build_accounts_router(
                 accounts.set_billing_customer(user["id"], customer)
             session = provider.start_subscription(customer, tier.id)
         except BillingError as exc:
+            emit(log, CHECKOUT_FAILED, error=type(exc).__name__, user_id=user["id"])
             log.warning("checkout failed for an account: %s", exc)
             raise HTTPException(
                 status_code=502,
                 detail="Could not reach the payment provider. Please try again.",
             ) from None
+        emit(log, CHECKOUT_STARTED, user_id=user["id"], plan=tier.id)
         return {
             "checkout_url": session.get("checkout_url"),
             "plan": tier.id,
@@ -369,10 +418,14 @@ def build_accounts_router(
         try:
             event = provider.verify_webhook(body, signature)
         except SignatureError:
-            log.warning("rejected a webhook whose signature did not verify")
+            # Neither the body nor the signature is a field: the body is
+            # attacker-controlled and unverified, and logging it would put
+            # whatever somebody chose to POST into the security stream.
+            emit(log, WEBHOOK_SIGNATURE_FAILED, provider=provider.name)
             raise HTTPException(status_code=400, detail="Invalid signature.") from None
         except BillingError as exc:
-            log.warning("rejected an unusable webhook: %s", exc)
+            emit(log, WEBHOOK_UNUSABLE, provider=provider.name,
+                 error=type(exc).__name__)
             raise HTTPException(status_code=400, detail="Unusable event.") from None
 
         try:
@@ -383,9 +436,12 @@ def build_accounts_router(
             # processor to stop retrying something we will never accept; a 500
             # asks it to retry, which is right when the failure might be
             # transient. This one is not.
-            log.error("could not apply a verified webhook: %s", exc)
+            emit(log, WEBHOOK_NOT_APPLIED, provider=provider.name,
+                 event_id=event.id, error=type(exc).__name__)
             raise HTTPException(status_code=400, detail="Event could not be applied.") from None
-        except Exception:
+        except Exception as exc:
+            emit(log, WEBHOOK_NOT_APPLIED, provider=provider.name,
+                 event_id=event.id, error=type(exc).__name__)
             log.exception("unexpected failure applying a webhook")
             raise HTTPException(status_code=500, detail=GENERIC_ERROR) from None
         # 200 either way: a duplicate delivery is a success from the

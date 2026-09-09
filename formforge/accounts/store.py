@@ -44,6 +44,17 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from ..events import (
+    ACCOUNT_CLOSED,
+    ACCOUNT_REOPENED,
+    ARTIFACT_DELETED,
+    ARTIFACT_MARKED,
+    CREDIT_EXPIRED,
+    CREDIT_GRANTED,
+    CREDIT_REFUNDED,
+    CREDIT_SPENT,
+    emit,
+)
 from . import plans
 from .auth import (
     AuthError,
@@ -73,6 +84,20 @@ def _default_target() -> str:
 
 
 REASONS = frozenset({"grant", "purchase", "spend", "refund", "expiry", "adjustment"})
+
+# Which catalogued event announces each ledger reason. Movements are announced
+# from one place -- `_announce` -- and only after the transaction that wrote
+# them has committed. Emitting from `_append` would be simpler and wrong: a
+# transaction that rolls back afterwards would leave a logged credit movement
+# that never happened, in the one log where that matters most.
+_REASON_EVENTS = {
+    "grant": CREDIT_GRANTED,
+    "purchase": CREDIT_GRANTED,
+    "spend": CREDIT_SPENT,
+    "refund": CREDIT_REFUNDED,
+    "expiry": CREDIT_EXPIRED,
+    "adjustment": CREDIT_REFUNDED,
+}
 PLAN_STATUSES = frozenset({"active", "past_due", "cancelled"})
 
 # Columns holding a moment. Postgres hands these back as datetimes and SQLite
@@ -192,6 +217,7 @@ class AccountStore:
         now = self._db.now()
         period = period_start or current_period()
         encoded = hash_password(password) if password is not None else None
+        opening: LedgerEntry | None = None
         with self._db.transaction() as conn:
             if self._one(conn, "SELECT 1 AS hit FROM users WHERE email = ?", (address,)):
                 raise DuplicateEmail(f"an account already exists for {address}")
@@ -203,7 +229,7 @@ class AccountStore:
                 (user_id, address, encoded, tier.id, period, now),
             )
             if tier.credits:
-                self._append(
+                opening = self._append(
                     conn,
                     user_id=user_id,
                     delta=tier.credits,
@@ -220,6 +246,10 @@ class AccountStore:
                     idempotency_key=f"signup:{user_id}",
                     note=f"{tier.name} plan, opening balance",
                 )
+        # After the commit, like every other ledger movement. The opening
+        # grant is a grant: leaving it out would make the credit stream
+        # disagree with the ledger for every account's first three credits.
+        self._announce(opening)
         return self.get_user(user_id)  # type: ignore[return-value]
 
     def get_user(self, user_id: str) -> dict[str, Any] | None:
@@ -442,6 +472,41 @@ class AccountStore:
         row["balance"] = int(row["balance"])
         return row
 
+    def _announce(self, *entries: LedgerEntry | None) -> None:
+        """Log committed ledger movements.
+
+        `applied` False means an idempotency key matched and nothing was
+        written -- a retry working, not a movement -- so it is not announced.
+        The alternative would make a redelivered webhook look like a second
+        grant in every dashboard reading this stream.
+        """
+        for entry in entries:
+            if entry is None or not entry.applied:
+                continue
+            spec = _REASON_EVENTS.get(entry.reason)
+            if spec is None:  # pragma: no cover - REASONS is closed
+                continue
+            fields = {
+                "user_id": entry.user_id,
+                "credits": abs(entry.delta),
+                "reason": entry.reason,
+            }
+            if entry.reason == "spend":
+                fields = {
+                    "user_id": entry.user_id,
+                    "credits": abs(entry.delta),
+                    "model_id": entry.model_id,
+                }
+            elif entry.reason == "expiry":
+                fields = {
+                    "user_id": entry.user_id,
+                    "credits": abs(entry.delta),
+                    "period": (entry.note or "").rsplit(" ", 1)[-1],
+                }
+            elif entry.idempotency_key:
+                fields["idempotency_key"] = entry.idempotency_key
+            emit(log, spec, **fields)
+
     def _append(
         self,
         conn: Any,
@@ -495,10 +560,12 @@ class AccountStore:
             self._db.lock_user(conn, user_id)
             if not self._one(conn, "SELECT 1 AS hit FROM users WHERE id = ?", (user_id,)):
                 raise AccountError(f"no such user: {user_id}")
-            return self._append(
+            entry = self._append(
                 conn, user_id=user_id, delta=credits, reason=reason,
                 idempotency_key=idempotency_key, note=note,
             )
+        self._announce(entry)
+        return entry
 
     def spend(
         self,
@@ -545,10 +612,12 @@ class AccountStore:
             available = int(row["balance"])
             if available < credits:
                 raise InsufficientCredits(available, credits)
-            return self._append(
+            entry = self._append(
                 conn, user_id=user_id, delta=-credits, reason="spend",
                 model_id=model_id, idempotency_key=idempotency_key, note=note,
             )
+        self._announce(entry)
+        return entry
 
     def refund(
         self,
@@ -566,12 +635,14 @@ class AccountStore:
             self._db.lock_user(conn, user_id)
             if not self._one(conn, "SELECT 1 AS hit FROM users WHERE id = ?", (user_id,)):
                 raise AccountError(f"no such user: {user_id}")
-            return self._append(
+            entry = self._append(
                 conn, user_id=user_id, delta=credits, reason="refund",
                 model_id=model_id,
                 idempotency_key=f"refund:{model_id}" if model_id else None,
                 note=note,
             )
+        self._announce(entry)
+        return entry
 
     def claw_back(
         self,
@@ -616,11 +687,13 @@ class AccountStore:
             take = min(credits, max(int(row["balance"]), 0))
             if take <= 0:
                 return None
-            return self._append(
+            entry = self._append(
                 conn, user_id=user_id, delta=-take, reason="adjustment",
                 idempotency_key=idempotency_key,
                 note=note or f"reversal, {take} of {credits} recoverable",
             )
+        self._announce(entry)
+        return entry
 
     def start_period(
         self,
@@ -676,7 +749,8 @@ class AccountStore:
                 conn, "UPDATE users SET plan = ?, period_start = ? WHERE id = ?",
                 (tier.id, period_start, user_id),
             )
-            return written
+        self._announce(*written)
+        return written
 
     def roll_to_current_period(self, user_id: str) -> list[LedgerEntry]:
         """Bring a free account into the current month if it is behind.
@@ -846,6 +920,8 @@ class AccountStore:
         killed = self.revoke_all_sessions(user_id)
         self.audit("account.closed", user_id=user_id, actor=actor,
                    detail={"sessions_revoked": killed})
+        emit(log, ACCOUNT_CLOSED, user_id=user_id, actor=actor,
+             sessions_revoked=killed)
         return killed
 
     def reopen_account(self, user_id: str, *, actor: str = "operator") -> None:
@@ -856,6 +932,7 @@ class AccountStore:
             ).rowcount:
                 raise AccountError(f"no such user: {user_id}")
         self.audit("account.reopened", user_id=user_id, actor=actor)
+        emit(log, ACCOUNT_REOPENED, user_id=user_id, actor=actor)
 
     def is_closed(self, user: dict[str, Any] | None) -> bool:
         return bool(user and user.get("closed_at"))
@@ -922,6 +999,8 @@ class AccountStore:
         if changed:
             self.audit("artifact.marked", actor=actor,
                        detail={"model_id": model_id, "count": changed})
+            emit(log, ARTIFACT_MARKED, model_id=model_id, count=changed,
+                 actor=actor)
         return changed
 
     def finish_artifact_delete(self, artifact_id: int) -> None:
@@ -930,12 +1009,15 @@ class AccountStore:
         Deliberately keeping the row: it is the record that the file existed
         and when it went, which is what answers "where did my model go".
         """
+        row = self._read_one("SELECT * FROM artifacts WHERE id = ?", (artifact_id,))
         with self._db.transaction() as conn:
             self._run(
                 conn,
                 "UPDATE artifacts SET status = 'deleted', deleted_at = ? WHERE id = ?",
                 (self._db.now(), artifact_id),
             )
+        if row is not None:
+            emit(log, ARTIFACT_DELETED, model_id=row["model_id"], fmt=row["fmt"])
 
     def artifacts_pending_delete(self, limit: int = 500) -> list[dict[str, Any]]:
         with self._db.reader() as conn:

@@ -81,7 +81,10 @@ class OutboxMailer:
         path.write_bytes(bytes(mail))
         # Deliberately not logging the subject or body: a reset mail carries a
         # token that is the password for the next half hour.
-        log.info("wrote a message to the outbox (%s)", path.name)
+        # The filename carries the recipient so a developer can find the
+        # message; the log line does not repeat it. A log of who was mailed is
+        # the address list every one of these endpoints refuses to hand out.
+        log.info("wrote a message to the outbox (%s)", path.name.split("-", 1)[0])
         return str(path)
 
     def read_all(self) -> list[str]:

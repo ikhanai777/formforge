@@ -26,14 +26,23 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
+from ..events import (
+    WEBHOOK_ACCEPTED,
+    WEBHOOK_DUPLICATE,
+    WEBHOOK_STALE,
+    emit,
+)
 from . import plans
 from .store import AccountStore
+
+log = logging.getLogger("formforge.accounts.billing")
 
 # The internal vocabulary. Adapters translate their processor's event names
 # into these; nothing downstream of an adapter knows what a processor calls
@@ -216,6 +225,9 @@ def apply_event(
         event_created=event.created,
     )
     if not is_new:
+        # Expected, not exceptional: processors redeliver on purpose when they
+        # did not see a 200. This event firing is the replay guard working.
+        emit(log, WEBHOOK_DUPLICATE, provider=provider, event_id=event.id)
         return False
     if user is None:
         # Left deliberately unhandled rather than dropped: a payment for a
@@ -242,6 +254,9 @@ def apply_event(
     stale = event.type in STATUS_EVENTS and accounts.has_newer_status_event(
         user_id, event.created, provider=provider, exclude_id=event.id
     )
+    if stale:
+        emit(log, WEBHOOK_STALE, provider=provider, event_id=event.id,
+             event_type=event.type, user_id=user_id)
 
     if event.type in ("subscription.activated", "subscription.renewed"):
         accounts.start_period(user_id, period, plan_id=event.plan_id or user["plan"])
@@ -297,4 +312,9 @@ def apply_event(
         raise BillingError(f"no handler for {event.type!r}")
 
     accounts.mark_billing_event_handled(row_id)
+    # After the work, not before: an event that raised on the way here is
+    # recorded and unhandled, and announcing it as accepted would put a
+    # reassuring line in the log for a payment that did nothing.
+    emit(log, WEBHOOK_ACCEPTED, provider=provider, event_id=event.id,
+         event_type=event.type, user_id=user_id)
     return True

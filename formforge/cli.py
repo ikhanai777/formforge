@@ -83,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_outbox(subparsers)
     _add_preflight(subparsers)
     _add_backup(subparsers)
+    _add_events(subparsers)
 
     args = parser.parse_args(argv)
     return args.handler(args)
@@ -1526,6 +1527,32 @@ def _cmd_backup_check(args) -> int:
     if result["users"] == 0:
         print(_warn("no users. If that is not what you restored, stop here."))
         return 1
+    return 0
+
+
+def _add_events(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "events", help="the security and billing event catalogue",
+        description=(
+            "What this system logs about access and money, what each event "
+            "means, and which ones are worth an alert. Generated from "
+            "formforge/events.py rather than transcribed, so it cannot drift "
+            "from what the code emits."
+        ),
+    )
+    parser.add_argument("--json", action="store_true", help="machine-readable output")
+    parser.set_defaults(handler=_cmd_events)
+
+
+def _cmd_events(args) -> int:
+    from dataclasses import asdict
+
+    from .events import catalogue, describe
+
+    if args.json:
+        print(json.dumps([asdict(spec) for spec in catalogue()], indent=2))
+    else:
+        print(describe())
     return 0
 
 
