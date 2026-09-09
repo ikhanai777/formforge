@@ -23,14 +23,13 @@ of them are things an attacker enumerating the API would rather have than not.
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from ..accounts import plans
-from ..config import Settings
+from ..config import ConfigError, Settings
 
 # Set on a development box serving plain HTTP. Off by default: a session cookie
 # without Secure is one downgraded request away from being someone else's.
@@ -65,8 +64,26 @@ class _Window:
     count: int = 0
 
 
-class RateLimiter:
-    """A fixed-window counter, per client and endpoint.
+class RateLimiter(Protocol):
+    """What the endpoints need from a limiter.
+
+    An interface rather than a class because the local implementation is
+    honestly inadequate for a deployment -- see `MemoryRateLimiter` -- and the
+    seam for a shared one should exist before it is needed rather than after
+    the first incident.
+    """
+
+    name: str
+
+    def check(self, key: str, scope: str, *, limit: int, per_seconds: float) -> bool:
+        """True if this request is within budget, consuming one unit if so."""
+
+    def reset(self) -> None:
+        """Forget everything. For tests."""
+
+
+class MemoryRateLimiter:
+    """A fixed-window counter, per client and endpoint, in this process.
 
     What it stops: someone pointing a script at `/v1/auth/login` and working
     through a password list, or signing up ten thousand accounts from one host.
@@ -87,7 +104,12 @@ class RateLimiter:
 
     It is here because the alternative -- no limit at all on the endpoints that
     take a password -- is indefensible, not because it is sufficient on its own.
+    `open_rate_limiter` refuses to hand this back when the configuration asks
+    for a shared one, rather than quietly substituting it: a limiter that is
+    believed to be shared and is not is worse than one known to be local.
     """
+
+    name = "memory"
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -119,11 +141,43 @@ class RateLimiter:
             self._windows.clear()
 
 
+def open_rate_limiter(settings: Settings | None = None) -> RateLimiter:
+    """The limiter this configuration asks for.
+
+    Refuses rather than falling back. A deployment that configured `redis` and
+    silently got a per-process counter has a limit it believes is global and
+    is not, which is precisely the belief that gets someone owned. Failing at
+    startup is the cheap version of finding that out.
+    """
+    config = settings or Settings.from_env()
+    backend = (config.rate_limit_backend or "memory").lower()
+    if backend == "memory":
+        return MemoryRateLimiter()
+    if backend == "redis":
+        raise ConfigError(
+            "FORMFORGE_RATE_LIMIT_BACKEND=redis is not implemented yet. The "
+            "interface exists (formforge.api.security.RateLimiter); set it to "
+            "'memory' to run with the per-process limiter, understanding that "
+            "it is per-process."
+        )
+    raise ConfigError(
+        f"FORMFORGE_RATE_LIMIT_BACKEND must be 'memory' or 'redis', got {backend!r}"
+    )
+
+
 # Budgets. Deliberately generous enough that a person who forgot their password
 # is not locked out, and tight enough that a script is.
-LOGIN_LIMIT = (10, 300.0)      # ten attempts per five minutes
-SIGNUP_LIMIT = (5, 3600.0)     # five new accounts an hour from one address
+LOGIN_LIMIT = (10, 300.0)          # ten attempts per five minutes
+SIGNUP_LIMIT = (5, 3600.0)         # five new accounts an hour from one address
 CHECKOUT_LIMIT = (20, 3600.0)
+# Reset is limited twice over -- by address as well as by client -- because the
+# two attacks are different. Many addresses from one host is someone harvesting
+# which addresses have accounts; many attempts at one address is someone trying
+# to bury a real reset mail under noise, or to brute a token.
+RESET_REQUEST_LIMIT = (5, 3600.0)
+RESET_ADDRESS_LIMIT = (3, 3600.0)
+RESET_CONFIRM_LIMIT = (10, 3600.0)
+LINK_LIMIT = (60, 3600.0)
 
 
 @dataclass

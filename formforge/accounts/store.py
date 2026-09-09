@@ -39,7 +39,7 @@ one implementation of `spend` to be right about.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -54,7 +54,7 @@ from .auth import (
     session_expiry,
     verify_password,
 )
-from .dialect import Dialect, new_id, open_dialect, to_iso
+from .dialect import Dialect, new_id, open_dialect, to_iso, utcnow
 
 # One value selects the backend: a Postgres DSN or a SQLite path. Two settings
 # that can disagree about which database is live is a class of outage.
@@ -314,6 +314,98 @@ class AccountStore:
                 "UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
                 (self._db.now(), user_id),
             ).rowcount
+
+    # -- password reset ----------------------------------------------------
+    def create_password_reset(self, user_id: str, *, ttl_minutes: int = 30) -> str:
+        """Mint a reset token. Returns it once; only its hash is stored.
+
+        Short-lived on purpose. For as long as it lives the token *is* the
+        password, so the window is the exposure: half an hour is enough for
+        somebody to read a mail and long enough to be useless to a token found
+        in a log tomorrow.
+
+        Any outstanding reset for the same account is invalidated first. Two
+        live tokens means a link mailed an hour ago still works after a second
+        request, and the usual reason for a second request is that the first
+        mail went somewhere the user does not control.
+        """
+        if self.get_user(user_id) is None:
+            raise AccountError(f"no such user: {user_id}")
+        token, digest = new_session_token()
+        expires = utcnow() + timedelta(minutes=ttl_minutes)
+        with self._db.transaction() as conn:
+            self._run(
+                conn,
+                "UPDATE password_resets SET used_at = ?"
+                " WHERE user_id = ? AND used_at IS NULL",
+                (self._db.now(), user_id),
+            )
+            self._run(
+                conn,
+                "INSERT INTO password_resets"
+                " (token_hash, user_id, created_at, expires_at, used_at)"
+                " VALUES (?,?,?,?,NULL)",
+                (digest, user_id, self._db.now(), self._db.stamp(expires)),
+            )
+        return token
+
+    def consume_password_reset(self, token: str) -> str | None:
+        """Redeem a token, returning whose account it was for, or None.
+
+        Single use, and the check and the mark happen inside one transaction:
+        two requests arriving together with the same token cannot both come
+        back with a user id. Without that, a leaked token could be redeemed by
+        the attacker *and* the owner, and only one of them would notice.
+
+        None covers unknown, expired and already-used alike -- the caller
+        answers all three the same way, because telling them apart tells
+        somebody holding a stolen token which kind of stolen it is.
+        """
+        if not isinstance(token, str) or not token:
+            return None
+        digest = hash_token(token)
+        with self._db.transaction() as conn:
+            row = self._one(
+                conn,
+                "SELECT user_id FROM password_resets"
+                " WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
+                (digest, self._db.now()),
+            )
+            if row is None:
+                return None
+            self._run(
+                conn,
+                "UPDATE password_resets SET used_at = ? WHERE token_hash = ?",
+                (self._db.now(), digest),
+            )
+            return str(row["user_id"])
+
+    def purge_password_resets(self, *, before: datetime | None = None) -> int:
+        """Delete spent and expired tokens. Safe to run repeatedly.
+
+        The only DELETE in this module. A reset token has no evidentiary value
+        once it is dead -- unlike a ledger row, which is why that one is never
+        deleted -- and keeping rows that name accounts for no reason is a
+        liability rather than an asset.
+        """
+        cutoff = before or utcnow()
+        with self._db.transaction() as conn:
+            return self._run(
+                conn,
+                "DELETE FROM password_resets WHERE used_at IS NOT NULL OR expires_at <= ?",
+                (self._db.stamp(cutoff),),
+            ).rowcount
+
+    def reset_password(self, user_id: str, password: str) -> int:
+        """Set a new password and sign the account out everywhere.
+
+        Revoking every session is the point rather than a side effect. The case
+        that matters is an account being recovered *from* somebody: leaving
+        their session alive would make the reset theatre. Returns how many
+        sessions were killed, which is what an audit entry wants.
+        """
+        self.set_password(user_id, password)
+        return self.revoke_all_sessions(user_id)
 
     # -- credits -----------------------------------------------------------
     def balance(self, user_id: str) -> int:

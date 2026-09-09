@@ -56,7 +56,7 @@ MIGRATIONS = Path(__file__).parent / "migrations"
 # `<id>.postgres.sql` beside it; the runner applies whatever has not been
 # applied and records it. Re-running is a no-op, which is what makes deploying
 # the same migration set twice safe.
-REVISIONS = ("0001_accounts",)
+REVISIONS = ("0001_accounts", "0002_password_resets")
 
 
 def new_id() -> str:

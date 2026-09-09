@@ -8,19 +8,25 @@ no billing routes at all. See `create_app`.
     POST   /v1/auth/signup        -> 201, sets the session cookie
     POST   /v1/auth/login         -> 200, sets the session cookie
     POST   /v1/auth/logout        -> 204, revokes the session
+    POST   /v1/auth/reset/request -> 202 always, whether or not the account exists
+    POST   /v1/auth/reset/confirm -> 204, then every session is dead
     GET    /v1/auth/me            -> the account, redacted
     GET    /v1/account/credits    -> balance and history, redacted
     GET    /v1/account/history    -> this account's models
     POST   /v1/billing/checkout   -> a processor checkout URL
     POST   /v1/billing/webhook    -> the processor's callback
 
-**Password reset is deliberately absent.** It needs somewhere to send a mail,
-and this project has no email-delivery direction -- no provider, no sender
-identity, no template pipeline, nothing. The options were to build a reset flow
-that cannot deliver anything, or to leave the gap visible. A reset endpoint
-that silently fails is worse than no endpoint: it looks like a working recovery
-path to everyone including the person who most needs it. See
-`docs/api-reference.md` for what has to be decided before it can exist.
+**Password reset** runs against whatever `Mailer` the configuration selects.
+Locally that is an outbox writing `.eml` files, so the whole flow -- request,
+receive a link, use it once, watch the old sessions die -- works from a clean
+clone with no provider and no credential. Production refuses to start with
+reset enabled and email set to anything but SMTP, because a reset written to a
+local outbox nobody reads is a recovery path that looks like it works.
+
+The request endpoint answers the same way whether or not the address has an
+account. That is the whole design: any difference -- status, body, or an
+obviously different latency -- turns it into a way to ask which addresses have
+accounts here.
 
 Two rules run through every handler here:
 
@@ -54,13 +60,19 @@ from ..accounts import (
     plans,
 )
 from ..accounts.auth import MIN_PASSWORD_LENGTH
+from ..accounts.email import Mailer, Message, open_mailer
+from ..config import Settings
 from .security import (
     CHECKOUT_LIMIT,
     COOKIE_NAME,
     LOGIN_LIMIT,
+    RESET_ADDRESS_LIMIT,
+    RESET_CONFIRM_LIMIT,
+    RESET_REQUEST_LIMIT,
     SIGNUP_LIMIT,
     RateLimiter,
     cookie_kwargs,
+    open_rate_limiter,
     public_account,
     public_ledger,
 )
@@ -76,13 +88,18 @@ def build_accounts_router(
     *,
     limiter: RateLimiter | None = None,
     store: Any = None,
+    mailer: Mailer | None = None,
+    settings: Settings | None = None,
+    reset_base_url: str = "",
 ):
     """The account/billing routes, as a FastAPI router."""
     from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
     from pydantic import BaseModel, Field
 
     router = APIRouter()
-    limits = limiter or RateLimiter()
+    config = settings or Settings.from_env()
+    limits = limiter or open_rate_limiter(config)
+    post = mailer or open_mailer(config)
 
     class Credentials(BaseModel):
         email: str = Field(max_length=320)
@@ -93,6 +110,13 @@ def build_accounts_router(
 
     class CheckoutRequest(BaseModel):
         plan: str = Field(pattern="^(maker|studio)$")
+
+    class ResetRequest(BaseModel):
+        email: str = Field(max_length=320)
+
+    class ResetConfirm(BaseModel):
+        token: str = Field(min_length=16, max_length=512)
+        password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=1024)
 
     def client_key(request: Request) -> str:
         return request.client.host if request.client else "unknown"
@@ -176,6 +200,93 @@ def build_accounts_router(
         if formforge_session:
             with _quiet("revoking a session"):
                 accounts.revoke_session(formforge_session)
+        response.delete_cookie(COOKIE_NAME, path="/")
+        return Response(status_code=204)
+
+    @router.post("/v1/auth/reset/request", status_code=202)
+    async def request_reset(body: ResetRequest, request: Request):
+        """Start a password reset. Answers 202 whether or not the account exists.
+
+        Two rate limits rather than one, because the two attacks are different.
+        Many addresses from one client is somebody harvesting which addresses
+        have accounts. Many attempts at one address is somebody burying a real
+        reset mail under noise, or hoping a token lands somewhere they can see.
+
+        Both limits answer 202 as well. A 429 here would leak exactly what the
+        generic 202 exists to hide -- keep asking about an address and the
+        moment the answer changes is the moment you have learned something.
+        """
+        if not config.password_reset_enabled:
+            raise HTTPException(
+                status_code=404, detail="Password reset is not enabled."
+            )
+        generic = {"status": "accepted"}
+        address = (body.email or "").strip().lower()
+        if not limits.check(client_key(request), "reset", limit=RESET_REQUEST_LIMIT[0],
+                            per_seconds=RESET_REQUEST_LIMIT[1]):
+            return generic
+        if not limits.check(address, "reset-address", limit=RESET_ADDRESS_LIMIT[0],
+                            per_seconds=RESET_ADDRESS_LIMIT[1]):
+            return generic
+
+        user = accounts.get_user_by_email(address)
+        if user is None:
+            # Deliberately no early return above this point: the answer, the
+            # status and the shape are identical for an address with no
+            # account. Logged without the address, because a log of every
+            # address somebody probed for is the same list the endpoint is
+            # refusing to hand out.
+            log.info("password reset requested for an address with no account")
+            return generic
+
+        try:
+            token = accounts.create_password_reset(user["id"])
+            link = f"{reset_base_url}/reset?token={token}" if reset_base_url else token
+            post.send(Message(
+                to=user["email"],
+                subject="Reset your FormForge password",
+                body=(
+                    "Somebody asked to reset the password for this FormForge "
+                    "account.\n\n"
+                    f"Use this within 30 minutes:\n\n    {link}\n\n"
+                    "It works once. If this was not you, nothing has changed "
+                    "and you can ignore this message."
+                ),
+            ))
+        except Exception:
+            # Never surfaced: a failure here that reached the caller would
+            # distinguish "we tried to mail this account" from "there is no
+            # account", which is the distinction the endpoint exists to hide.
+            log.exception("could not send a password reset")
+        return generic
+
+    @router.post("/v1/auth/reset/confirm", status_code=204)
+    async def confirm_reset(body: ResetConfirm, request: Request, response: Response):
+        """Redeem a token and set a new password.
+
+        On success every session for the account is revoked, including the one
+        making this request. That is the point rather than a side effect: the
+        case that matters is an account being recovered *from* somebody, and
+        leaving their session alive would make the whole thing theatre.
+        """
+        if not config.password_reset_enabled:
+            raise HTTPException(
+                status_code=404, detail="Password reset is not enabled."
+            )
+        guard(request, "reset-confirm", RESET_CONFIRM_LIMIT)
+        user_id = accounts.consume_password_reset(body.token)
+        if user_id is None:
+            # Unknown, expired and already-used all answer the same. Telling
+            # them apart tells somebody holding a stolen token which kind of
+            # stolen it is.
+            raise HTTPException(
+                status_code=400, detail="This reset link is invalid or has expired."
+            )
+        try:
+            killed = accounts.reset_password(user_id, body.password)
+        except AuthError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        log.info("password reset completed; %d session(s) revoked", killed)
         response.delete_cookie(COOKIE_NAME, path="/")
         return Response(status_code=204)
 

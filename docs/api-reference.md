@@ -221,27 +221,50 @@ address; and a fixed window permits a burst across a boundary. It is the floor.
 A deployment needing a real limit needs a shared one — Redis, or the load
 balancer's.
 
-## Password reset — deferred, not missing
+## Password reset
 
-There is no reset endpoint, deliberately. It needs somewhere to send a mail and
-this project has no email-delivery direction: no provider, no sender identity,
-no domain authentication, no template pipeline. The choice was between a flow
-that cannot deliver anything and a visible gap, and a reset that silently fails
-is worse — it looks like a working recovery path to everyone including the
-person who most needs it.
+Works from a clean clone with no email provider: locally `FORMFORGE_EMAIL=outbox`
+writes each message to a `.eml` file, so the whole flow runs and is tested with
+no credential and no network. Production refuses to start with reset enabled and
+email set to anything but `smtp` — a reset written to a local outbox nobody
+reads is a recovery path that looks like it works.
 
-To build it, these have to be decided first:
+### `POST /v1/auth/reset/request` → 202, always
 
-1. A delivery provider, and who owns the sending domain.
-2. SPF/DKIM/DMARC on that domain, or the mail lands in spam and the feature is
-   nominally present and actually broken.
-3. Token lifetime and single-use policy.
-4. Whether a reset revokes existing sessions. It should — an account recovered
-   from someone else's hands is the case that matters — and `revoke_all_sessions`
-   is already there for it.
+```json
+{"email": "maker@example.com"}   →   {"status": "accepted"}
+```
 
-Until then, a locked-out user needs an operator. That is a real limitation and
-belongs on the launch checklist, not in a backlog.
+**Identical for an address with no account** — same status, same body. Any
+difference turns this into a way to ask which addresses have accounts here.
+Rate limiting also answers 202 rather than 429, for the same reason: a status
+that changes once you have asked enough times has told you something.
+
+Limited twice over, because the attacks differ: per client (5/hour, someone
+harvesting addresses) and per address (3/hour, someone burying a real reset
+mail under noise).
+
+Set `FORMFORGE_PASSWORD_RESET=0` and both endpoints answer `404`.
+
+### `POST /v1/auth/reset/confirm` → 204 · `400` · `429`
+
+```json
+{"token": "…", "password": "at least ten characters"}
+```
+
+- The token is **single use**. Check and mark happen in one transaction, so two
+  requests racing with the same token cannot both win.
+- Unknown, expired and already-spent all answer the same `400`. Telling them
+  apart tells somebody holding a stolen token which kind of stolen it is.
+- Tokens live 30 minutes and only a SHA-256 hash is stored — a reset token *is*
+  the password while it lives.
+- Requesting a new reset invalidates the previous link; the usual reason for a
+  second request is that the first mail went somewhere the user does not
+  control.
+- **On success every session for the account is revoked**, including the one
+  making the request. The case that matters is an account being recovered
+  *from* somebody, and leaving their session alive would make the reset
+  theatre.
 
 ## Retention — a proposal, not a policy
 

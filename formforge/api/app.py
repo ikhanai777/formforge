@@ -69,8 +69,8 @@ except ImportError:  # pragma: no cover - optional dependency
     BaseModel = object  # type: ignore[assignment,misc]
 
 from ..accounts import InsufficientCredits, plans
-from ..config import ConfigError, Mode, Settings
 from ..bundle import write_bundle
+from ..config import ConfigError, Mode, Settings
 from ..dfm import DEFAULT_PROFILE_ID, PROFILES
 from ..llm import build_client
 from ..orchestrator import Orchestrator
@@ -244,6 +244,7 @@ def create_app(
     accounts: Any = None,
     billing_provider: Any = None,
     settings: Settings | None = None,
+    mailer: Any = None,
 ):
     """Build the FastAPI application.
 
@@ -332,7 +333,9 @@ def create_app(
         from .security import COOKIE_NAME
 
         provider = billing_provider or _default_provider()
-        router = build_accounts_router(accounts, provider, store=database)
+        router = build_accounts_router(
+            accounts, provider, store=database, mailer=mailer, settings=_settings
+        )
         app.include_router(router)
 
         def _session_user(request) -> dict[str, Any] | None:
@@ -944,6 +947,7 @@ def create_app(
         "charge": _charge_for,
         "store_dir": store,
         "metered": metered,
+        "settings": _settings,
     }
     return app
 
