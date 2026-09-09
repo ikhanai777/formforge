@@ -151,6 +151,7 @@
     if (user) {
       nav.appendChild(el("a", { href: "/dashboard" }, "Dashboard"));
       nav.appendChild(el("a", { href: "/create" }, "Create"));
+      nav.appendChild(el("a", { href: "/generators" }, "Generators"));
       nav.appendChild(el("a", { href: "/account" }, "Account"));
       nav.appendChild(el("span", { class: "pill" }, user.credits + " credits"));
     } else {
@@ -360,6 +361,171 @@
         busy(button, false);
       }
     });
+  };
+
+  pages.generators = async function () {
+    const user = await requireUser();
+    if (!user) return;
+    paintNav(user);
+
+    const err = $("#err");
+    const note = $("#note");
+    const setup = $("#setup");
+    const results = $("#results");
+    let chosen = null;
+
+    let catalogue;
+    try {
+      catalogue = await api("/v1/generators");
+    } catch (error) {
+      return show(err, "err", error.message);
+    }
+
+    const box = $("#catalogue");
+    clear(box);
+    const ul = el("ul", { class: "plain" });
+    for (const generator of catalogue.generators || []) {
+      const li = el("li");
+      const button = el("button", { class: "ghost item", type: "button",
+                                    style: "width:100%;text-align:left" });
+      const head = el("div", { class: "row" });
+      head.appendChild(el("span", { class: "title" }, generator.name));
+      head.appendChild(el("span", { class: "pill" },
+        generator.variants.length + " " + generator.variant_noun +
+        (generator.variants.length === 1 ? "" : "s")));
+      button.appendChild(head);
+      button.appendChild(el("div", { class: "meta" }, generator.summary));
+      button.addEventListener("click", () => choose(generator));
+      li.appendChild(button);
+      ul.appendChild(li);
+    }
+    box.appendChild(ul);
+
+    function choose(generator) {
+      chosen = generator;
+      hide(err);
+      hide(note);
+      clear(results);
+      setup.hidden = false;
+      $("#setup-title").textContent = generator.name;
+      $("#setup-summary").textContent = generator.summary;
+      // The domain's own word for the control: a mushroom has species, a
+      // vase has styles. The API sends the noun so the label is right
+      // without a lookup table here.
+      const noun = generator.variant_noun;
+      $("#variant-label").textContent = noun.charAt(0).toUpperCase() + noun.slice(1);
+      const select = $("#variant");
+      clear(select);
+      for (const variant of generator.variants) {
+        select.appendChild(el("option", { value: variant }, variant.replace(/_/g, " ")));
+      }
+      const count = $("#count");
+      count.max = String(Math.max(1, Math.min(24, user.credits)));
+      $("#count-hint").textContent = user.credits > 0
+        ? `One credit per model that builds. You have ${user.credits}.`
+        : "You have no credits left, so nothing will build.";
+      setup.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    $("#form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      hide(err);
+      hide(note);
+      if (!chosen) return show(err, "err", "Pick a generator first.");
+      const count = parseInt($("#count").value, 10);
+      if (!(count >= 1)) return show(err, "err", "Build at least one.");
+      const body = {
+        count: count,
+        variant: $("#variant").value,
+        seed: parseInt($("#seed").value, 10) || 0,
+        variation: parseFloat($("#variation").value),
+      };
+      const button = $("#submit");
+      busy(button, true, "Building…");
+      let batch;
+      try {
+        batch = await api("/v1/generators/" + encodeURIComponent(chosen.name),
+                          { method: "POST", body: body });
+      } catch (error) {
+        show(err, "err", error.message);
+        busy(button, false);
+        return;
+      }
+      paintBatch(batch);
+      poll(batch, button);
+    });
+
+    function paintBatch(batch) {
+      clear(results);
+      results.appendChild(el("h2", null, "Batch"));
+      const summary = el("p", { class: "sub" },
+        `${batch.queued} of ${batch.requested} queued · seed ${batch.seed}`);
+      results.appendChild(summary);
+      const list = el("ul", { class: "plain", id: "specimens" });
+      for (const specimen of batch.specimens) {
+        const li = el("li", { dataset: { index: String(specimen.index) } });
+        li.appendChild(specimenCard(specimen));
+        list.appendChild(li);
+      }
+      results.appendChild(list);
+    }
+
+    function specimenCard(specimen) {
+      const node = specimen.model_id
+        ? el("a", { class: "item", href: "/models/" + encodeURIComponent(specimen.model_id) })
+        : el("div", { class: "item", style: "cursor:default" });
+      const head = el("div", { class: "row" });
+      const label = chosen ? specimen[chosen.variant_noun] || specimen.variant : specimen.variant;
+      head.appendChild(el("span", { class: "title" },
+        "#" + (specimen.index + 1) + (label ? " · " + String(label).replace(/_/g, " ") : "")));
+      head.appendChild(statusPill(specimen.status));
+      node.appendChild(head);
+      if (specimen.seed !== undefined && specimen.seed !== null) {
+        node.appendChild(el("div", { class: "meta" }, "seed " + specimen.seed));
+      }
+      if (specimen.detail) node.appendChild(el("div", { class: "meta" }, specimen.detail));
+      if (specimen.model_id) {
+        node.appendChild(el("div", { class: "meta mono" }, specimen.model_id));
+      }
+      return node;
+    }
+
+    /* Each specimen is an ordinary model, so its progress is read from the
+       ordinary model endpoint rather than anything batch-specific. */
+    function poll(batch, button) {
+      const live = batch.specimens.filter((s) => s.model_id);
+      if (!live.length) {
+        busy(button, false);
+        return show(note, "err", "Nothing was built: every specimen fell outside the template's tested range.");
+      }
+      show(note, "info", "Building. Each specimen becomes a model of its own.");
+
+      async function tick() {
+        let settled = 0;
+        for (const specimen of live) {
+          if (specimen.status === "ok" || specimen.status === "failed") { settled++; continue; }
+          try {
+            const model = await api("/v1/models/" + encodeURIComponent(specimen.model_id));
+            specimen.status = model.status || specimen.status;
+          } catch (_) {
+            /* Transient; the next tick asks again. */
+          }
+          const li = $(`#specimens li[data-index="${specimen.index}"]`);
+          if (li) { clear(li); li.appendChild(specimenCard(specimen)); }
+        }
+        if (settled === live.length) {
+          busy(button, false);
+          const built = live.filter((s) => s.status === "ok").length;
+          show(note, built ? "ok" : "err",
+            `${built} of ${live.length} built. Credits are charged per model that succeeded.`);
+          // The balance moved, so the header should say so.
+          try { paintNav(await api("/v1/auth/me")); } catch (_) { /* ignore */ }
+          return;
+        }
+        setTimeout(tick, 2500);
+      }
+      setTimeout(tick, 2000);
+    }
   };
 
   pages.model = async function () {

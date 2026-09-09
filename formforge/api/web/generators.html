@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="same-origin">
+<title>Generators · FormForge</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%230d1117"/><path d="M11 9h11v3.4h-7.3v3.6h6.4v3.4h-6.4V24H11z" fill="%234cc2d6"/></svg>'>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-page="generators">
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar">
+  <div class="bar-inner">
+    <a class="brand" href="/">Form<span class="mark">Forge</span></a>
+    <nav id="nav" aria-label="Account"></nav>
+  </div>
+</header>
+<main class="shell" id="main">
+<h1>Generators</h1>
+<p class="lede">
+  A template is one model with sliders. A generator is the thing that decides
+  where the sliders go — a species, a seed, and a set of relationships that
+  keeps every variation looking like the same object rather than a different
+  one badly drawn. Pick one, choose a style, and build a batch.
+</p>
+
+<div class="msg err" id="err" hidden role="alert"></div>
+<div class="msg" id="note" hidden role="status"></div>
+
+<div id="catalogue"><p class="spinner">Loading generators…</p></div>
+
+<div class="card" id="setup" hidden>
+  <h2 style="margin-top:0" id="setup-title">Configure</h2>
+  <p class="sub" id="setup-summary"></p>
+
+  <form id="form" novalidate>
+    <div class="grid two">
+      <div class="field">
+        <label for="variant" id="variant-label">Style</label>
+        <select id="variant" name="variant"></select>
+      </div>
+      <div class="field">
+        <label for="count">How many</label>
+        <input id="count" name="count" type="number" min="1" max="24" value="1"
+               aria-describedby="count-hint">
+        <p class="hint" id="count-hint">One credit per model that builds.</p>
+      </div>
+    </div>
+
+    <div class="grid two">
+      <div class="field">
+        <label for="seed">Seed</label>
+        <input id="seed" name="seed" type="number" min="0" value="7" aria-describedby="seed-hint">
+        <p class="hint" id="seed-hint">The same seed and style rebuild the same population.</p>
+      </div>
+      <div class="field">
+        <label for="variation">Variation</label>
+        <input id="variation" name="variation" type="number" min="0" max="1" step="0.05"
+               value="0.55" aria-describedby="variation-hint">
+        <p class="hint" id="variation-hint">0 rebuilds the style exactly; 1 lets every slider wander.</p>
+      </div>
+    </div>
+
+    <button id="submit" type="submit">Build batch</button>
+  </form>
+</div>
+
+<div id="results"></div>
+</main>
+<footer class="foot shell">
+  <p>FormForge runs locally: SQLite, files on disk, offline billing, an email outbox in a folder. No payment is taken and nothing leaves this machine.</p>
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

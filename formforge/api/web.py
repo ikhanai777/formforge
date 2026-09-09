@@ -37,6 +37,7 @@ PAGES: dict[str, str] = {
     "/login": "login.html",
     "/dashboard": "dashboard.html",
     "/create": "create.html",
+    "/generators": "generators.html",
     "/models/{model_id}": "model.html",
     "/forgot-password": "forgot.html",
     "/reset-password": "reset.html",

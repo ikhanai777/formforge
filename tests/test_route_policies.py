@@ -114,7 +114,7 @@ def request_for(client, entry, model_id=OWNED_MODEL):
     """Drive one declared route, filling in whatever identifier it takes."""
     path = entry.path.replace("{model_id}", model_id).replace(
         "{token}", "not-a-real-token"
-    ).replace("{template_id}", "vessel_vase")
+    ).replace("{template_id}", "vessel_vase").replace("{name}", "vase")
     # STL because the free plan allows it; the default 3mf would answer 403
     # for a plan reason and hide the authorisation answer under it.
     if path.endswith("/download") or path.endswith("/download-link"):
@@ -130,6 +130,8 @@ def request_for(client, entry, model_id=OWNED_MODEL):
             body = {"param_changes": {}}
         elif path == "/v1/generate":
             body = {"prompt": "a vase"}
+        elif path.startswith("/v1/generators/"):
+            body = {"count": 1, "variant": "classic"}
         elif "checkout" in path:
             body = {"plan": "maker"}
         elif "reset/request" in path:
@@ -329,12 +331,7 @@ class TestCreditConsumingMutations:
         balance = accounts.balance(owner["id"])
         if balance:
             accounts.spend(owner["id"], balance, idempotency_key="drain")
-        body = {"prompt": "a vase"} if entry.path == "/v1/generate" else {
-            "param_changes": {"x": 1}
-        }
-        response = client.request(
-            entry.method, entry.path.replace("{model_id}", OWNED_MODEL), json=body
-        )
+        response = request_for(client, entry)
         assert response.status_code == 402, (
             f"{entry.method} {entry.path} did not refuse an empty balance"
         )
@@ -343,7 +340,11 @@ class TestCreditConsumingMutations:
         """If a new build route appears, it belongs here. Stated as a test so
         the list is checked rather than remembered."""
         spenders = {e.path for e in POLICIES if e.consumes_credit}
-        assert spenders == {"/v1/generate", "/v1/models/{model_id}/modify"}
+        assert spenders == {
+            "/v1/generate",
+            "/v1/models/{model_id}/modify",
+            "/v1/generators/{name}",
+        }
 
 
 class TestOperatorRoutesAreNotServedWhenMetered:
