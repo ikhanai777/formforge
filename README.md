@@ -213,6 +213,24 @@ regenerate is the clearest possible argument for the whole approach.
 `POST /v1/feedback` takes a print outcome and `GET /v1/stats/prints` reads it
 back beside what the validator measured at the time.
 
+Started with an account store (`formforge serve --accounts`) the same app is
+metered: sessions, a credit ledger, signed download links, and every model
+route gated on ownership. Without one it is exactly what it was before any of
+that existed — no signup, no session, no credit check, no billing routes at
+all. The free self-hosted path is not a tier, it is the absence of the whole
+mechanism.
+
+```bash
+formforge bootstrap --demo-user you@example.com   # directories, migrations, an account
+formforge preflight --environment staging         # is this deployment ready to serve
+formforge backup create && formforge backup verify backups/<latest>
+formforge events                                  # what gets logged about access and money
+```
+
+`docs/runbook.md` is the operator's copy of all of it; `docs/configuration.md`
+is every setting; `docs/staging-validation.md` is the script for a private
+staging pass before anyone outside the team is invited.
+
 ## How it works
 
 ```

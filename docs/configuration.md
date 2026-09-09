@@ -68,6 +68,26 @@ Legend: **R** required · **o** optional · **—** ignored/refused
 | `FORMFORGE_OFFLINE`, `FORMFORGE_MODEL_*`, `FORMFORGE_LOG_LEVEL` | o | o | o | model client, logging | |
 | **Tests** ||||||
 | `FORMFORGE_TEST_PG` | o | — | — | test suite | Scratch database; each test drops the `public` schema |
+| `FORMFORGE_IT_*` | o | — | — | opt-in integration tests | Never read by the application. See below |
+
+## The `FORMFORGE_IT_*` variables are not application settings
+
+Nothing in `formforge/` reads them. They exist only to enable the opt-in
+integration tests under `tests/integration`, which are the only tests that
+talk to something outside the process, and each needs a `FORMFORGE_IT_<NAME>=1`
+flag **and** the service's own credentials. The flag is the consent; the
+credentials are the means — a developer with `AWS_PROFILE` already exported has
+not agreed to let a test suite write to a bucket.
+
+`docs/staging-validation.md` has the full table. Two are worth repeating here
+because getting them wrong is expensive:
+
+- the Stripe fixture **fails** on a key that is not `sk_test_`, at fixture
+  setup, before any request is sent;
+- `FORMFORGE_IT_DISPOSABLE_PG` is deliberately *not* `FORMFORGE_TEST_PG`. The
+  restore rehearsal drops schemas, and its value must name a database with
+  `test` or `disposable` in it, so the database the ordinary suite uses can
+  never be the one that gets dropped.
 
 ## Live billing takes three deliberate settings
 
@@ -101,7 +121,10 @@ effective limit four times the configured one. It is a floor against a script
 pointed at the login endpoint, not a rate limit in the sense a deployment
 needs. `redis` is the interface seam for a real one; the implementation is
 deferred to staging, and this document is where that is recorded rather than
-being implied by the setting existing.
+being implied by the setting existing. Configuring it **fails closed** — the
+application refuses to start rather than quietly using the per-process counter,
+because a limit believed in and not present is worse than no limit at all: it
+is the reason nobody looks. `preflight` reports it as `FAILED`, not `WARN`.
 
 ## Retention is off
 
@@ -109,3 +132,18 @@ being implied by the setting existing.
 on a schedule. The lifecycle machinery and an operator entry point exist; no
 timer runs them. Deletion of a customer's files is destructive and irreversible
 and does not get switched on by a default.
+
+## Logging, and what is never in it
+
+Structured JSON in `staging` and `production`, a readable sentence in `local`;
+`FORMFORGE_LOG_LEVEL` sets the level and production never goes below `INFO`,
+because DEBUG is where unredacted detail lives.
+
+`formforge/events.py` declares every security- and billing-sensitive event, and
+`formforge events` prints the catalogue with what each one means and which are
+worth an alert. Nothing in that stream carries a password, session token, reset
+token, API key, signature, card, raw webhook body, or email address. Two layers
+enforce it: `logs.Redactor` rewrites every record from anywhere on its way out
+— this package's, a library's, a traceback's — and the events are declared with
+named fields so a field can be redacted by *name*, which pattern matching
+structurally cannot do (a real password of `correct-horse` matches no regex).

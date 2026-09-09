@@ -206,18 +206,70 @@ Artifacts are **not** in that list: they are regenerable from
 them up for convenience, not for correctness.
 
 ```sh
-# SQLite (local): the file, consistently, while the app runs
-sqlite3 ~/.formforge/formforge.db ".backup '/backups/formforge-$(date +%F).db'"
-
-# PostgreSQL
-pg_dump --format=custom "$FORMFORGE_ACCOUNTS_DB" > /backups/formforge-$(date +%F).dump
+python -m formforge.cli backup create                 # backups/<timestamp>.tar.gz
+python -m formforge.cli backup verify backups/….tar.gz
 ```
 
-**Restore is not tested here and should not be assumed.** Restoring the
-accounts database without the artifact store leaves rows pointing at files that
-are gone; downloads then answer `410`, which is survivable and correct but
-should be a decision rather than a discovery. Rehearse a restore before it is
-needed — an untested backup is a hypothesis.
+`backup create` reads `FORMFORGE_ACCOUNTS_DB` and picks the right mechanism.
+SQLite gets an online snapshot through SQLite's own backup API rather than a
+file copy — copying a database that is being written produces an archive that
+restores into a corrupt database *sometimes*, which is the worst failure mode
+a backup can have. PostgreSQL gets `pg_dump --format=custom`, with the DSN
+password moved into `PGPASSWORD` so it never appears in `ps` while the dump
+runs.
+
+**Verify on a schedule, not when you need it.** `backup verify` opens the
+archive, runs an integrity check on the database inside, and prints the row
+counts and the schema revisions it holds. An unverified backup is a
+hypothesis.
+
+### Restoring
+
+```sh
+python -m formforge.cli backup restore backups/….tar.gz            # refuses
+python -m formforge.cli backup restore backups/….tar.gz --confirm  # does it
+python -m formforge.cli backup check                               # then this
+```
+
+Restore does nothing without `--confirm`, and exits non-zero when it refuses,
+so a script cannot mistake the refusal for a completed restore. For SQLite the
+current database is *moved aside* rather than deleted — the usual reason to
+restore is that something went wrong, and the second-worst outcome is finding
+out the archive was the wrong one after the original is gone. For PostgreSQL
+`pg_restore --clean --if-exists` drops and recreates what the dump contains;
+there is no moving aside on a live server, so take a `backup create` first.
+
+An archive from a *newer* schema is refused outright. That restore appears to
+work right up until a query hits a column this build does not know about. An
+archive that is behind is allowed, and says which migrations will apply on the
+next start.
+
+`backup check` is the post-restore validation, and it deliberately reads
+through the real `AccountStore` — migrations, views and all — rather than
+running `SELECT count(*)`. A restored database missing the `credit_balance`
+view has all its rows and cannot serve a single paywall decision; this is what
+catches that.
+
+Restoring the accounts database without the artifact store leaves rows
+pointing at files that are gone. Downloads then answer `410`, which is correct
+and survivable, but it should be a decision rather than a discovery.
+
+### Rehearsing the PostgreSQL restore
+
+The procedure above is exercised end to end — dump, drop the schema, restore,
+read the ledger back — by an opt-in test that requires a database it is
+explicitly allowed to destroy:
+
+```sh
+FORMFORGE_IT_PG_RESTORE=1 \
+FORMFORGE_IT_DISPOSABLE_PG=postgresql://…/formforge_disposable \
+  python -m pytest tests/integration/test_restore_rehearsal.py -v
+```
+
+The variable is deliberately **not** `FORMFORGE_TEST_PG`, and its value must
+name a database with `test` or `disposable` in it, so the database the
+ordinary suite uses can never be the one that gets dropped. Run it before
+staging and again whenever the schema changes.
 
 ---
 
@@ -231,3 +283,70 @@ needed — an untested backup is a hypothesis.
 
 None of them reports a DSN, a path, a key or whether a particular account
 exists.
+
+### Wiring them to a load balancer
+
+The two are for different jobs and wiring them the same way defeats both.
+
+| | `/healthz` | `/readyz` |
+|---|---|---|
+| Question | is this process alive | should traffic go to it *now* |
+| Use for | the restart/liveness probe | the load-balancer health check |
+| Touches | nothing | database, account store, sandbox |
+| Suggested interval | 10s | 5s |
+| Suggested threshold | 3 failures before restarting | 2 failures before removing from rotation |
+| Timeout | 2s | 5s — it does real work |
+
+Never point a liveness probe at `/readyz`. A database blip would then restart
+every process at once, turning a recoverable dependency failure into an
+outage; `/readyz` failing is exactly the case where the process should stay up
+and stop taking traffic.
+
+Give a new instance a startup grace period longer than the migrations take —
+`AccountStore` applies them on construction, and on PostgreSQL takes an
+advisory lock so concurrent starts serialise rather than race.
+
+### Before serving anything
+
+```sh
+python -m formforge.cli preflight --environment staging
+```
+
+Exits non-zero only when something *configured* is broken. A setting that is
+merely absent reports `missing`, because "not finished" and "wrong" are
+different problems with different fixes and a gate that conflates them turns a
+to-do list into an outage hunt.
+
+---
+
+## Reading the security event stream
+
+```sh
+python -m formforge.cli events            # the catalogue, with what to alert on
+python -m formforge.cli events --json     # the same, for a dashboard
+```
+
+Logs are JSON in staging and production (`FORMFORGE_MODE`), one object per
+line, with the event name in `message` and its declared fields alongside. The
+catalogue is generated from `formforge/events.py`, so it cannot drift from
+what the code emits.
+
+The four worth an alert on day one:
+
+| Event | Why |
+|---|---|
+| `billing.webhook.not_applied` | somebody paid and the work did not happen. The endpoint returned 200, so no error rate catches it. Cross-check with `unhandled_billing_events` |
+| `billing.webhook.signature_failed` | a forged webhook, or the wrong signing secret deployed — and the second one means real payments are being dropped |
+| `password_reset.undeliverable` | a token was issued and the mail did not send. A support ticket that has not been filed yet |
+| `auth.login.failed` rising against a flat `auth.login.succeeded` | credential stuffing |
+
+**Nothing in this stream carries a secret.** No password, session token, reset
+token, API key, signature, card, or raw webhook body — and no email address
+either, because the security log is copied further than the database is and an
+address list is what most of these endpoints exist to avoid handing out. That
+is enforced twice: `logs.Redactor` rewrites every record from anywhere on its
+way out, and `tests/test_events.py::TestNoEventCarriesASecret` plants known
+secrets, drives the real HTTP paths and greps the formatted output.
+
+If `_incomplete` ever appears on an event, an emission is missing a declared
+field and an alert filtering on that field is silently matching nothing.
