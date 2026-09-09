@@ -133,6 +133,33 @@ grant. Status changes carry the processor's own timestamp, because a status is
 last-write-wins and a cancellation delivered *after* the renewal it preceded
 would otherwise leave a paid-up account cancelled.
 
+## Model routes
+
+**On a metered deployment every model route requires a session and checks
+ownership** — `GET /v1/models/{id}`, `/status`, `/events`, the
+`WS /stream` socket, `POST /modify`, `POST /slice` and both download routes.
+A model that is not yours answers `404`, never `403`: a 403 confirms the id
+names something real and turns any of these into an oracle for enumerating
+other people's models. A model with no owner is refused too — on a metered
+deployment that is a bug, and the safe reading of a bug is no.
+
+Ownership is read from the in-flight job *and* the persisted row, because a
+generation that is still running has not been written to `models` yet.
+
+`POST /modify` is a build: it runs the sandbox and produces a downloadable
+model, so it takes a credit and is checked exactly like `POST /v1/generate`.
+The child model inherits the parent's owner.
+
+`GET /v1/stats` and `/v1/stats/prints` are **not served** on a metered
+deployment (`404`). They are business aggregates — totals, per-template health,
+cost — and belong to whoever runs the instance rather than to whoever can reach
+it. Self-hosted, those are the same person and the routes stay open; hosted,
+the operator reads them from the CLI.
+
+Fixed in Phase 2: before it, all of the above were open to an anonymous
+request, and `modify` would start a generation from a stranger's model with no
+owner and no credit check.
+
 ## Downloads
 
 Two routes, one entitlement rule.

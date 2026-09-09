@@ -55,6 +55,20 @@ class _Result:
         self.usage = None
         self.duration_ms = 5
 
+    def as_dict(self) -> dict:
+        """What `GET /v1/models/{id}` returns.
+
+        Carries the fields that must not reach a stranger, so the ownership
+        tests can assert on their absence rather than only on a status code.
+        """
+        return {
+            "model_id": self.model_id,
+            "status": self.status,
+            "prompt": self.prompt,
+            "params": self.params,
+            "source_code": self.source_code,
+        }
+
 
 @pytest.fixture
 def files(tmp_path) -> dict[str, str]:
@@ -726,3 +740,130 @@ class TestConcurrentSpendOverHttp:
             assert client.get(
                 f"/v1/models/race-{n}/download?format=stl"
             ).status_code == expected
+
+
+class TestEveryModelRouteIsOwned:
+    """SEC-1. Phase 1 gated the download path and left the rest open.
+
+    An anonymous request could read another account's prompt, parameters and
+    generated source; the WebSocket replayed the whole build; and `modify`
+    started a fresh generation from somebody else's model with no owner and no
+    credit check -- an unauthenticated way to spend the sandbox.
+
+    Model ids are UUID4 and hard to guess. That is not the point: ids leak
+    through URLs, logs and referrer headers, and unguessable is not authorised.
+    These tests are written as the probe that found it.
+    """
+
+    READ_ROUTES = (
+        "/v1/models/{id}",
+        "/v1/models/{id}/status",
+        "/v1/models/{id}/events",
+    )
+
+    @pytest.fixture
+    def victim_model(self, app, client, files):
+        signup(client, "victim@example.com")
+        finish_build(app, client, "victim-model", files)
+        return "victim-model"
+
+    @pytest.mark.parametrize("route", READ_ROUTES)
+    def test_an_anonymous_stranger_is_refused(self, client, victim_model, route):
+        client.cookies.clear()
+        response = client.get(route.format(id=victim_model))
+        assert response.status_code == 401
+        assert "prompt" not in response.text
+        assert "source_code" not in response.text
+
+    @pytest.mark.parametrize("route", READ_ROUTES)
+    def test_another_signed_in_account_is_refused(self, client, victim_model, route):
+        client.post("/v1/auth/logout")
+        client.cookies.clear()
+        signup(client, "intruder@example.com")
+        response = client.get(route.format(id=victim_model))
+        # 404, not 403: a 403 confirms the id names something real.
+        assert response.status_code == 404
+        assert "prompt" not in response.text
+
+    @pytest.mark.parametrize("route", READ_ROUTES)
+    def test_the_owner_still_gets_their_own_model(self, client, victim_model, route):
+        assert client.get(route.format(id=victim_model)).status_code == 200
+
+    def test_modify_is_refused_anonymously(self, client, victim_model):
+        client.cookies.clear()
+        response = client.post(
+            f"/v1/models/{victim_model}/modify", json={"param_changes": {"x": 1}}
+        )
+        assert response.status_code == 401
+
+    def test_modify_is_refused_for_another_account(self, client, victim_model):
+        client.post("/v1/auth/logout")
+        client.cookies.clear()
+        signup(client, "intruder@example.com")
+        response = client.post(
+            f"/v1/models/{victim_model}/modify", json={"param_changes": {"x": 1}}
+        )
+        assert response.status_code == 404
+
+    def test_modify_needs_a_credit_like_any_other_build(
+        self, app, client, files, accounts
+    ):
+        """It runs the sandbox and produces a downloadable model, so it is a
+        build. Before this it was neither owned nor charged."""
+        signup(client)
+        finish_build(app, client, "mine", files)
+        user = accounts.get_user_by_email("maker@example.com")
+        accounts.spend(user["id"], accounts.balance(user["id"]), idempotency_key="drain")
+        response = client.post(
+            "/v1/models/mine/modify", json={"param_changes": {"x": 1}}
+        )
+        assert response.status_code == 402
+
+    def test_slice_is_refused_for_another_account(self, client, victim_model):
+        client.post("/v1/auth/logout")
+        client.cookies.clear()
+        signup(client, "intruder@example.com")
+        assert client.post(
+            f"/v1/models/{victim_model}/slice", json={}
+        ).status_code == 404
+
+    def test_the_event_stream_is_refused_for_another_account(self, client, victim_model):
+        """The socket replays the prompt, the parameters and the validator's
+        findings, so it needs the same rule as the HTTP routes."""
+        from starlette.websockets import WebSocketDisconnect as WSDisconnect
+
+        client.post("/v1/auth/logout")
+        client.cookies.clear()
+        signup(client, "intruder@example.com")
+        with (
+            pytest.raises(WSDisconnect) as caught,
+            client.websocket_connect(f"/v1/models/{victim_model}/stream") as ws,
+        ):
+            ws.receive_json()
+            ws.receive_json()
+        assert caught.value.code == 1008
+
+    def test_the_owner_can_still_stream_their_own_build(self, client, victim_model):
+        with client.websocket_connect(f"/v1/models/{victim_model}/stream") as ws:
+            assert "error" not in ws.receive_json()
+
+    def test_business_aggregates_are_not_public_on_a_metered_deployment(
+        self, client, victim_model
+    ):
+        """Totals, per-template health and cost belong to whoever runs the
+        instance, not to whoever can reach it."""
+        for path in ("/v1/stats", "/v1/stats/prints"):
+            assert client.get(path).status_code == 404, path
+
+    def test_an_ownerless_model_is_refused_rather_than_shared(self, app, client, files):
+        """On a metered deployment a model with no owner is a bug, and the
+        safe reading of a bug is no."""
+        signup(client)
+        state = app.state.formforge
+        job = state["jobs"].create()
+        job.model_id = "orphan"
+        job.owner_id = None
+        job.result = _Result("orphan", files)
+        job.status = "ok"
+        state["jobs"].by_model["orphan"] = job
+        assert client.get("/v1/models/orphan").status_code == 404

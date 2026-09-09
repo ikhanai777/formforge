@@ -27,6 +27,14 @@ best demo the product has.
 kernel.** The development runtime executes model-authored Python directly; that
 is fine on a laptop and a serious incident in production, so the check is code
 rather than a paragraph in a runbook.
+
+**Two deployments, one app.** Constructed without an account store this is the
+free self-hosted gateway: no sessions, no credits, every route open, exactly
+as it always was. Constructed *with* one it is the hosted product, and then
+every model route requires a session and checks ownership -- reads, the event
+stream, modify, slice and download alike. `/v1/stats` is not served at all in
+that mode: business aggregates belong to whoever runs the instance, and on a
+hosted one the operator reads them from the CLI.
 """
 
 from __future__ import annotations
@@ -315,6 +323,42 @@ def create_app(
         def _session_user(request) -> dict[str, Any] | None:
             return accounts.user_for_token(request.cookies.get(COOKIE_NAME) or "")
 
+        def _require_owner(model_id: str, request) -> dict[str, Any]:
+            """The account this model belongs to, or a refusal.
+
+            Every model route on a metered deployment goes through this. It
+            did not exist in Phase 1, which gated the download path and left
+            the rest open: an anonymous request could read another account's
+            prompt, parameters and generated source, and `modify` would start
+            a whole new generation from someone else's model with no owner and
+            no credit check. Model ids are UUID4 and hard to guess, but ids
+            leak through URLs, logs and referrer headers, and unguessable is
+            not the same as authorised.
+
+            Ownership is read from *both* places it can live, because a
+            generation that is still running has no `models` row yet -- the
+            row is written when it finishes -- so the in-memory job is the
+            only record of who started it. A model with no owner in either
+            place is refused rather than allowed: on a metered deployment an
+            ownerless model is a bug, and the safe reading of a bug is no.
+
+            The refusal is 404 rather than 403 for a model that exists but
+            belongs to somebody else. A 403 confirms the id names something
+            real, which turns every one of these routes into an oracle for
+            enumerating other people's models.
+            """
+            user = _session_user(request)
+            if user is None:
+                raise HTTPException(status_code=401, detail="Not signed in.")
+            job = jobs.for_model(model_id)
+            record = database.get_model(model_id)
+            owner = (job.owner_id if job else None) or (
+                record.get("user_id") if record else None
+            )
+            if owner is None or owner != user["id"]:
+                raise HTTPException(status_code=404, detail="No such model.")
+            return user
+
         def _authorise_download(model_id: str, fmt: str, request) -> dict[str, Any]:
             """Three separate questions, answered in the order that leaks least.
 
@@ -485,20 +529,41 @@ def create_app(
         )
 
     @app.get("/v1/models/{model_id}")
-    async def get_model(model_id: str):
+    async def get_model(model_id: str, http: Request):
+        if metered:
+            _require_owner(model_id, http)
         job = _require_model(model_id)
         if job.result is None:
             return JSONResponse(job.as_status(), status_code=202)
         return job.result.as_dict()
 
     @app.get("/v1/models/{model_id}/status")
-    async def get_status(model_id: str):
+    async def get_status(model_id: str, http: Request):
+        if metered:
+            _require_owner(model_id, http)
         return _require_model(model_id).as_status()
 
     @app.websocket("/v1/models/{model_id}/stream")
     async def stream(websocket: WebSocket, model_id: str):
         await websocket.accept()
         job = jobs.for_model(model_id)
+        if metered:
+            # The socket replays every step of a generation -- the prompt, the
+            # parameters, the validator's findings. Same ownership rule as the
+            # HTTP routes, and the same refusal for a model that is not yours:
+            # a close code that does not distinguish "no such model" from "not
+            # yours" is what keeps this from being an enumeration oracle.
+            user = accounts.user_for_token(websocket.cookies.get(COOKIE_NAME) or "")
+            record = database.get_model(model_id)
+            owner = (job.owner_id if job else None) or (
+                record.get("user_id") if record else None
+            )
+            if user is None or owner is None or owner != user["id"]:
+                await websocket.send_json({"error": "not found"})
+                # 1008: policy violation. Deliberately the same for
+                # unauthenticated and for somebody else's model.
+                await websocket.close(code=1008)
+                return
         if job is None:
             await websocket.send_json({"error": f"no model {model_id}"})
             await websocket.close()
@@ -524,7 +589,24 @@ def create_app(
             jobs.unsubscribe(job, queue)
 
     @app.post("/v1/models/{model_id}/modify", status_code=202)
-    async def modify(model_id: str, request: ModifyRequest, background: BackgroundTasks):
+    async def modify(
+        model_id: str, request: ModifyRequest, background: BackgroundTasks, http: Request
+    ):
+        owner = None
+        if metered:
+            # A modification is a new generation: it runs the sandbox and
+            # produces a downloadable model, so it costs a credit and is
+            # checked exactly like `generate`. Before this it was neither
+            # owned nor charged, which made it an unauthenticated way to spend
+            # somebody else's compute.
+            user = _require_owner(model_id, http)
+            accounts.roll_to_current_period(user["id"])
+            if accounts.balance(user["id"]) < 1:
+                raise HTTPException(
+                    status_code=402,
+                    detail="You have no credits left. Add credits to keep building.",
+                )
+            owner = user["id"]
         parent = _require_model(model_id)
         if parent.result is None or not parent.result.template_id:
             raise HTTPException(
@@ -535,6 +617,7 @@ def create_app(
                 ),
             )
         child = jobs.create(parent_id=model_id)
+        child.owner_id = owner
         template_id = parent.result.template_id
         merged = {**(parent.result.params or {}), **request.param_changes}
 
@@ -556,13 +639,20 @@ def create_app(
             # Recorded with its parent: a modification is a new model with a
             # parent, never an edit in place, and the lineage is only useful
             # if it outlives the process.
-            database.record_generation(result, parent_id=child.parent_id)
+            database.record_generation(
+                result, user_id=child.owner_id, parent_id=child.parent_id
+            )
+            _charge_for(child, result)
 
         background.add_task(run)
         return {"job_id": child.job_id, "model_id": child.model_id, "parent_id": model_id}
 
     @app.post("/v1/models/{model_id}/slice", status_code=202)
-    async def slice_endpoint(model_id: str, request: SliceRequest, background: BackgroundTasks):
+    async def slice_endpoint(
+        model_id: str, request: SliceRequest, background: BackgroundTasks, http: Request
+    ):
+        if metered:
+            _require_owner(model_id, http)
         job = _require_result(model_id)
         source = job.result.artifacts.get("3mf") or job.result.artifacts.get("stl")
         if not source:
@@ -719,7 +809,15 @@ def create_app(
         The three questions this system cannot answer without persistence:
         which templates are quietly failing, which errors actually dominate,
         and whether any of it prints.
+
+        **Not served on a metered deployment.** These are business aggregates
+        -- how many generations, what they cost, which templates are failing --
+        and they belong to whoever runs the instance, not to whoever can reach
+        it. On a self-hosted copy that is the same person, so it stays open
+        there. On a hosted one the operator reads them from the CLI, which
+        needs no second privilege tier on the public API to exist.
         """
+        _refuse_if_metered()
         return {
             "totals": database.totals(),
             "templates": database.template_health(),
@@ -733,16 +831,21 @@ def create_app(
         Empty until real prints are reported, and that is the honest state:
         every DFM constant in this system is a conventional maker value until
         this endpoint has rows behind it.
+
+        Not served on a metered deployment; see `/v1/stats`.
         """
+        _refuse_if_metered()
         return {"outcomes": database.print_outcomes()}
 
     @app.get("/v1/models/{model_id}/events")
-    async def model_events(model_id: str):
+    async def model_events(model_id: str, http: Request):
         """The per-step log for one generation.
 
         A four-iteration run is inexplicable without this: you can see that it
         took four attempts but not what changed between them.
         """
+        if metered:
+            _require_owner(model_id, http)
         events = database.events_for(model_id)
         if not events and database.get_model(model_id) is None:
             raise HTTPException(status_code=404, detail=f"no model {model_id}")
@@ -793,6 +896,10 @@ def create_app(
         if job is None:
             raise HTTPException(status_code=404, detail=f"no model {model_id}")
         return job
+
+    def _refuse_if_metered() -> None:
+        if metered:
+            raise HTTPException(status_code=404, detail="Not found.")
 
     def _serve(model_id: str, fmt: str):
         """Hand back one artifact, whoever has already been authorised for it."""
