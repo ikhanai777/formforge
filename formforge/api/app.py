@@ -60,7 +60,7 @@ try:
         WebSocket,
         WebSocketDisconnect,
     )
-    from fastapi.responses import FileResponse, JSONResponse
+    from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
     from pydantic import BaseModel, Field
 
     FASTAPI_AVAILABLE = True
@@ -77,7 +77,14 @@ from ..orchestrator import Orchestrator
 from ..registry import TemplateRegistry
 from ..sandbox import GeometrySandbox
 from ..slicer import slice_model
-from ..storage import LINK_TTL_SECONDS, StorageError, sign_download, verify_download
+from ..storage import (
+    LINK_TTL_SECONDS,
+    StorageError,
+    artifact_key,
+    open_storage,
+    sign_download,
+    verify_download,
+)
 from ..store import PRINT_ISSUES, Store
 
 STORE_DIR = Settings.from_env().model_dir
@@ -245,6 +252,7 @@ def create_app(
     billing_provider: Any = None,
     settings: Settings | None = None,
     mailer: Any = None,
+    storage: Any = None,
 ):
     """Build the FastAPI application.
 
@@ -276,6 +284,10 @@ def create_app(
             log.warning("configuration: %s", problem)
 
     store = Path(store_dir or _settings.model_dir)
+    # The artifact store. Present on every deployment, but only *written* when
+    # metered: the free self-hosted path serves generated files straight from
+    # the bundle directory, exactly as it always has.
+    artifacts = storage if storage is not None else open_storage(_settings.artifacts)
     store.mkdir(parents=True, exist_ok=True)
     templates = registry or TemplateRegistry.load(strict=False)
     sandbox = GeometrySandbox(keep_workdir=True)
@@ -531,6 +543,8 @@ def create_app(
                 write_bundle, result, store / result.model_id / "bundle", template=template
             )
             result.artifacts.update(bundle.files)
+            if metered and job.owner_id:
+                _store_artifacts(job, result)
 
         # Persisted for every terminal status, not just success: a store that
         # holds only the runs that worked cannot answer a question worth
@@ -755,17 +769,7 @@ def create_app(
     ):
         if metered:
             _authorise_download(model_id, format, http)
-        job = _require_result(model_id)
-        path = job.result.artifacts.get(format)
-        if not path or not Path(path).exists():
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"this model has no {format} artifact. The STEP export is "
-                    "only produced on the parametric path."
-                ),
-            )
-        return FileResponse(path, filename=_FILENAMES[format])
+        return _serve(model_id, format)
 
     # -- catalogue -----------------------------------------------------
     @app.get("/v1/templates")
@@ -915,12 +919,65 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no model {model_id}")
         return job
 
+    def _store_artifacts(job: Job, result) -> None:
+        """Copy a finished build into the artifact store and record it.
+
+        Recorded in the account store rather than only on disk, because "what
+        files exist, whose are they, and are they still there" is a question
+        about storage cost and retention that a directory listing answers
+        badly and a deleted directory answers not at all.
+
+        Best-effort: a storage failure must not fail a generation the user has
+        already waited for and been charged for. It is logged, and the download
+        path falls back to the bundle directory, which is still there.
+        """
+        for fmt, path in list(result.artifacts.items()):
+            try:
+                source = Path(path)
+                if not source.exists():
+                    continue
+                key = artifact_key(result.model_id, fmt)
+                artifacts.put(key, source)
+                accounts.record_artifact(
+                    result.model_id, fmt, key,
+                    user_id=job.owner_id, size=source.stat().st_size,
+                )
+            except Exception:
+                log.exception("could not store the %s artifact for %s", fmt, result.model_id)
+
     def _refuse_if_metered() -> None:
         if metered:
             raise HTTPException(status_code=404, detail="Not found.")
 
     def _serve(model_id: str, fmt: str):
-        """Hand back one artifact, whoever has already been authorised for it."""
+        """Hand back one artifact, whoever has already been authorised for it.
+
+        Storage first when this deployment records artifacts, because that is
+        the copy whose lifecycle is tracked. A row marked deleted answers 410
+        rather than 404: the model existed and the file is gone, which is a
+        different thing from never having had one, and the difference is what
+        a support conversation turns on.
+        """
+        if metered:
+            for row in accounts.artifacts_for(model_id):
+                if row["fmt"] != fmt:
+                    continue
+                if row["status"] == "deleted":
+                    raise HTTPException(
+                        status_code=410,
+                        detail="This file has been deleted under the retention policy.",
+                    )
+                try:
+                    stream = artifacts.open(row["storage_key"])
+                except StorageError:
+                    break  # fall through to the bundle directory
+                return StreamingResponse(
+                    stream,
+                    media_type="application/octet-stream",
+                    headers={
+                        "content-disposition": f'attachment; filename="{_FILENAMES[fmt]}"'
+                    },
+                )
         job = _require_result(model_id)
         path = job.result.artifacts.get(fmt)
         if not path or not Path(path).exists():
@@ -947,6 +1004,7 @@ def create_app(
         "charge": _charge_for,
         "store_dir": store,
         "metered": metered,
+        "artifacts": artifacts,
         "settings": _settings,
     }
     return app

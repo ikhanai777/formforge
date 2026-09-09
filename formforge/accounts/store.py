@@ -38,6 +38,7 @@ one implementation of `spend` to be right about.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -77,9 +78,12 @@ PLAN_STATUSES = frozenset({"active", "past_due", "cancelled"})
 # Columns holding a moment. Postgres hands these back as datetimes and SQLite
 # as text; they are normalised to ISO-8601 seconds on the way out so a caller
 # never has to know which engine answered.
+log = logging.getLogger("formforge.accounts")
+
 _TIME_COLUMNS = (
     "created_at", "expires_at", "revoked_at", "received_at",
-    "handled_at", "last_movement_at", "applied_at",
+    "handled_at", "last_movement_at", "applied_at", "closed_at",
+    "marked_at", "deleted_at",
 )
 
 
@@ -135,6 +139,9 @@ class AccountStore:
             target if target is not None else _default_target()
         )
         self.backend = self._db.name
+        # An audit write that fails is counted rather than raised -- see
+        # `audit`. This is what a health check reads to notice.
+        self.audit_failures = 0
         self._db.migrate()
 
     @classmethod
@@ -237,6 +244,10 @@ class AccountStore:
         user = self.get_user_by_email(email)
         if user is None or not verify_password(password, user["password_hash"]):
             raise AuthError("email or password is incorrect")
+        if self.is_closed(user):
+            # The same message as a wrong password, deliberately. "This account
+            # is closed" tells somebody probing addresses that one exists.
+            raise AuthError("email or password is incorrect")
         # The one moment the plaintext exists and the cost factor can be
         # raised on an old account.
         if needs_rehash(user["password_hash"]):
@@ -288,11 +299,15 @@ class AccountStore:
         malformed token is a denial-of-service handed to anyone with curl."""
         if not isinstance(token, str) or not token:
             return None
-        return self._read_one(
+        user = self._read_one(
             "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id"
             " WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?",
             (hash_token(token), self._db.now()),
         )
+        # Closing revokes every session, so a live token on a closed account
+        # should be impossible. Checked anyway: "should be impossible" is how
+        # a closed account keeps working, and the cost is one comparison.
+        return None if self.is_closed(user) else user
 
     def revoke_session(self, token: str) -> bool:
         with self._db.transaction() as conn:
@@ -757,6 +772,207 @@ class AccountStore:
             "SELECT * FROM credit_ledger WHERE idempotency_key = ?", (f"spend:{model_id}",)
         )
         return _entry(row) if row else None
+
+    # -- audit -------------------------------------------------------------
+    def audit(
+        self,
+        action: str,
+        *,
+        user_id: str | None = None,
+        actor: str = "system",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        """Record something that happened to an account.
+
+        `billing_events` records what the processor said; this records what
+        *we* did -- a password changed, every session revoked, a plan moved by
+        an operator, credits adjusted by hand, an account closed. Those are the
+        things somebody asks about afterwards and none of them was written
+        down anywhere before.
+
+        **Never carries a secret.** `detail` is for "how many sessions" and
+        "which plan", not for what the password became. The caller decides
+        what goes in, so this is a convention rather than an enforcement, and
+        it is stated here because that is where somebody adding a field will
+        look.
+
+        Unlike every other write in this module, an audit failure is swallowed.
+        The reasoning is the same one that governs telemetry: refusing a
+        password reset because the audit row would not write is a worse outcome
+        than an incomplete audit trail. It is counted, not silent.
+        """
+        try:
+            with self._db.transaction() as conn:
+                self._run(
+                    conn,
+                    "INSERT INTO audit_log (user_id, action, actor, detail, created_at)"
+                    " VALUES (?,?,?,?,?)",
+                    (user_id, action, actor, self._db.dumps(detail or {}), self._db.now()),
+                )
+        except Exception:
+            self.audit_failures += 1
+            log.warning("could not write an audit row for %s", action, exc_info=True)
+
+    def audit_trail(self, user_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        with self._db.reader() as conn:
+            rows = self._all(
+                conn,
+                "SELECT * FROM audit_log WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+                (user_id, limit),
+            )
+        for row in rows:
+            row["detail"] = self._db.loads(row["detail"])
+        return rows
+
+    # -- account lifecycle -------------------------------------------------
+    def close_account(self, user_id: str, *, actor: str = "user") -> int:
+        """Close an account: refuse logins, revoke sessions, keep the ledger.
+
+        Soft by decision. The credit ledger is a financial record and outlives
+        the account; the row stays so a later question about a charge has an
+        answer. Hard deletion is a separate, explicit operator action --
+        `purge_account` -- because reversible beats tidy and a closure is
+        usually a mistake or a change of mind rather than a demand.
+
+        Returns how many sessions were revoked.
+        """
+        if self.get_user(user_id) is None:
+            raise AccountError(f"no such user: {user_id}")
+        with self._db.transaction() as conn:
+            self._run(
+                conn, "UPDATE users SET closed_at = ? WHERE id = ? AND closed_at IS NULL",
+                (self._db.now(), user_id),
+            )
+        killed = self.revoke_all_sessions(user_id)
+        self.audit("account.closed", user_id=user_id, actor=actor,
+                   detail={"sessions_revoked": killed})
+        return killed
+
+    def reopen_account(self, user_id: str, *, actor: str = "operator") -> None:
+        """Undo a closure. The reason closure is soft."""
+        with self._db.transaction() as conn:
+            if not self._run(
+                conn, "UPDATE users SET closed_at = NULL WHERE id = ?", (user_id,)
+            ).rowcount:
+                raise AccountError(f"no such user: {user_id}")
+        self.audit("account.reopened", user_id=user_id, actor=actor)
+
+    def is_closed(self, user: dict[str, Any] | None) -> bool:
+        return bool(user and user.get("closed_at"))
+
+    # -- artifacts ---------------------------------------------------------
+    def record_artifact(
+        self,
+        model_id: str,
+        fmt: str,
+        storage_key: str,
+        *,
+        user_id: str | None = None,
+        size: int = 0,
+    ) -> None:
+        """Note that a file exists. Idempotent on `(model_id, fmt)`.
+
+        Re-recording the same artifact -- a rebuild, a retried write -- updates
+        the row rather than adding a second one, and revives a row that had
+        been marked for deletion: the bytes are back, so the mark is wrong.
+        """
+        with self._db.transaction() as conn:
+            existing = self._one(
+                conn,
+                "SELECT id FROM artifacts WHERE model_id = ? AND fmt = ?",
+                (model_id, fmt),
+            )
+            if existing:
+                self._run(
+                    conn,
+                    "UPDATE artifacts SET storage_key = ?, bytes = ?, status = 'present',"
+                    " marked_at = NULL, deleted_at = NULL WHERE id = ?",
+                    (storage_key, int(size), existing["id"]),
+                )
+                return
+            self._run(
+                conn,
+                "INSERT INTO artifacts"
+                " (model_id, user_id, fmt, storage_key, bytes, status, created_at)"
+                " VALUES (?,?,?,?,?,'present',?)",
+                (model_id, user_id, fmt, storage_key, int(size), self._db.now()),
+            )
+
+    def artifacts_for(self, model_id: str) -> list[dict[str, Any]]:
+        with self._db.reader() as conn:
+            return self._all(
+                conn, "SELECT * FROM artifacts WHERE model_id = ? ORDER BY fmt", (model_id,)
+            )
+
+    def mark_artifacts(self, model_id: str, *, actor: str = "operator") -> int:
+        """The soft step: mark for deletion without removing anything.
+
+        Two steps rather than one because deletion of a customer's file is
+        irreversible and a retention sweep should be reviewable before it
+        bites. Marking is what a sweep does; removing is a second, deliberate
+        pass.
+        """
+        with self._db.transaction() as conn:
+            changed = self._run(
+                conn,
+                "UPDATE artifacts SET status = 'pending_delete', marked_at = ?"
+                " WHERE model_id = ? AND status = 'present'",
+                (self._db.now(), model_id),
+            ).rowcount
+        if changed:
+            self.audit("artifact.marked", actor=actor,
+                       detail={"model_id": model_id, "count": changed})
+        return changed
+
+    def finish_artifact_delete(self, artifact_id: int) -> None:
+        """Record that the bytes are gone. The row stays.
+
+        Deliberately keeping the row: it is the record that the file existed
+        and when it went, which is what answers "where did my model go".
+        """
+        with self._db.transaction() as conn:
+            self._run(
+                conn,
+                "UPDATE artifacts SET status = 'deleted', deleted_at = ? WHERE id = ?",
+                (self._db.now(), artifact_id),
+            )
+
+    def artifacts_pending_delete(self, limit: int = 500) -> list[dict[str, Any]]:
+        with self._db.reader() as conn:
+            return self._all(
+                conn,
+                "SELECT * FROM artifacts WHERE status = 'pending_delete'"
+                " ORDER BY marked_at LIMIT ?",
+                (limit,),
+            )
+
+    def artifacts_older_than(
+        self, days: int, *, only_unpaid: bool = True, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Candidates for retention. Never returns anything on `days <= 0`.
+
+        `days <= 0` means retention is off, and off has to mean *nothing*
+        rather than everything -- a sweep that treats a missing setting as "age
+        zero" deletes the lot.
+
+        `only_unpaid` skips models somebody was charged for. Deleting what a
+        customer paid for on a timer is not a retention policy, it is a
+        refund request.
+        """
+        if days <= 0:
+            return []
+        cutoff = self._db.stamp(utcnow() - timedelta(days=days))
+        sql = (
+            "SELECT a.* FROM artifacts a WHERE a.status = 'present' AND a.created_at < ?"
+        )
+        if only_unpaid:
+            sql += (
+                " AND NOT EXISTS (SELECT 1 FROM credit_ledger l"
+                " WHERE l.model_id = a.model_id AND l.reason = 'spend')"
+            )
+        sql += " ORDER BY a.created_at LIMIT ?"
+        with self._db.reader() as conn:
+            return self._all(conn, sql, (cutoff, limit))
 
     # -- billing events ----------------------------------------------------
     def record_billing_event(

@@ -867,3 +867,76 @@ class TestEveryModelRouteIsOwned:
         job.status = "ok"
         state["jobs"].by_model["orphan"] = job
         assert client.get("/v1/models/orphan").status_code == 404
+
+
+class TestArtifactsGoThroughStorage:
+    """STO-1. The storage abstraction existed through Phase 1 and nothing
+    imported it: artifacts were served straight off local paths, with no
+    record of what existed, whose it was, or whether it was still there."""
+
+    def test_a_finished_build_is_recorded_in_the_artifact_store(
+        self, app, client, files, accounts
+    ):
+        signup(client)
+        finish_build(app, client, "model-1", files)
+        state = app.state.formforge
+        # `finish_build` stands in for the background task, so record the
+        # artifacts the way the real path does.
+        for fmt, path in files.items():
+            key = f"models/model-1/{fmt}"
+            state["artifacts"].put(key, __import__("pathlib").Path(path))
+            accounts.record_artifact(
+                "model-1", fmt, key,
+                user_id=accounts.get_user_by_email("maker@example.com")["id"],
+            )
+        rows = accounts.artifacts_for("model-1")
+        assert {r["fmt"] for r in rows} == set(files)
+        assert all(r["status"] == "present" for r in rows)
+
+    def test_a_deleted_artifact_answers_410_rather_than_404(
+        self, app, client, files, accounts
+    ):
+        """The model existed and the file is gone. That is a different thing
+        from never having had one, and the difference is what a support
+        conversation turns on."""
+        signup(client)
+        finish_build(app, client, "model-1", files)
+        user = accounts.get_user_by_email("maker@example.com")
+        key = "models/model-1/stl"
+        state = app.state.formforge
+        state["artifacts"].put(key, __import__("pathlib").Path(files["stl"]))
+        accounts.record_artifact("model-1", "stl", key, user_id=user["id"])
+        assert client.get("/v1/models/model-1/download?format=stl").status_code == 200
+
+        accounts.mark_artifacts("model-1")
+        row = accounts.artifacts_pending_delete()[0]
+        state["artifacts"].delete(row["storage_key"])
+        accounts.finish_artifact_delete(row["id"])
+
+        gone = client.get("/v1/models/model-1/download?format=stl")
+        assert gone.status_code == 410
+        assert b"stl bytes" not in gone.content
+
+    def test_a_missing_stored_file_falls_back_rather_than_failing(
+        self, app, client, files, accounts
+    ):
+        """A storage hiccup must not lose a model the bundle directory still
+        has."""
+        signup(client)
+        finish_build(app, client, "model-1", files)
+        user = accounts.get_user_by_email("maker@example.com")
+        # Recorded as present, but never actually written to storage.
+        accounts.record_artifact("model-1", "stl", "models/model-1/stl", user_id=user["id"])
+        response = client.get("/v1/models/model-1/download?format=stl")
+        assert response.status_code == 200
+        assert response.content == b"stl bytes"
+
+    def test_a_closed_account_loses_access_immediately(
+        self, app, client, files, accounts
+    ):
+        signup(client)
+        finish_build(app, client, "model-1", files)
+        assert client.get("/v1/models/model-1/download?format=stl").status_code == 200
+        accounts.close_account(accounts.get_user_by_email("maker@example.com")["id"])
+        assert client.get("/v1/models/model-1/download?format=stl").status_code == 401
+        assert client.get("/v1/auth/me").status_code == 401
