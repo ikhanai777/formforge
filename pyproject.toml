@@ -81,6 +81,11 @@ testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [
     "slow: exercises the CAD kernel and takes seconds",
+    # Everything under tests/integration. They are collected by the normal run
+    # and skip themselves unless the matching FORMFORGE_IT_* flag and
+    # credentials are both present -- visible rather than hidden, so nobody
+    # assumes a contract is covered when it has never run.
+    "integration: talks to a real external service; opt-in, never in CI",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning:trimesh.*",

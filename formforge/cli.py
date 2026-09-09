@@ -82,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_artifacts(subparsers)
     _add_outbox(subparsers)
     _add_preflight(subparsers)
+    _add_backup(subparsers)
 
     args = parser.parse_args(argv)
     return args.handler(args)
@@ -1362,6 +1363,170 @@ def _cmd_preflight(args) -> int:
     # deployment that is not finished, which is a different thing from one that
     # is wrong, and a CI gate should be able to tell them apart.
     return 1 if report.failed else 0
+
+
+def _add_backup(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "backup", help="back up and restore the accounts database",
+        description=(
+            "The ledger, the billing events and the identities -- the rows "
+            "that cannot be rebuilt from source.py and params.json. Backends "
+            "are detected from FORMFORGE_ACCOUNTS_DB: SQLite gets an online "
+            "snapshot in a tar.gz, PostgreSQL gets pg_dump -Fc. Restore never "
+            "runs without --confirm."
+        ),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    create = sub.add_parser("create", help="write a backup archive")
+    create.add_argument(
+        "output", nargs="?",
+        help="archive path (default: backups/<timestamp>.tar.gz or .dump)",
+    )
+    create.set_defaults(handler=_cmd_backup_create)
+
+    verify = sub.add_parser(
+        "verify", help="open an archive and check it is usable",
+        description=(
+            "Do this on a schedule. An unverified backup is a belief, and the "
+            "moment you find out is the moment you needed it."
+        ),
+    )
+    verify.add_argument("archive")
+    verify.set_defaults(handler=_cmd_backup_verify)
+
+    restore = sub.add_parser(
+        "restore", help="restore from an archive (destructive)",
+        description=(
+            "Refuses without --confirm. For SQLite the current database is "
+            "moved aside rather than deleted; for PostgreSQL the objects in "
+            "the dump are dropped and recreated, so take a backup first."
+        ),
+    )
+    restore.add_argument("archive")
+    restore.add_argument("--confirm", action="store_true",
+                         help="required: this overwrites the live database")
+    restore.set_defaults(handler=_cmd_backup_restore)
+
+    check = sub.add_parser(
+        "check", help="post-restore validation: read through the real store",
+        description=(
+            "Opens the database the way the application does -- migrations, "
+            "views and all -- so a schema the app cannot use fails here rather "
+            "than on the first request."
+        ),
+    )
+    check.set_defaults(handler=_cmd_backup_check)
+
+
+def _backup_target() -> tuple[str, bool]:
+    from .config import Settings
+
+    settings = Settings.from_env()
+    return settings.accounts_db, settings.accounts_is_postgres
+
+
+def _cmd_backup_create(args) -> int:
+    from datetime import datetime, timezone
+
+    from .backup import BackupError, backup_local, backup_postgres
+
+    target, is_postgres = _backup_target()
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    suffix = ".dump" if is_postgres else ".tar.gz"
+    output = Path(args.output) if args.output else Path("backups") / f"{stamp}{suffix}"
+
+    try:
+        if is_postgres:
+            path = backup_postgres(target, output)
+            print(f"wrote {path} ({path.stat().st_size:,} B) from PostgreSQL")
+            print("verify it with: formforge backup verify " + str(path))
+        else:
+            info = backup_local(target, output)
+            print(f"wrote {info.path} ({info.path.stat().st_size:,} B)")
+            print(f"  {info.summary}")
+    except BackupError as exc:
+        print(_warn(str(exc)))
+        return 1
+    return 0
+
+
+def _cmd_backup_verify(args) -> int:
+    from .backup import (
+        BackupError,
+        migration_compatibility,
+        verify_backup,
+        verify_postgres_dump,
+    )
+
+    path = Path(args.archive)
+    try:
+        if path.suffix == ".dump":
+            tables = verify_postgres_dump(path)
+            print(f"{path.name} is a readable pg_dump archive")
+            print(f"  {len(tables)} table(s): {', '.join(tables)}")
+            missing = [t for t in ("users", "credit_ledger") if t not in tables]
+            if missing:
+                print(_warn(f"  missing critical table(s): {', '.join(missing)}"))
+                return 1
+            return 0
+
+        info = verify_backup(path)
+        print(f"{path.name} is a usable FormForge backup")
+        print(f"  taken       {info.created_at}")
+        print(f"  by          formforge {info.formforge_version}")
+        print(f"  revisions   {', '.join(info.revisions) or 'none'}")
+        for table, count in info.rows.items():
+            print(f"  {table:20s} {count:>8,} row(s)")
+        compatible, reason = migration_compatibility(info)
+        print(("  " if compatible else _warn("  ")) + reason)
+        return 0 if compatible else 1
+    except BackupError as exc:
+        print(_warn(str(exc)))
+        return 1
+
+
+def _cmd_backup_restore(args) -> int:
+    from .backup import BackupError, restore_local, restore_postgres
+
+    target, is_postgres = _backup_target()
+    if not args.confirm:
+        where = "the PostgreSQL database" if is_postgres else target
+        print(_warn(f"this would overwrite {where}."))
+        print("Nothing done. Re-run with --confirm once you are sure, and take "
+              "a `formforge backup create` of the current state first.")
+        return 1
+
+    try:
+        if is_postgres:
+            restore_postgres(target, args.archive, confirm=True)
+            print("pg_restore finished")
+        else:
+            info = restore_local(args.archive, target, confirm=True)
+            print(f"restored {info.summary}")
+    except BackupError as exc:
+        print(_warn(str(exc)))
+        return 1
+    print("now run: formforge backup check")
+    return 0
+
+
+def _cmd_backup_check(args) -> int:
+    from .backup import BackupError, post_restore_check
+
+    target, _ = _backup_target()
+    try:
+        result = post_restore_check(target)
+    except BackupError as exc:
+        print(_warn(str(exc)))
+        return 1
+    for key, value in result.items():
+        printable = ", ".join(value) if isinstance(value, list) else f"{value:,}"
+        print(f"  {key:24s} {printable}")
+    if result["users"] == 0:
+        print(_warn("no users. If that is not what you restored, stop here."))
+        return 1
+    return 0
 
 
 def _add_outbox(subparsers) -> None:
