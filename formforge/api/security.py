@@ -30,10 +30,17 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..accounts import plans
+from ..config import Settings
 
 # Set on a development box serving plain HTTP. Off by default: a session cookie
 # without Secure is one downgraded request away from being someone else's.
-COOKIE_INSECURE = os.environ.get("FORMFORGE_COOKIE_INSECURE") == "1"
+# Production refuses to start with this on -- see config.Settings.problems.
+#
+# Read through `from_env` rather than `load` because this runs at import: a
+# module that cannot be imported when a *production* setting is missing is a
+# module that cannot be imported by the CLI either. Validation belongs at
+# startup, which is where `create_app` does it.
+COOKIE_INSECURE = not Settings.from_env().cookie_secure
 COOKIE_NAME = "formforge_session"
 
 # Matches auth.SESSION_TTL. The cookie should not outlive the session it names,

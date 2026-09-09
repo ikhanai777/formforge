@@ -38,7 +38,6 @@ one implementation of `spend` to be right about.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,10 +58,18 @@ from .dialect import Dialect, new_id, open_dialect, to_iso
 
 # One value selects the backend: a Postgres DSN or a SQLite path. Two settings
 # that can disagree about which database is live is a class of outage.
-DEFAULT_TARGET = os.environ.get(
-    "FORMFORGE_ACCOUNTS_DB",
-    os.environ.get("FORMFORGE_DB", str(Path.home() / ".formforge" / "formforge.db")),
-)
+#
+# Resolved through `Settings.from_env()` rather than read here, so there is one
+# place that knows what the default is. `from_env` never validates and never
+# raises, which matters because this module is imported by the CLI, where a
+# production-only requirement must not be a failure to import.
+
+
+def _default_target() -> str:
+    from ..config import Settings
+
+    return Settings.from_env().accounts_db
+
 
 REASONS = frozenset({"grant", "purchase", "spend", "refund", "expiry", "adjustment"})
 PLAN_STATUSES = frozenset({"active", "past_due", "cancelled"})
@@ -125,7 +132,7 @@ class AccountStore:
 
     def __init__(self, target: Path | str | None = None, *, dialect: Dialect | None = None):
         self._db = dialect or open_dialect(
-            target if target is not None else DEFAULT_TARGET
+            target if target is not None else _default_target()
         )
         self.backend = self._db.name
         self._db.migrate()

@@ -69,6 +69,7 @@ except ImportError:  # pragma: no cover - optional dependency
     BaseModel = object  # type: ignore[assignment,misc]
 
 from ..accounts import InsufficientCredits, plans
+from ..config import ConfigError, Mode, Settings
 from ..bundle import write_bundle
 from ..dfm import DEFAULT_PROFILE_ID, PROFILES
 from ..llm import build_client
@@ -79,7 +80,7 @@ from ..slicer import slice_model
 from ..storage import LINK_TTL_SECONDS, StorageError, sign_download, verify_download
 from ..store import PRINT_ISSUES, Store
 
-STORE_DIR = Path(os.environ.get("FORMFORGE_STORE", Path.home() / ".formforge" / "models"))
+STORE_DIR = Settings.from_env().model_dir
 
 # How many events to retain per job for a client that connects late. A loop
 # emits well under this, so a client that connects after the run finished still
@@ -242,6 +243,7 @@ def create_app(
     allow_unsafe_sandbox: bool = False,
     accounts: Any = None,
     billing_provider: Any = None,
+    settings: Settings | None = None,
 ):
     """Build the FastAPI application.
 
@@ -261,7 +263,18 @@ def create_app(
             "'formforge[api]'` to run the HTTP gateway."
         )
 
-    store = Path(store_dir or STORE_DIR)
+    _settings = settings or Settings.from_env()
+    if _settings.mode.is_deployed:
+        # A deployed mode validates at startup. Production raises; staging
+        # reports and continues, because blocking a staging box on a missing
+        # origin allowlist helps nobody.
+        problems = _settings.problems()
+        if problems and _settings.mode is Mode.PRODUCTION:
+            raise ConfigError("refusing to start: " + "; ".join(problems))
+        for problem in problems:
+            log.warning("configuration: %s", problem)
+
+    store = Path(store_dir or _settings.model_dir)
     store.mkdir(parents=True, exist_ok=True)
     templates = registry or TemplateRegistry.load(strict=False)
     sandbox = GeometrySandbox(keep_workdir=True)
@@ -308,10 +321,12 @@ def create_app(
     # -- accounts (only when this deployment is metered) ----------------
     metered = accounts is not None
     # Signs download links. Generated per process when unset, which means a
-    # restart invalidates outstanding links -- acceptable for something that
-    # lives five minutes, and much better than shipping a default that every
-    # deployment shares. Set it explicitly to run more than one worker.
-    _link_secret = os.environ.get("FORMFORGE_LINK_SECRET") or uuid.uuid4().hex
+    # restart invalidates outstanding links and a second worker rejects the
+    # first's -- acceptable on a laptop for something that lives five minutes,
+    # and an outage in a deployment. `Settings.problems()` reports it and
+    # production refuses to start without it, so the fallback is only ever
+    # reached locally.
+    _link_secret = _settings.link_secret.reveal() or uuid.uuid4().hex
     if metered:
         from .accounts_router import build_accounts_router
         from .security import COOKIE_NAME

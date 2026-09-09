@@ -281,9 +281,10 @@ def open_storage(target: str | None = None) -> Storage:
     rather than a driver name plus a location, for the same reason the account
     store takes one: two settings can disagree about where the data is.
     """
-    target = target or os.environ.get(
-        "FORMFORGE_ARTIFACTS", str(Path.home() / ".formforge" / "artifacts")
-    )
+    if target is None:
+        from .config import Settings
+
+        target = Settings.from_env().artifacts
     if target.startswith("s3://"):
         rest = target[len("s3://"):]
         bucket, _, prefix = rest.partition("/")
