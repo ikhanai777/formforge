@@ -76,6 +76,11 @@ def main(argv: list[str] | None = None) -> int:
     _add_stats(subparsers)
     _add_feedback(subparsers)
     _add_doctor(subparsers)
+    _add_bootstrap(subparsers)
+    _add_serve(subparsers)
+    _add_account(subparsers)
+    _add_artifacts(subparsers)
+    _add_outbox(subparsers)
 
     args = parser.parse_args(argv)
     return args.handler(args)
@@ -973,6 +978,383 @@ def _cmd_doctor(args) -> int:
                 "FORMFORGE_SANDBOX_RUNTIME=gvisor in production."
             )
         )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Operator commands
+# ---------------------------------------------------------------------------
+# A CLI rather than an HTTP admin panel, deliberately. An authenticated admin
+# endpoint is a second privilege tier, a second auth path and a permanent
+# target on the public surface; a command against the same database needs none
+# of that and is enough for one operator. Revisit when there is a support team.
+#
+# Everything here reaches the account store directly. There is no way to run it
+# without already having the database, which is the access control.
+def _accounts():
+    from .accounts import AccountStore
+
+    return AccountStore()
+
+
+def _add_bootstrap(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "bootstrap",
+        help="prepare a local install: directories, database, migrations",
+        description=(
+            "Everything a clean clone needs before it can serve a request. "
+            "Safe to re-run: migrations are recorded and directories are made "
+            "only if absent."
+        ),
+    )
+    parser.add_argument(
+        "--demo-user", metavar="EMAIL",
+        help="create an account and print a generated password",
+    )
+    parser.set_defaults(handler=_cmd_bootstrap)
+
+
+def _cmd_bootstrap(args) -> int:
+    import secrets
+
+    from .accounts import DuplicateEmail
+    from .accounts.email import open_mailer
+    from .config import Settings
+
+    settings = Settings.from_env()
+    print(f"mode: {settings.mode.value}")
+
+    for label, path in (
+        ("models", settings.model_dir),
+        ("artifacts", None if settings.artifacts.startswith("s3://")
+                      else Path(settings.artifacts)),
+        ("outbox", settings.email_outbox),
+    ):
+        if path is None:
+            print(f"  {label:10s} s3, nothing to create")
+            continue
+        path.mkdir(parents=True, exist_ok=True)
+        print(f"  {label:10s} {path}")
+
+    store = _accounts()
+    print(f"  database   {settings.accounts_db} ({store.backend})")
+    print(f"  migrations applied: {', '.join(_applied(store)) or 'none'}")
+
+    if args.demo_user:
+        password = secrets.token_urlsafe(18)
+        try:
+            user = store.create_user(args.demo_user, password)
+        except DuplicateEmail:
+            print(f"\n  {args.demo_user} already exists; leaving it alone")
+        else:
+            # Printed once, to a terminal, never logged. The alternative is a
+            # fixed default password in a repo, which is how a demo account
+            # becomes a production account.
+            print(f"\n  demo account: {user['email']}")
+            print(f"  password:     {password}")
+            print("  (shown once, not stored anywhere else)")
+
+    mailer = open_mailer(settings)
+    print(f"\nemail: {mailer.name}", end="")
+    print(f" -> {settings.email_outbox}" if mailer.name == "outbox" else "")
+    problems = store and settings.problems()
+    if problems and settings.mode.is_deployed:
+        print("\nconfiguration problems:")
+        for problem in problems:
+            print(f"  - {problem}")
+    print("\nNext: formforge serve      (or: python -m pytest tests/ -q)")
+    return 0
+
+
+def _applied(store) -> list[str]:
+    with store._db.reader() as conn:
+        rows = conn.execute("SELECT id FROM schema_migrations ORDER BY id").fetchall()
+    return [dict(r)["id"] for r in rows]
+
+
+def _add_serve(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "serve", help="run the HTTP gateway",
+        description="Starts uvicorn. Accounts are off unless --accounts is given.",
+    )
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--accounts", action="store_true",
+                        help="enable signup, sessions, credits and billing")
+    parser.add_argument("--reload", action="store_true")
+    parser.set_defaults(handler=_cmd_serve)
+
+
+def _cmd_serve(args) -> int:
+    try:
+        import uvicorn
+    except ImportError:
+        print(_warn("uvicorn is not installed. pip install 'formforge[api]'"))
+        return 1
+    from .api.app import create_app
+    from .config import Settings
+    from .logs import configure
+
+    configure()
+    settings = Settings.from_env()
+    # Binding to localhost by default: a development server that defaults to
+    # 0.0.0.0 is one `--host` away from being on a hotel network.
+    app = create_app(accounts=_accounts() if args.accounts else None, settings=settings)
+    print(f"http://{args.host}:{args.port}  mode={settings.mode.value} "
+          f"accounts={'on' if args.accounts else 'off'}")
+    uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
+    return 0
+
+
+def _add_account(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "account", help="inspect and manage one account",
+        description="The operator's window onto an account, its credits and its history.",
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    show = sub.add_parser("show", help="plan, balance, ledger and audit trail")
+    show.add_argument("email")
+    show.set_defaults(handler=_cmd_account_show)
+
+    create = sub.add_parser("create", help="create an account")
+    create.add_argument("email")
+    create.add_argument("--plan", default="free", choices=("free", "maker", "studio"))
+    create.set_defaults(handler=_cmd_account_create)
+
+    reset = sub.add_parser(
+        "reset-password", help="set a new password and sign it out everywhere"
+    )
+    reset.add_argument("email")
+    reset.set_defaults(handler=_cmd_account_reset)
+
+    close = sub.add_parser("close", help="soft close: refuse logins, keep the ledger")
+    close.add_argument("email")
+    close.set_defaults(handler=_cmd_account_close)
+
+    reopen = sub.add_parser("reopen", help="undo a close")
+    reopen.add_argument("email")
+    reopen.set_defaults(handler=_cmd_account_reopen)
+
+    grant = sub.add_parser("grant", help="add credits by hand (recorded in the ledger)")
+    grant.add_argument("email")
+    grant.add_argument("credits", type=int)
+    grant.add_argument("--note", default="operator grant")
+    grant.set_defaults(handler=_cmd_account_grant)
+
+
+def _require_account(store, email: str):
+    user = store.get_user_by_email(email)
+    if user is None:
+        print(_warn(f"no account for {email}"))
+        raise SystemExit(1)
+    return user
+
+
+def _cmd_account_show(args) -> int:
+    store = _accounts()
+    user = _require_account(store, args.email)
+    account = store.account(user["id"])
+    print(f"{account['email']}")
+    print(f"  plan       {account['plan']} ({account['plan_status']})")
+    print(f"  credits    {account['balance']}")
+    print(f"  created    {user['created_at']}")
+    if user.get("closed_at"):
+        print(_warn(f"  CLOSED     {user['closed_at']}"))
+    print(f"  billing id {user.get('billing_customer_id') or '-'}")
+
+    print("\n  ledger")
+    for entry in store.ledger(user["id"], limit=15):
+        model = f"  {entry.model_id}" if entry.model_id else ""
+        print(f"    {entry.created_at}  {entry.reason:11s} {entry.delta:+4d}{model}")
+
+    trail = store.audit_trail(user["id"], limit=10)
+    if trail:
+        print("\n  audit")
+        for row in trail:
+            print(f"    {row['created_at']}  {row['action']:22s} {row['actor']}")
+    return 0
+
+
+def _cmd_account_create(args) -> int:
+    import secrets
+
+    from .accounts import DuplicateEmail
+
+    store = _accounts()
+    password = secrets.token_urlsafe(18)
+    try:
+        user = store.create_user(args.email, password, plan=args.plan)
+    except DuplicateEmail:
+        print(_warn(f"{args.email} already has an account"))
+        return 1
+    store.audit("account.created", user_id=user["id"], actor="operator",
+                detail={"plan": args.plan})
+    print(f"created {user['email']} on {args.plan}")
+    print(f"password: {password}")
+    print("(shown once)")
+    return 0
+
+
+def _cmd_account_reset(args) -> int:
+    """Recover a locked-out account without email.
+
+    The path an operator takes when the mail never arrives, and the reason a
+    missing password-reset provider is survivable rather than fatal.
+    """
+    import secrets
+
+    store = _accounts()
+    user = _require_account(store, args.email)
+    password = secrets.token_urlsafe(18)
+    killed = store.reset_password(user["id"], password)
+    store.audit("password.reset", user_id=user["id"], actor="operator",
+                detail={"sessions_revoked": killed})
+    print(f"new password for {user['email']}: {password}")
+    print(f"{killed} session(s) revoked. Shown once; hand it over out of band.")
+    return 0
+
+
+def _cmd_account_close(args) -> int:
+    store = _accounts()
+    user = _require_account(store, args.email)
+    killed = store.close_account(user["id"], actor="operator")
+    print(f"closed {user['email']}; {killed} session(s) revoked")
+    print("The credit ledger is kept -- it is a financial record. "
+          "Use `account reopen` to undo.")
+    return 0
+
+
+def _cmd_account_reopen(args) -> int:
+    store = _accounts()
+    user = _require_account(store, args.email)
+    store.reopen_account(user["id"], actor="operator")
+    print(f"reopened {user['email']}")
+    return 0
+
+
+def _cmd_account_grant(args) -> int:
+    store = _accounts()
+    user = _require_account(store, args.email)
+    entry = store.grant(user["id"], args.credits, note=args.note)
+    store.audit("credits.granted", user_id=user["id"], actor="operator",
+                detail={"credits": args.credits, "note": args.note})
+    print(f"granted {entry.delta:+d}; balance is now {store.balance(user['id'])}")
+    return 0
+
+
+def _add_artifacts(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "artifacts", help="inspect and clean up generated files",
+        description=(
+            "Retention is OFF unless FORMFORGE_RETENTION_DAYS is set above "
+            "zero, and even then nothing is deleted without `sweep --confirm`."
+        ),
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+
+    show = sub.add_parser("show", help="what exists for one model")
+    show.add_argument("model_id")
+    show.set_defaults(handler=_cmd_artifacts_show)
+
+    mark = sub.add_parser("mark", help="mark one model's files for deletion (reversible)")
+    mark.add_argument("model_id")
+    mark.set_defaults(handler=_cmd_artifacts_mark)
+
+    sweep = sub.add_parser(
+        "sweep", help="apply the retention policy",
+        description="Lists candidates. Deletes nothing without --confirm.",
+    )
+    sweep.add_argument("--confirm", action="store_true",
+                       help="actually delete the bytes of everything already marked")
+    sweep.set_defaults(handler=_cmd_artifacts_sweep)
+
+
+def _cmd_artifacts_show(args) -> int:
+    store = _accounts()
+    rows = store.artifacts_for(args.model_id)
+    if not rows:
+        print(f"no artifacts recorded for {args.model_id}")
+        return 0
+    for row in rows:
+        print(f"  {row['fmt']:7s} {row['status']:15s} "
+              f"{row['bytes']:>10,} B  {row['storage_key']}")
+    return 0
+
+
+def _cmd_artifacts_mark(args) -> int:
+    store = _accounts()
+    marked = store.mark_artifacts(args.model_id, actor="operator")
+    print(f"marked {marked} artifact(s) for {args.model_id}")
+    print("Nothing is deleted yet. `artifacts sweep --confirm` removes the bytes.")
+    return 0
+
+
+def _cmd_artifacts_sweep(args) -> int:
+    from .config import Settings
+    from .storage import open_storage
+
+    settings = Settings.from_env()
+    store = _accounts()
+    storage = open_storage(settings.artifacts)
+
+    if settings.retention_days <= 0:
+        print("retention is off (FORMFORGE_RETENTION_DAYS=0); nothing will be marked")
+    else:
+        stale = store.artifacts_older_than(settings.retention_days, only_unpaid=True)
+        print(f"{len(stale)} unpaid artifact(s) older than "
+              f"{settings.retention_days} days")
+        for row in stale:
+            store.mark_artifacts(row["model_id"], actor="operator:sweep")
+
+    pending = store.artifacts_pending_delete()
+    print(f"{len(pending)} artifact(s) marked for deletion")
+    if not args.confirm:
+        for row in pending[:20]:
+            print(f"  would delete  {row['model_id']} {row['fmt']}  {row['storage_key']}")
+        print("\nNothing deleted. Re-run with --confirm to remove the bytes.")
+        return 0
+
+    removed = 0
+    for row in pending:
+        try:
+            storage.delete(row["storage_key"])
+        except Exception as exc:
+            print(_warn(f"  could not delete {row['storage_key']}: {exc}"))
+            continue
+        # Idempotent: deleting something already gone is a success, and the
+        # row is what stops it being reconsidered next sweep.
+        store.finish_artifact_delete(row["id"])
+        removed += 1
+    print(f"deleted {removed} artifact(s). The records remain, marked deleted.")
+    return 0
+
+
+def _add_outbox(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "outbox", help="read the local email outbox",
+        description=(
+            "What a local run actually sent. Only meaningful when "
+            "FORMFORGE_EMAIL=outbox."
+        ),
+    )
+    parser.add_argument("-n", "--count", type=int, default=3)
+    parser.set_defaults(handler=_cmd_outbox)
+
+
+def _cmd_outbox(args) -> int:
+    from .accounts.email import OutboxMailer
+    from .config import Settings
+
+    settings = Settings.from_env()
+    box = OutboxMailer(settings.email_outbox)
+    messages = box.read_all()
+    if not messages:
+        print(f"outbox is empty ({settings.email_outbox})")
+        return 0
+    for message in messages[-args.count:]:
+        print(message)
+        print("-" * 60)
     return 0
 
 

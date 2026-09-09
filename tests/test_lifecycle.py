@@ -219,3 +219,119 @@ class TestMigrationsStillRepeatable:
                 "SELECT id FROM schema_migrations"
             ).fetchall()}
         assert applied == {"0001_accounts", "0002_password_resets", "0003_lifecycle"}
+
+
+class TestOperatorAndProbes:
+    """Health, readiness and the redaction that keeps them safe to expose."""
+
+    def test_liveness_says_nothing_about_a_metered_deployment(self, tmp_path, accounts):
+        pytest.importorskip("fastapi")
+        from fastapi.testclient import TestClient
+
+        from formforge.accounts import OfflineProvider
+        from formforge.api.app import create_app
+
+        app = create_app(
+            store_dir=tmp_path / "s", accounts=accounts,
+            billing_provider=OfflineProvider(secret="s"), allow_unsafe_sandbox=True,
+        )
+        with TestClient(app) as client:
+            body = client.get("/healthz").json()
+            assert set(body) == {"ok"}, "a probe from a stranger gets one bit"
+            assert client.get("/v1/meta").status_code == 404
+
+    def test_the_self_hosted_gateway_keeps_the_detail(self, tmp_path):
+        pytest.importorskip("fastapi")
+        from fastapi.testclient import TestClient
+
+        from formforge.api.app import create_app
+
+        app = create_app(store_dir=tmp_path / "s", allow_unsafe_sandbox=True)
+        with TestClient(app) as client:
+            body = client.get("/healthz").json()
+            assert "templates" in body and "sandbox" in body
+            meta = client.get("/v1/meta").json()
+            assert meta["config"]["mode"] == "local"
+
+    def test_readiness_reports_whether_not_what(self, tmp_path, accounts):
+        pytest.importorskip("fastapi")
+        from fastapi.testclient import TestClient
+
+        from formforge.accounts import OfflineProvider
+        from formforge.api.app import create_app
+
+        app = create_app(
+            store_dir=tmp_path / "s", accounts=accounts,
+            billing_provider=OfflineProvider(secret="s"), allow_unsafe_sandbox=True,
+        )
+        with TestClient(app) as client:
+            response = client.get("/readyz")
+            assert response.status_code == 200
+            assert response.json()["checks"]["accounts"] == "ok"
+            # No DSN, path or credential anywhere in the answer.
+            assert "dbname" not in response.text and "sqlite" not in response.text
+
+    def test_readiness_reports_503_when_a_dependency_is_down(self, tmp_path, accounts):
+        pytest.importorskip("fastapi")
+        from fastapi.testclient import TestClient
+
+        from formforge.accounts import OfflineProvider
+        from formforge.api.app import create_app
+
+        app = create_app(
+            store_dir=tmp_path / "s", accounts=accounts,
+            billing_provider=OfflineProvider(secret="s"), allow_unsafe_sandbox=True,
+        )
+        with TestClient(app) as client:
+            accounts.close()  # the database is now gone
+            response = client.get("/readyz")
+            assert response.status_code == 503
+            assert response.json()["checks"]["accounts"] == "unavailable"
+
+
+class TestLogsNeverCarrySecrets:
+    def test_a_field_named_password_is_redacted_whatever_its_value(self):
+        """The check pattern matching structurally cannot do: a real password
+        looks exactly like an ordinary string."""
+        from formforge.logs import scrub_fields
+
+        cleaned = scrub_fields({"password": "correct-horse-battery", "email": "a@b.com"})
+        assert cleaned["password"] == "***"
+        assert cleaned["email"] == "a@b.com"
+
+    @pytest.mark.parametrize(
+        "text,leak",
+        [
+            ("key=sk_live_51ABCdefGHI", "51ABCdefGHI"),
+            ("whsec_abc123def456", "abc123def456"),
+            ('{"password": "hunter2"}', "hunter2"),
+            ("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abcdefgh", "eyJhbGciOiJIUzI1NiJ9"),
+            ("https://app/reset?token=Zm9vYmFyYmF6cXV4", "Zm9vYmFyYmF6cXV4"),
+            ("AKIAIOSFODNN7EXAMPLE", "IOSFODNN7EXAMPLE"),
+        ],
+    )
+    def test_credentials_in_free_text_are_scrubbed(self, text, leak):
+        from formforge.logs import scrub
+
+        assert leak not in scrub(text)
+
+    def test_a_library_logging_a_secret_is_still_redacted(self, capsys):
+        """The filter is on the root logger precisely so it covers code that
+        never read this module."""
+        import io
+        import logging
+
+        from formforge.logs import configure
+
+        configure(json_output=True)
+        buffer = io.StringIO()
+        logging.getLogger().handlers[0].stream = buffer
+        logging.getLogger("some.third.party").warning("boom token=SUPERSECRETVALUE")
+        assert "SUPERSECRETVALUE" not in buffer.getvalue()
+
+    def test_nested_fields_are_scrubbed_too(self):
+        from formforge.logs import scrub_fields
+
+        cleaned = scrub_fields({"outer": {"secret": "abc", "fine": "yes"}})
+        assert cleaned["outer"]["secret"] == "***"
+        assert cleaned["outer"]["fine"] == "yes"

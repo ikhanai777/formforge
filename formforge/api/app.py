@@ -875,12 +875,26 @@ def create_app(
 
     @app.get("/healthz")
     async def health():
+        """Liveness, and dependency state on an unmetered deployment.
+
+        A load balancer polls this every few seconds from anywhere that can
+        reach the port. On a *metered* deployment that is a stranger, so the
+        answer narrows to the one bit a probe needs: template counts, sandbox
+        internals and store totals all describe the deployment to whoever
+        asked. Self-hosted, the person asking runs the thing, and the detail is
+        what makes the endpoint useful -- so it stays.
+
+        Readiness -- can it actually serve? -- is `/readyz`.
+        """
         totals = database.totals()
+        # Telemetry writes are swallowed by design so they can never fail a
+        # generation, which means a broken database is silent unless a health
+        # check looks for it. This is where it looks.
+        ok = totals["write_failures"] == 0
+        if metered:
+            return {"ok": ok}
         return {
-            # Telemetry writes are swallowed by design so they can never fail a
-            # generation, which means a broken database is silent unless a
-            # health check looks for it. This is where it looks.
-            "ok": totals["write_failures"] == 0,
+            "ok": ok,
             "templates": len(templates),
             "sandbox": sandbox.describe(),
             "model_client": engine.client.available,
@@ -889,6 +903,57 @@ def create_app(
                 "prints_reported": totals["prints_reported"],
                 "write_failures": totals["write_failures"],
             },
+        }
+
+    @app.get("/readyz")
+    async def ready():
+        """Readiness: can this process serve a request?
+
+        Checks the things whose absence makes the answer no. Reports *whether*,
+        never *what* -- a failing check says "accounts", not the DSN it could
+        not reach.
+
+        503 rather than 200-with-a-flag, so an orchestrator takes the instance
+        out of rotation instead of sending traffic at a broken one.
+        """
+        checks: dict[str, str] = {}
+        healthy = True
+        try:
+            database.totals()
+            checks["telemetry"] = "ok"
+        except Exception:
+            log.exception("readiness: the telemetry store did not answer")
+            checks["telemetry"] = "unavailable"
+            healthy = False
+        if metered:
+            try:
+                # A read that is guaranteed to miss: it proves the database
+                # answers without depending on any particular row existing.
+                accounts.get_user_by_email("readiness-probe@invalid")
+                checks["accounts"] = "ok"
+            except Exception:
+                log.exception("readiness: the account store did not answer")
+                checks["accounts"] = "unavailable"
+                healthy = False
+        checks["sandbox"] = "isolated" if sandbox.production_ready() else "not-isolated"
+        body = {"ok": healthy, "checks": checks}
+        return body if healthy else JSONResponse(body, status_code=503)
+
+    @app.get("/v1/meta")
+    async def meta():
+        """What this deployment is, for an operator rather than a probe.
+
+        `Settings.describe()` names modes and says whether each secret is set,
+        never what it is. Not served when metered: even that much describes
+        somebody else's deployment to a stranger, and an operator there has
+        the CLI.
+        """
+        _refuse_if_metered()
+        return {
+            "config": _settings.describe(),
+            "templates": len(templates),
+            "sandbox": sandbox.describe(),
+            "model_client": engine.client.available,
         }
 
     # -- helpers -------------------------------------------------------

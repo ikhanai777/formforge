@@ -330,7 +330,10 @@ formforge/
   policy.py       IP and safety screening, before any geometry
   registry.py     the template registry, matching and routing
   store.py        the tables that cannot be backfilled
-  accounts/       identities, sessions and the credit ledger (not yet wired up)
+  config.py       every setting, typed; production fails closed
+  logs.py         structured logging, and a filter that redacts credentials
+  storage.py      artifact storage: local filesystem or S3-compatible
+  accounts/       identities, sessions, credits, billing, password reset
   sandbox/        isolated execution and the in-sandbox runner
   validation/     the three tiers and the measurements behind them
   render/         numpy rasteriser, PNG encoder, section cuts
