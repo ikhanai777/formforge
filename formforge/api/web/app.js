@@ -151,6 +151,7 @@
     if (user) {
       nav.appendChild(el("a", { href: "/dashboard" }, "Dashboard"));
       nav.appendChild(el("a", { href: "/create" }, "Create"));
+      nav.appendChild(el("a", { href: "/studio" }, "Studio"));
       nav.appendChild(el("a", { href: "/generators" }, "Generators"));
       nav.appendChild(el("a", { href: "/account" }, "Account"));
       nav.appendChild(el("span", { class: "pill" }, user.credits + " credits"));

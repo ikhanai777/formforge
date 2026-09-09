@@ -131,6 +131,10 @@ POLICIES: tuple[RoutePolicy, ...] = (
     RoutePolicy("GET", "/v1/templates", Policy.PUBLIC, note="the catalogue is the product"),
     RoutePolicy("GET", "/v1/templates/{template_id}", Policy.PUBLIC,
                 note="template_id names a shipped template, not anybody's resource"),
+    RoutePolicy("POST", "/v1/templates/{template_id}/build", Policy.SESSION,
+                resource="template_id", consumes_credit=True,
+                note="builds a shipped template from parameters the caller "
+                     "chose; the id names a template, not anybody's model"),
     RoutePolicy("GET", "/v1/profiles", Policy.PUBLIC, note="printer profiles, static"),
     # Generators. The catalogue is public for the same reason the template
     # catalogue is: it is the product, and knowing that a "vase" generator
@@ -169,6 +173,8 @@ POLICIES: tuple[RoutePolicy, ...] = (
                 note="markup only; the data behind it needs a session"),
     RoutePolicy("GET", "/generators", Policy.PUBLIC,
                 note="markup only; the data behind it needs a session"),
+    RoutePolicy("GET", "/studio", Policy.PUBLIC,
+                note="markup only; its build button needs a session"),
     RoutePolicy("GET", "/models/{model_id}", Policy.PUBLIC,
                 note="markup only; identical for every id, and resolves none"),
     RoutePolicy("GET", "/forgot-password", Policy.PUBLIC, note="markup only"),

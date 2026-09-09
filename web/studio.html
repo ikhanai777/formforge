@@ -6039,5 +6039,202 @@ new MutationObserver(paintTheme).observe(document.documentElement, {attributes: 
 paintTheme();
 useModel("mushroom");
 </script>
+
+<script>
+"use strict";
+/* =================================================================
+   13. Building it for real
+
+      Everything above draws the model in the browser: a port of the
+      template's build123d source, close enough to design against and
+      not the thing you print. This section is the bridge to the
+      kernel. When the studio is served by the FormForge API and you
+      are signed in, "Build for real" sends the exact parameters on the
+      sliders to `POST /v1/templates/{id}/build`, which runs the real
+      geometry in the sandbox, validates it, and hands back an owned
+      model with a watertight STL.
+
+      When the page is opened as a file, none of that is reachable and
+      the panel says so rather than showing a button that cannot work.
+      The preview exports above are untouched either way -- they are
+      honest about being the browser's approximation.
+
+      This is a separate <script> on purpose. The viewer needs three.js
+      from a CDN and the build path needs nothing at all, so a network
+      that cannot reach the CDN should cost you the 3D preview and not
+      the ability to build. A classic script stops at a throw; the next
+      one still runs.
+   ================================================================= */
+(function () {
+  "use strict";
+
+  const viewerUp = typeof window.THREE !== "undefined" && MODEL !== null;
+  if (!viewerUp) {
+    // A blank stage with no explanation reads as a broken product. Say what
+    // failed, and that the rest of the page still works.
+    const stage = document.querySelector(".stage");
+    const note = document.createElement("div");
+    note.style.cssText =
+      "position:absolute;inset:auto 14px 14px 14px;padding:12px 14px;border-radius:10px;" +
+      "background:var(--surface);border:1px solid var(--line);font-size:13px;color:var(--muted)";
+    note.textContent =
+      "The 3D preview needs three.js, which this browser could not load. " +
+      "Everything else on the page works, including building for real.";
+    if (stage) stage.appendChild(note);
+  }
+
+  const panel = document.createElement("section");
+  panel.className = "panel";
+  panel.id = "build-panel";
+  const controls = document.querySelector(".controls");
+  controls.insertBefore(panel, controls.lastElementChild);
+
+  function el(tag, attrs, text) {
+    const node = document.createElement(tag);
+    if (attrs) for (const k in attrs) {
+      if (k === "class") node.className = attrs[k]; else node.setAttribute(k, attrs[k]);
+    }
+    if (text != null) node.textContent = text;
+    return node;
+  }
+  function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+
+  async function api(path, options) {
+    const opts = Object.assign({ credentials: "same-origin" }, options || {});
+    opts.headers = Object.assign({ accept: "application/json" }, opts.headers || {});
+    if (opts.body !== undefined && typeof opts.body !== "string") {
+      opts.headers["content-type"] = "application/json";
+      opts.body = JSON.stringify(opts.body);
+    }
+    const response = await fetch(path, opts);
+    let payload = null;
+    try { payload = await response.json(); } catch (_) { payload = null; }
+    if (!response.ok) {
+      const error = new Error((payload && payload.detail) || `Request failed (${response.status}).`);
+      error.status = response.status;
+      throw error;
+    }
+    return payload;
+  }
+
+  let account = null;
+
+  function heading() {
+    const h = el("h2", null, "Build it for real");
+    const right = el("span", null, account ? account.credits + " credits" : "");
+    h.appendChild(right);
+    return h;
+  }
+
+  function render() {
+    clear(panel);
+    panel.appendChild(heading());
+
+    if (account === null) {
+      panel.appendChild(el("p", { class: "footnote" },
+        "The model above is drawn in the browser from a port of the template's source \u2014 close enough to design against, not the thing you print. Sign in to run these exact parameters through the CAD kernel and get a validated, watertight STL."));
+      const row = el("div", { class: "btnrow" });
+      const signin = el("a", { class: "btn btn-primary", href: "/login?next=/studio" }, "Sign in");
+      const signup = el("a", { class: "btn", href: "/signup" }, "Create account");
+      row.appendChild(signin);
+      row.appendChild(signup);
+      panel.appendChild(row);
+      return;
+    }
+
+    panel.appendChild(el("p", { class: "footnote" },
+      "Sends the parameters on the sliders to the kernel. One credit per model that builds; a build that fails costs nothing."));
+    const row = el("div", { class: "btnrow" });
+    const go = el("button", { class: "btn btn-primary", type: "button" }, "Build for real");
+    go.addEventListener("click", () => build(go));
+    row.appendChild(go);
+    row.appendChild(el("a", { class: "btn", href: "/dashboard" }, "Your models"));
+    panel.appendChild(row);
+    const out = el("div", { id: "build-out" });
+    panel.appendChild(out);
+    if (account.credits <= 0) {
+      go.disabled = true;
+      out.appendChild(el("p", { class: "footnote" }, "No credits left, so nothing will build."));
+    }
+  }
+
+  async function build(button) {
+    const out = document.getElementById("build-out");
+    clear(out);
+    button.disabled = true;
+    const idle = button.textContent;
+    button.textContent = "Building\u2026";
+    out.appendChild(el("p", { class: "footnote" }, "Running the kernel. This takes a moment."));
+
+    if (!MODEL) {
+      clear(out);
+      out.appendChild(el("p", { class: "footnote" },
+        "The page did not finish loading, so there are no parameters to send. Reload and try again."));
+      button.disabled = false;
+      button.textContent = idle;
+      return;
+    }
+
+    let job;
+    try {
+      job = await api("/v1/templates/" + encodeURIComponent(MODEL.templateId) + "/build", {
+        method: "POST",
+        body: { params: paramsOnly() },
+      });
+    } catch (error) {
+      clear(out);
+      out.appendChild(el("p", { class: "footnote" }, error.message));
+      button.disabled = false;
+      button.textContent = idle;
+      if (typeof toast === "function") toast(error.message);
+      return;
+    }
+
+    const url = "/models/" + encodeURIComponent(job.model_id);
+    (function poll() {
+      api("/v1/models/" + encodeURIComponent(job.model_id)).then((model) => {
+        const status = model.status;
+        if (status === "queued" || status === "running") {
+          clear(out);
+          out.appendChild(el("p", { class: "footnote" },
+            [model.phase, model.step].filter(Boolean).join(" \u00b7 ") || "building\u2026"));
+          setTimeout(poll, 2000);
+          return;
+        }
+        button.disabled = false;
+        button.textContent = idle;
+        clear(out);
+        if (status === "ok") {
+          out.appendChild(el("p", { class: "footnote" },
+            "Built and validated. Open it to download the real STL."));
+          const link = el("a", { class: "btn btn-primary", href: url }, "Open the model");
+          out.appendChild(link);
+          if (typeof toast === "function") toast("Built. Open the model for the real STL.");
+          api("/v1/auth/me").then((me) => { account = me; }).catch(() => {});
+        } else {
+          out.appendChild(el("p", { class: "footnote" },
+            (model.error || "The build did not finish.") + " Nothing was charged."));
+          if (typeof toast === "function") toast("That build did not finish.");
+        }
+      }).catch((error) => {
+        button.disabled = false;
+        button.textContent = idle;
+        clear(out);
+        out.appendChild(el("p", { class: "footnote" }, error.message));
+      });
+    })();
+  }
+
+  // Served by the API or opened as a file? `/v1/auth/me` answers both
+  // questions at once: 401 means signed out, a network failure means there is
+  // no API behind this page at all.
+  api("/v1/auth/me").then((me) => { account = me; render(); }).catch((error) => {
+    if (error.status === 401) { account = null; render(); return; }
+    panel.appendChild(heading());
+    panel.appendChild(el("p", { class: "footnote" },
+      "This page is open as a file, so there is no FormForge server behind it. The exports above are the browser's own approximation. Serve it with `formforge serve --accounts` and open /studio to build these parameters for real."));
+  });
+})();
+</script>
 </body>
 </html>

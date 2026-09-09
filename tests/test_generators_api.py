@@ -239,3 +239,128 @@ class TestTheFreeGatewayStillWorks:
     def test_a_batch_needs_no_session(self, open_client):
         response = open_client.post("/v1/generators/vase", json={"count": 1})
         assert response.status_code == 202
+
+
+class TestBuildingATemplateFromParameters:
+    """`POST /v1/templates/{id}/build` — the third way in.
+
+    A prompt guesses, a generator samples, and this one is told. It is what
+    the studio's sliders need: somebody who has just dialled a cap to 66 mm
+    knows exactly what they want, and making them describe it in English and
+    hope the parser agrees would be a worse product.
+    """
+
+    def test_anonymous_is_refused(self, client):
+        assert client.post(
+            "/v1/templates/nature_mushroom/build", json={"params": {}}
+        ).status_code == 401
+
+    def test_an_unknown_template_is_404(self, client, owner):
+        assert client.post(
+            "/v1/templates/nope/build", json={"params": {}}
+        ).status_code == 404
+
+    def test_a_parameter_outside_the_tested_range_is_refused_by_name(
+        self, client, owner
+    ):
+        """Refused here, not four minutes into a build. The message is the
+        template's own, so it names the bound rather than saying 'invalid'."""
+        response = client.post(
+            "/v1/templates/nature_mushroom/build", json={"params": {"cap_d_mm": 9999}}
+        )
+        assert response.status_code == 422
+        assert "cap_d_mm" in response.json()["detail"]
+
+    def test_an_empty_balance_is_refused(self, client, app, owner):
+        accounts = app.state.formforge["accounts"]
+        accounts.spend(owner["id"], accounts.balance(owner["id"]), idempotency_key="drain")
+        assert client.post(
+            "/v1/templates/nature_mushroom/build", json={"params": {}}
+        ).status_code == 402
+
+    def test_only_the_changed_parameters_need_sending(self, client, owner):
+        """Merged against the template's defaults, so a client sends what it
+        changed rather than restating thirty sliders."""
+        assert client.post(
+            "/v1/templates/nature_mushroom/build", json={"params": {"cap_d_mm": 66}}
+        ).status_code == 202
+
+    @pytest.mark.slow
+    def test_the_parameters_sent_are_the_parameters_built(self, client, owner):
+        """The whole promise of a slider."""
+        wanted = {"cap_d_mm": 66, "cap_h_mm": 30, "stem_h_mm": 72, "wart_count": 22}
+        job = client.post(
+            "/v1/templates/nature_mushroom/build", json={"params": wanted}
+        ).json()
+        model_id = job["model_id"]
+        assert settle(client, [model_id])[model_id] == "ok"
+
+        model = client.get(f"/v1/models/{model_id}").json()
+        assert model["template_id"] == "nature_mushroom"
+        for key, value in wanted.items():
+            assert model["params"][key] == value, f"{key} was not what was asked for"
+        assert client.post(
+            f"/v1/models/{model_id}/download-link?format=stl"
+        ).status_code == 200
+
+
+class TestTheStudioIsWiredToTheBuildEndpoint:
+    """`web/studio.html` is the sliders. These check the join between it and
+    the API, which no unit test of either side would catch.
+
+    Not a browser test: the studio needs three.js from a CDN, and a headless
+    run of it would be testing the network. What is checked here is the part
+    that can rot silently -- a template renamed on one side of the join.
+    """
+
+    @pytest.fixture
+    def studio(self):
+        from pathlib import Path
+
+        return (Path(__file__).resolve().parents[1] / "web" / "studio.html").read_text()
+
+    def test_it_posts_to_the_build_endpoint(self, studio):
+        assert '"/v1/templates/" + encodeURIComponent(MODEL.templateId) + "/build"' in studio
+        assert "body: { params: paramsOnly() }" in studio
+
+    def test_every_template_it_names_is_a_real_one(self, studio, client):
+        """The join. A template renamed in the registry and not in the studio
+        is a build button that 404s, and nothing else would notice."""
+        import re
+
+        from formforge.registry import TemplateRegistry
+
+        registry = TemplateRegistry.load(strict=False)
+        named = set(re.findall(r'templateId:\s*"([^"]+)"', studio))
+        assert named, "the studio names no templates; the pattern has drifted"
+        for template_id in sorted(named):
+            assert template_id in registry, (
+                f"the studio's build button points at {template_id!r}, "
+                "which the registry does not have"
+            )
+
+    def test_the_build_endpoint_accepts_each_of_them(self, studio, client, owner):
+        """Defaults only -- enough to prove the route resolves and the
+        template validates, without running six builds."""
+        import re
+
+        for template_id in sorted(set(re.findall(r'templateId:\s*"([^"]+)"', studio))):
+            response = client.post(
+                f"/v1/templates/{template_id}/build", json={"params": {}}
+            )
+            assert response.status_code in (202, 402), (
+                f"{template_id}: {response.status_code} {response.text[:120]}"
+            )
+
+    def test_the_bridge_survives_the_viewer_failing(self, studio):
+        """The build path needs no CDN and the viewer needs three.js, so they
+        are separate scripts: a classic script stops at a throw, the next one
+        still runs. Found by a container that could not reach cdnjs, which is
+        also a train, an office proxy, and a bad afternoon."""
+        bridge = studio.index("13. Building it for real")
+        viewer = studio.index("THREE.WebGLRenderer")
+        between = studio[viewer:bridge]
+        assert "</script>" in between, (
+            "the build bridge shares a <script> with the viewer, so a CDN "
+            "failure would take both down"
+        )

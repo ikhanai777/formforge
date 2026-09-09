@@ -226,6 +226,14 @@ if FASTAPI_AVAILABLE:
     class ModifyRequest(BaseModel):
         param_changes: dict[str, Any]
 
+    class TemplateBuildRequest(BaseModel):
+        # Exact parameters, not a prompt and not a sample. This is what the
+        # studio's sliders produce, and what `formforge build --set k=v` has
+        # always been able to do from the command line.
+        params: dict[str, Any] = Field(default_factory=dict)
+        printer_profile: str = DEFAULT_PROFILE_ID
+        material: str = "PLA"
+
     class GeneratorRequest(BaseModel):
         # A generator samples parameters for a template; it does not take a
         # prompt. `count` is capped at the plan's balance below rather than
@@ -829,6 +837,60 @@ def create_app(
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
 
+    @app.post("/v1/templates/{template_id}/build", status_code=202)
+    async def build_template(
+        template_id: str,
+        request: TemplateBuildRequest,
+        background: BackgroundTasks,
+        http: Request,
+    ):
+        """Build a template from parameters somebody chose.
+
+        The third way in, beside a prompt and a generator, and the one the
+        studio needs: a person moving sliders already knows exactly what they
+        want, so asking them to describe it in English and hope the parser
+        agrees would be a worse product and a worse test of the geometry.
+
+        `formforge build <template> --set k=v` has done this from the command
+        line since the beginning. Everything here is the same call underneath.
+        """
+        owner = None
+        if metered:
+            user = _session_user(http)
+            if user is None:
+                raise HTTPException(status_code=401, detail="Not signed in.")
+            accounts.roll_to_current_period(user["id"])
+            if accounts.balance(user["id"]) < 1:
+                raise HTTPException(
+                    status_code=402,
+                    detail="You have no credits left. Add credits to keep building.",
+                )
+            owner = user["id"]
+
+        try:
+            template = templates.get(template_id)
+        except KeyError:
+            raise HTTPException(
+                status_code=404, detail=f"no template {template_id!r}"
+            ) from None
+
+        # Merged against the template's defaults first, so a caller may send
+        # only what they changed; then validated, so a value outside the range
+        # the geometry has been swept across is a 422 rather than a build that
+        # fails four minutes later.
+        merged = template.merge_params(request.params or {})
+        problems = template.validate_params(merged)
+        if problems:
+            raise HTTPException(status_code=422, detail="; ".join(problems))
+
+        job = jobs.create()
+        job.owner_id = owner
+        background.add_task(
+            _run_specimen, job, None, template, merged,
+            request.printer_profile, request.material, template_id,
+        )
+        return {"job_id": job.job_id, "model_id": job.model_id, "status": "queued"}
+
     # -- generators --------------------------------------------------------
     # A generator is a *parameter sampler over a template*, not a second build
     # pipeline: `solve` returns params, and those params go through the same
@@ -991,7 +1053,8 @@ def create_app(
         }
 
     async def _run_specimen(
-        job: Job, generator, template, params: dict, profile: str, material: str
+        job: Job, generator, template, params: dict, profile: str, material: str,
+        template_id: str | None = None,
     ) -> None:
         """One specimen, through the ordinary build path.
 
@@ -1008,7 +1071,14 @@ def create_app(
             loop.call_soon_threadsafe(jobs.publish, job, event.as_dict())
 
         job.status = "running"
-        prompt = f"{generator.name}: {generator.describe(params)}"
+        # A prompt is required by the signature and is recorded with the
+        # model; for a build that came from sliders there is no English
+        # description, so the template says what it is.
+        target = generator.template_id if generator else template_id
+        prompt = (
+            f"{generator.name}: {generator.describe(params)}" if generator
+            else f"{template.display_name} built from parameters"
+        )
         try:
             result = await asyncio.to_thread(
                 engine.generate,
@@ -1016,12 +1086,12 @@ def create_app(
                 printer_profile=profile,
                 material=material,
                 interactive=False,
-                template_id=generator.template_id,
+                template_id=target,
                 params=params,
                 on_event=on_event,
             )
         except Exception as exc:
-            log.exception("generator %s specimen %s failed", generator.name, job.job_id)
+            log.exception("build %s failed", job.job_id)
             job.status = "failed"
             job.error = f"{type(exc).__name__}: {exc}"
             jobs.publish(job, {"phase": "failed", "ok": False, "message": job.error})

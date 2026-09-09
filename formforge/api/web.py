@@ -28,6 +28,17 @@ from pathlib import Path
 
 WEB_ROOT = Path(__file__).parent / "web"
 
+# The studio is the one page that does not live beside the others. It is
+# `web/studio.html` at the repository root, where a test asserts its schemas
+# match the generators' and five documents point at it by that path, and it is
+# opened directly from disk as often as it is served. Moving it into the
+# package to save this lookup would break all of that to tidy one line.
+#
+# The cost is stated rather than hidden: an installed (non-editable) copy has
+# no repository root, so `/studio` answers 404 with that as the reason. Every
+# other page is packaged normally.
+STUDIO = Path(__file__).resolve().parents[2] / "web" / "studio.html"
+
 # path -> file. One shell per page rather than a client-side router: each page
 # is real semantic markup that works with the back button and reads correctly
 # in view-source, and a request for a page that does not exist still 404s.
@@ -78,6 +89,28 @@ def build_web_router():
 
     for path, filename in PAGES.items():
         router.add_api_route(path, _page(filename), methods=["GET"])
+
+    @router.get("/studio")
+    async def studio() -> Response:
+        """The parametric studio: live viewer, real sliders, real export.
+
+        Served from the same origin as everything else, so its "Build for
+        real" button carries the session cookie and the parameters on the
+        sliders go to `POST /v1/templates/{id}/build`.
+        """
+        if not STUDIO.exists():  # pragma: no cover - only on a packaged copy
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "the studio is served from web/studio.html in the "
+                    "repository, which this installation does not have"
+                ),
+            )
+        return FileResponse(
+            STUDIO,
+            media_type="text/html; charset=utf-8",
+            headers={"cache-control": "no-cache"},
+        )
 
     def _asset(name: str, media_type: str):
         async def asset() -> Response:
