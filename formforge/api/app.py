@@ -802,8 +802,24 @@ def create_app(
         }
 
     @app.post("/v1/feedback", status_code=201)
-    async def feedback(request: FeedbackRequest):
+    async def feedback(request: FeedbackRequest, http: Request):
+        """Record what happened to a print.
+
+        The model id arrives in the *body* rather than the path, which is why
+        this route was missed when every path-parameter route was gated: an
+        anonymous caller could write a `print_feedback` row against somebody
+        else's model, and the 201-versus-404 split answered whether a model id
+        existed. Both matter. `print_feedback` is the only ground truth this
+        system has for whether any of it prints and it cannot be
+        reconstructed, so a stranger able to write to it can quietly poison
+        the dataset every DFM constant will eventually be tuned from.
+
+        Ownership uses the same helper as every other model route, so the
+        refusal is the same 404 and this stops being an existence oracle.
+        """
         payload = request.model_dump()
+        if metered:
+            _require_owner(payload["model_id"], http)
         unknown = [i for i in payload.get("issues") or [] if i not in PRINT_ISSUES]
         if unknown:
             raise HTTPException(
