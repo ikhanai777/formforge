@@ -93,7 +93,8 @@ POLICIES: tuple[RoutePolicy, ...] = (
                 note="a build: runs the sandbox, so it costs a credit like any other"),
     RoutePolicy("POST", "/v1/models/{model_id}/slice", Policy.OWNER, "model_id"),
     RoutePolicy("GET", "/v1/models/{model_id}/download", Policy.OWNER, "model_id",
-                note="also requires a spend row for the model and a plan that allows the format"),
+                note="also requires a spend row for the model, and a plan "
+                     "that allows the format"),
     RoutePolicy("POST", "/v1/models/{model_id}/download-link", Policy.OWNER, "model_id",
                 note="entitlement checked at minting, so a token cannot exist for a file "
                      "its holder could not already fetch"),

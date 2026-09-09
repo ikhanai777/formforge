@@ -248,9 +248,9 @@ class TestClosedAndExpiredSessions:
     @pytest.mark.parametrize("entry", SESSIONED, ids=lambda e: f"{e.method} {e.path}")
     def test_an_expired_session_is_refused(self, client, app, owner, entry):
         accounts = app.state.formforge["accounts"]
-        from datetime import datetime, timezone
+        from datetime import UTC, datetime
 
-        past = accounts._db.stamp(datetime(2000, 1, 1, tzinfo=timezone.utc))
+        past = accounts._db.stamp(datetime(2000, 1, 1, tzinfo=UTC))
         with accounts._db.transaction() as conn:
             conn.execute(
                 accounts._db.translate(

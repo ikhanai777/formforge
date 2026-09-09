@@ -1522,7 +1522,12 @@ def _cmd_backup_check(args) -> int:
         print(_warn(str(exc)))
         return 1
     for key, value in result.items():
-        printable = ", ".join(value) if isinstance(value, list) else f"{value:,}"
+        if isinstance(value, list):
+            printable = ", ".join(value)
+        elif isinstance(value, int):
+            printable = f"{value:,}"
+        else:
+            printable = str(value)
         print(f"  {key:24s} {printable}")
     if result["users"] == 0:
         print(_warn("no users. If that is not what you restored, stop here."))

@@ -308,8 +308,14 @@ def post_restore_check(database: Path | str) -> dict[str, Any]:
     """
     from .accounts import AccountStore
 
+    # NOT `Path(database)`. `AccountStore` selects its backend from the shape
+    # of this value, and wrapping a DSN in a Path collapses
+    # `postgresql:///name` into a relative path -- which SQLite then *creates*,
+    # so the check answers confidently about an empty database nobody asked
+    # about. Found by running the command against a real PostgreSQL: it
+    # reported zero users for a database holding one.
     try:
-        store = AccountStore(Path(database))
+        store = AccountStore(database)
     except Exception as exc:  # noqa: BLE001 - any open failure is the finding
         raise BackupError(
             f"the restored database will not open: {type(exc).__name__}"
@@ -329,6 +335,9 @@ def post_restore_check(database: Path | str) -> dict[str, Any]:
                 "SELECT count(*) AS n FROM credit_balance"
             ).fetchone()
         return {
+            # First, because it is the answer to "did I just check the thing I
+            # meant to check".
+            "backend": store.backend,
             "users": dict(users)["n"],
             "ledger_entries": dict(ledger)["n"],
             "credits_outstanding": dict(ledger)["total"],

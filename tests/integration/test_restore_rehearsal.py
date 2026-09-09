@@ -80,6 +80,13 @@ class TestTheRehearsal:
 
         seeded = _seed(clean_disposable)
         before = post_restore_check(clean_disposable)
+        # Non-vacuous on purpose. An earlier version of `post_restore_check`
+        # wrapped the DSN in a Path, silently opened a new SQLite file, and
+        # answered zero for everything -- and `after == before` held, because
+        # both readings were wrong the same way.
+        assert before["backend"] == "postgres"
+        assert before["users"] == 1
+        assert before["ledger_entries"] >= 3
 
         archive = backup_postgres(clean_disposable, tmp_path / "rehearsal.dump")
         assert archive.stat().st_size > 0

@@ -292,6 +292,22 @@ class TestPostRestoreValidation:
         with pytest.raises(BackupError):
             post_restore_check(broken)
 
+    def test_it_names_the_backend_it_actually_opened(self, populated):
+        """"Did I check the thing I meant to check" is the first question, and
+        it used to have no answer: passing a PostgreSQL DSN through `Path()`
+        silently opened a new SQLite file and reported zero for everything."""
+        assert post_restore_check(populated)["backend"] == "sqlite"
+
+    def test_a_dsn_is_not_mangled_into_a_path(self, tmp_path, monkeypatch):
+        """The regression itself. `postgresql:///name` through `Path()`
+        collapses to a relative path SQLite is happy to create."""
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(BackupError):
+            post_restore_check("postgresql://nobody@127.0.0.1:1/nothing")
+        assert not list(tmp_path.iterdir()), (
+            "a failed check created a file; the DSN was treated as a path"
+        )
+
     def test_it_reports_the_numbers_an_operator_compares(self, populated):
         result = post_restore_check(populated)
         assert result["users"] == 1
