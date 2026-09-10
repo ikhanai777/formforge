@@ -130,8 +130,6 @@ def request_for(client, entry, model_id=OWNED_MODEL):
             body = {"param_changes": {}}
         elif path == "/v1/generate":
             body = {"prompt": "a vase"}
-        elif path.startswith("/v1/generators/"):
-            body = {"count": 1, "variant": "classic"}
         elif "checkout" in path:
             body = {"plan": "maker"}
         elif "reset/request" in path:
@@ -343,7 +341,7 @@ class TestCreditConsumingMutations:
         assert spenders == {
             "/v1/generate",
             "/v1/models/{model_id}/modify",
-            "/v1/generators/{name}",
+            "/v1/templates/{template_id}/build",
         }
 
 
