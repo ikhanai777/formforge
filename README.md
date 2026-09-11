@@ -40,6 +40,12 @@ is the wrong tool. Driving a CAD kernel instead gives you, for free:
 | Fillets, chamfers, threads | Native operations | Impossible |
 | Organic sculptural detail | Weak | Strong |
 
+("STEP export: No" for mesh generation means there is no *parametric* STEP --
+no analytic surfaces to write, because the mesh never had any. `formforge
+convert` (below) can still wrap an arbitrary mesh's triangles as planar BREP
+faces and hand you a STEP file that opens in AP214 tools, but it is faceted
+geometry dressed as STEP, not the real thing.)
+
 That last row is the honest weakness, and the mitigation is the hybrid path in
 `docs/architecture.md`: generated detail may only be booleaned onto a parametric
 base that owns all the functional geometry.
@@ -90,6 +96,7 @@ formforge generate "a hex planter for a 4in pot"
 formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
 formforge check model.stl --profile bambu_p1s_0.4 --category planter
 formforge render model.stl --out previews/
+formforge convert model.stl model.step           # wrap an existing mesh as a STEP file
 formforge rules --profile prusa_mk4_0.4          # the DFM rules being applied
 formforge stats                                  # what the recorded runs say
 formforge feedback <model-id> --failed --issue warping

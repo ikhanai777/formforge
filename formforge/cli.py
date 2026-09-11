@@ -5,6 +5,7 @@
     formforge templates --category planter
     formforge check model.stl --profile bambu_p1s_0.4 --category planter
     formforge render model.stl --out previews/
+    formforge convert model.stl model.step
     formforge doctor
 
 The generate command streams the loop as it happens rather than printing a
@@ -25,6 +26,7 @@ from typing import Any
 from . import __version__
 from .dfm import DEFAULT_PROFILE_ID, PROFILES, rules_block
 from .llm import build_client
+from .mesh_to_step import MAX_TRIANGLES, convert_stl_to_step
 from .orchestrator import Orchestrator
 from .registry import TemplateRegistry
 from .render import STANDARD_VIEWS, render_views
@@ -69,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     _add_check(subparsers)
     _add_render(subparsers)
     _add_slice(subparsers)
+    _add_convert(subparsers)
     _add_rules(subparsers)
     _add_stats(subparsers)
     _add_feedback(subparsers)
@@ -480,6 +483,62 @@ def _cmd_slice(args) -> int:
     if feedback:
         print()
         print(_warn(feedback))
+    return 0
+
+
+def _add_convert(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "convert", help="convert an STL mesh into a STEP (AP214) file"
+    )
+    parser.add_argument("mesh", help="input STL file")
+    parser.add_argument("step", help="output STEP file")
+    parser.add_argument(
+        "--input-unit",
+        default="mm",
+        choices=["mm", "cm", "m", "in", "ft"],
+        help="unit the STL's coordinates are already in (STL itself has none); "
+        "the STEP file is always written in mm",
+    )
+    parser.add_argument(
+        "--no-merge-coplanar",
+        action="store_true",
+        help="keep one BREP face per triangle instead of merging exactly-coplanar "
+        "neighbours (lossless; only affects file size)",
+    )
+    parser.add_argument(
+        "--max-triangles",
+        type=int,
+        default=None,
+        help=f"override the triangle-count guard (default: {MAX_TRIANGLES})",
+    )
+    parser.add_argument("--json", action="store_true")
+    parser.set_defaults(handler=_cmd_convert)
+
+
+def _cmd_convert(args) -> int:
+    try:
+        result = convert_stl_to_step(
+            args.mesh,
+            args.step,
+            input_unit=args.input_unit,
+            merge_coplanar=not args.no_merge_coplanar,
+            max_triangles=args.max_triangles or MAX_TRIANGLES,
+        )
+    except ValueError as exc:
+        if args.json:
+            print(json.dumps({"error": str(exc)}))
+        else:
+            print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps(result.as_dict(), indent=2))
+        return 0
+
+    print(_ok(result.summary_line()))
+    for warning in result.warnings:
+        print(_warn(f"  warning: {warning}"))
+    print(f"step: {result.output_path}")
     return 0
 
 
