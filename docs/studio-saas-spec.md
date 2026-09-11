@@ -53,6 +53,7 @@ but not backed by the real logic its production version needs.
 |---|---|---|
 | Sign up / log in | **Shipped** | Email + password against a real, persisted document store (Claude `db`). Full pages, or an inline modal triggered by an anonymous export attempt (§6). |
 | Studio — design & preview | **Shipped** | The actual `web/studio.html`, all six templates, mounted verbatim, open to signed-out visitors. Not a re-creation, not walled. |
+| Mesh color picker | **Shipped** | 8 swatches (default + 7 named colors) recolor the live Three.js material directly. Layered on top of the Studio's own fixed theme-tied color, not part of `web/studio.html` itself. |
 | STL / 3MF / JSON export | **Shipped** | Real files, via the `downloads` capability, triangulated from the live slider state. `.stl`/`.3mf` aren't on the capability's extension allowlist (`.json` is), so those two are wrapped in a `.zip` — the real extension the moment it's unzipped, no manual renaming. |
 | Dashboard, account page | **Shipped** | Reads the same user document written at signup. |
 | Credits balance | **Shipped** | 3 credits granted at signup; each STL/STEP/JSON export debits one, checked and persisted before the export runs. See §8. |
