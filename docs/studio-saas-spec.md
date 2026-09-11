@@ -53,7 +53,7 @@ but not backed by the real logic its production version needs.
 |---|---|---|
 | Sign up / log in | **Shipped** | Email + password against a real, persisted document store (Claude `db`). Full pages, or an inline modal triggered by an anonymous export attempt (§6). |
 | Studio — design & preview | **Shipped** | The actual `web/studio.html`, all six templates, mounted verbatim, open to signed-out visitors. Not a re-creation, not walled. |
-| STL / STEP / JSON export | **Shipped** | Real files, via the `downloads` capability, triangulated from the live slider state. `.stl`/`.py` aren't on the capability's extension allowlist (`.json` is), so those two are wrapped in a `.zip` — the real extension the moment it's unzipped, no manual renaming. |
+| STL / 3MF / JSON export | **Shipped** | Real files, via the `downloads` capability, triangulated from the live slider state. `.stl`/`.3mf` aren't on the capability's extension allowlist (`.json` is), so those two are wrapped in a `.zip` — the real extension the moment it's unzipped, no manual renaming. |
 | Dashboard, account page | **Shipped** | Reads the same user document written at signup. |
 | Credits balance | **Shipped** | 3 credits granted at signup; each STL/STEP/JSON export debits one, checked and persisted before the export runs. See §8. |
 | "Build for real" (CAD-kernel STL) | **Simulated** | Studio's own built-in panel; correctly reports "no server behind this page" rather than pretending. The preview export above is the real deliverable today. |
@@ -110,7 +110,7 @@ which is where a free tool actually needs a reason to create an account.
 2. **Design, free, no account.** Pick a template tab, move sliders, watch the live preview — identical to the offline file. Nothing here checks for a session.
 3. **Click any export button.** Signed in with a balance: proceeds straight to step 5. Signed out: the click is caught before the Studio's own handler ever runs, and a modal opens over the Studio asking to sign up or log in — "you'll get 3 credits to start."
 4. **Sign up or log in, inline.** Same `doSignup`/`doLogin` logic the full-page forms use, just rendered in the modal. On success the modal closes and the exact export click that triggered it replays automatically — no re-clicking Download.
-5. **Export.** Download STL, STEP script, or parameters JSON. One credit debited, persisted to `users`, delivered through `downloads`; nothing uploads anywhere.
+5. **Export.** Download STL, 3MF, or parameters JSON. One credit debited, persisted to `users`, delivered through `downloads`; nothing uploads anywhere. (STEP script was dropped from this surface — the Studio's own build123d-source export; 3MF is the more useful format for the maker/seller personas in §2, who print directly rather than edit in CAD.)
 
 ## 7. Data model
 
