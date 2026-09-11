@@ -1,11 +1,13 @@
 # FormForge Studio SaaS — specification (v1)
 
 **Status: prototype live, Phase 1 partially landed.** This describes a
-working product, not a proposal — a hosted, account-gated front door onto
-FormForge's six parametric generators, shipping today as a self-contained
-Claude Artifact. Password hashing and real credit metering are live; the
-per-account data isolation this spec originally called for is blocked on a
-platform capability this account doesn't have — see §9.
+working product, not a proposal — a front door onto FormForge's six
+parametric generators, shipping today as a self-contained Claude Artifact.
+The Studio itself is open to anyone; an account is only asked for at the
+point of export, via an inline modal (§6). Password hashing and real
+credit metering are live; the per-account data isolation this spec
+originally called for is blocked on a platform capability this account
+doesn't have — see §9.
 
 ## 1. Overview
 
@@ -49,8 +51,8 @@ but not backed by the real logic its production version needs.
 
 | Capability | State | Detail |
 |---|---|---|
-| Sign up / log in | **Shipped** | Email + password against a real, persisted document store (Claude `db`). |
-| Studio — design & preview | **Shipped** | The actual `web/studio.html`, all six templates, mounted verbatim. Not a re-creation. |
+| Sign up / log in | **Shipped** | Email + password against a real, persisted document store (Claude `db`). Full pages, or an inline modal triggered by an anonymous export attempt (§6). |
+| Studio — design & preview | **Shipped** | The actual `web/studio.html`, all six templates, mounted verbatim, open to signed-out visitors. Not a re-creation, not walled. |
 | STL / STEP / JSON export | **Shipped** | Real files, via the `downloads` capability, triangulated from the live slider state. |
 | Dashboard, account page | **Shipped** | Reads the same user document written at signup. |
 | Credits balance | **Shipped** | 3 credits granted at signup; each STL/STEP/JSON export debits one, checked and persisted before the export runs. See §8. |
@@ -92,20 +94,23 @@ together as a product — before that investment is made.
 
 | Route | Purpose |
 |---|---|
-| `/` (home) | Pitch, two CTAs: get started, sign in. |
-| `/signup` | Email, password, confirm. Grants 3 credits, opens the dashboard. |
-| `/login` | Email, password against the stored user document. |
+| `/` (home) | Pitch, two CTAs (get started, sign in), plus a direct link straight into the Studio — no account required to look. |
+| `/signup` | Email, password, confirm. Grants 3 credits, opens the dashboard. Also reachable mid-Studio-session as a modal (see §6). |
+| `/login` | Email, password against the stored user document. Also reachable as the same modal. |
 | `/dashboard` | Credits balance, member-since, the single "Go to Studio" CTA. |
-| `/studio` | The real Studio: template tabs, sliders, live 3D preview, export. |
+| `/studio` | The real Studio: template tabs, sliders, live 3D preview, export. Open to anyone, signed in or not. |
 | `/account` | Email, credits, join date. |
 
 ## 6. Core flow
 
-1. **Sign up.** Email + password validated client-side, written to `users`, 3 credits granted.
-2. **Land on the dashboard.** Balance and account age render from the same document just written.
-3. **Open the Studio.** First visit only: styles and scripts decode and mount; every later visit just toggles visibility, so slider state survives navigating away and back.
-4. **Design.** Pick a template tab, move sliders, watch the live preview — identical to the offline file.
-5. **Export.** Download STL, STEP script, or parameters JSON. Delivered through `downloads`; nothing uploads anywhere.
+The Studio itself carries no wall — the wall is on export, one click later,
+which is where a free tool actually needs a reason to create an account.
+
+1. **Land anywhere, open the Studio.** Home's "try the Studio" link, or a signed-in visitor's dashboard CTA, both lead to the same page. First visit only: styles and scripts decode and mount; every later visit just toggles visibility, so slider state survives navigating away and back.
+2. **Design, free, no account.** Pick a template tab, move sliders, watch the live preview — identical to the offline file. Nothing here checks for a session.
+3. **Click any export button.** Signed in with a balance: proceeds straight to step 5. Signed out: the click is caught before the Studio's own handler ever runs, and a modal opens over the Studio asking to sign up or log in — "you'll get 3 credits to start."
+4. **Sign up or log in, inline.** Same `doSignup`/`doLogin` logic the full-page forms use, just rendered in the modal. On success the modal closes and the exact export click that triggered it replays automatically — no re-clicking Download.
+5. **Export.** Download STL, STEP script, or parameters JSON. One credit debited, persisted to `users`, delivered through `downloads`; nothing uploads anywhere.
 
 ## 7. Data model
 
