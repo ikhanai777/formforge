@@ -1,8 +1,11 @@
 # FormForge Studio SaaS — specification (v1)
 
-**Status: prototype live.** This describes a working product, not a proposal —
-a hosted, account-gated front door onto FormForge's six parametric
-generators, shipping today as a self-contained Claude Artifact.
+**Status: prototype live, Phase 1 partially landed.** This describes a
+working product, not a proposal — a hosted, account-gated front door onto
+FormForge's six parametric generators, shipping today as a self-contained
+Claude Artifact. Password hashing and real credit metering are live; the
+per-account data isolation this spec originally called for is blocked on a
+platform capability this account doesn't have — see §9.
 
 ## 1. Overview
 
@@ -50,10 +53,10 @@ but not backed by the real logic its production version needs.
 | Studio — design & preview | **Shipped** | The actual `web/studio.html`, all six templates, mounted verbatim. Not a re-creation. |
 | STL / STEP / JSON export | **Shipped** | Real files, via the `downloads` capability, triangulated from the live slider state. |
 | Dashboard, account page | **Shipped** | Reads the same user document written at signup. |
-| Credits balance | **Simulated** | 3 credits granted at signup, displayed everywhere — never decremented. See §8. |
+| Credits balance | **Shipped** | 3 credits granted at signup; each STL/STEP/JSON export debits one, checked and persisted before the export runs. See §8. |
 | "Build for real" (CAD-kernel STL) | **Simulated** | Studio's own built-in panel; correctly reports "no server behind this page" rather than pretending. The preview export above is the real deliverable today. |
 | Payment / billing | **Planned** | No processor is wired up; nothing charges a card. See §11. |
-| Password hashing | **Planned** | Stored in plaintext in a shared document store today. This is the sharpest gap in the spec — see §9. |
+| Password hashing | **Shipped** | SHA-256 client-side before the value ever reaches storage — see §9 for why this, and not the fix originally proposed, is what shipped. |
 | Model history / re-download | **Planned** | Studio's exports go straight to the visitor's device; nothing is retained server-side to relist. |
 
 ## 4. Architecture
@@ -146,23 +149,32 @@ there is no compute-cost data yet because nothing metered has run.
 The `db` capability's default rule is permissive by design: every
 signed-in viewer of the artifact can read and write every document in a
 shared collection. That's the right default for a poll or a shared board.
-For a `users` collection holding **plaintext passwords**, it means today,
-any signed-in visitor to this artifact can query the entire user table.
+For a `users` collection, it means any signed-in visitor to this artifact
+can query the entire user table — that part is unchanged by anything below
+and is not fixable from inside this artifact.
 
-> **This is the one item in this spec that should block wider distribution,
-> not just production launch.** Two independent fixes, either sufficient on
-> its own:
->
-> 1. Scope credential documents under `data/users/{self}`, the path prefix
->    the `db` capability keeps private per-viewer even from the artifact's
->    own owner.
-> 2. Never accept a password into this layer at all — authenticate through
->    Claude's own signed-in identity (the `user` capability) instead of a
->    hand-rolled email/password form, which also removes the
->    plaintext-storage question entirely.
+**What v1 proposed, and what's actually available.** Both fixes originally
+listed here — scoping credentials under `data/users/{self}`, or dropping
+passwords for Claude's own signed-in identity — depend on the `user`
+capability. Checked against this account's actual capability roster while
+building Phase 1: **`user` is not in it.** Neither fix is implementable in
+this environment, not a matter of which one to prefer.
 
-Neither fix is in v1. Treat the current link as a working demo for people
-who already trust each other, not as onboarding for strangers.
+**What shipped instead: password hashing.** Every password is run through
+SHA-256 in the browser before it reaches `db` — signup stores the hash,
+login hashes the entry and compares. This does not fix the underlying
+exposure above: the `users` collection, hashes and all, is still readable
+by any signed-in member with access to the artifact. What it removes is a
+credential appearing anywhere in plaintext, which matters because the same
+password reused elsewhere is a real, separate cost of that exposure beyond
+this artifact's own data.
+
+> **This artifact is still not where a stranger should set a password they
+> use anywhere else.** Treat the current link as a working demo for people
+> who already trust each other. The two fixes above remain the correct
+> ones — they're blocked on platform capability, not on design — and
+> should be revisited the moment `user` (or an equivalent identity
+> primitive) is available to this account.
 
 ## 10. Known limitations
 
@@ -174,12 +186,16 @@ who already trust each other, not as onboarding for strangers.
 
 ## 11. Roadmap
 
-**Phase 1 — harden the artifact (no new infra)**
-- Move credentials under `data/users/{self}` or drop passwords for
-  Claude-native identity (§9) — ships before any invite goes out beyond
-  the team.
-- Wire the credit balance to the export button so §8's promise is real,
-  even at prototype scale.
+**Phase 1 — harden the artifact (no new infra). Status: landed, partially.**
+- ~~Move credentials under `data/users/{self}` or drop passwords for
+  Claude-native identity~~ — **blocked**, not done: both depend on the
+  `user` capability, which this account's roster doesn't include (§9).
+  SHA-256 hashing shipped as the fix that's actually reachable from here;
+  the per-account isolation problem is still open.
+- **Done.** Credit balance is wired to the export buttons: each STL/STEP/JSON
+  download checks the balance, refuses at zero, and debits one credit,
+  persisted back to `db` and reflected live on the dashboard and account
+  pages.
 
 **Phase 2 — connect the real backend**
 - Point "Build for real" at FormForge's existing sandboxed API (accounts,
