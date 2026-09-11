@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="same-origin">
+<title>Print-ready 3D models from a description · FormForge</title>
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="%230d1117"/><path d="M11 9h11v3.4h-7.3v3.6h6.4v3.4h-6.4V24H11z" fill="%234cc2d6"/></svg>'>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body data-page="home">
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar">
+  <div class="bar-inner">
+    <a class="brand" href="/">Form<span class="mark">Forge</span></a>
+    <nav id="nav" aria-label="Account"></nav>
+  </div>
+</header>
+<main class="shell" id="main">
+
+<h1>Describe the part. Get a model that prints.</h1>
+<p class="lede">
+  FormForge turns a plain-English description into a print-ready STL or 3MF by
+  driving a parametric CAD kernel — not a mesh generator. Every model comes
+  back with the source that built it, the parameters it used, and a
+  design-for-manufacture report measuring wall thickness, overhangs and
+  clearances against your printer's profile.
+</p>
+
+<div class="card" id="state" aria-live="polite">
+  <p class="sub">Checking your session…</p>
+</div>
+
+<h2>What you get</h2>
+<div class="grid two">
+  <div class="card">
+    <h3>Parametric, not generated mesh</h3>
+    <p class="sub">A build123d script produces the geometry, so dimensions are real dimensions and a change is a parameter change rather than a re-roll.</p>
+  </div>
+  <div class="card">
+    <h3>Checked before you print</h3>
+    <p class="sub">Each model is measured against a printer profile. Thin walls and unsupported overhangs come back as warnings, not surprises on the bed.</p>
+  </div>
+  <div class="card">
+    <h3>Sliders, with the model moving</h3>
+    <p class="sub">The studio draws every parameter of a template as a slider over a live 3D view. Move one, watch it rebuild, then send those exact numbers to the kernel for the real, validated STL.</p>
+  </div>
+  <div class="card">
+    <h3>Six generators, not one prompt box</h3>
+    <p class="sub">Mushrooms, vases, sculptural vases, candle holders, watchtowers and cup holders — each with its own species or styles, seeded so a population rebuilds exactly.</p>
+  </div>
+  <div class="card">
+    <h3>Reproducible</h3>
+    <p class="sub">The source and the parameters ship with every model, so anyone can rebuild it exactly — including you, later.</p>
+  </div>
+</div>
+
+<h2>Credits</h2>
+<div class="card">
+  <p class="sub">
+    A new account starts with free credits. A credit is charged when a build
+    finishes and passes validation — a failed build costs nothing. Your balance
+    and full credit history are on the
+    <a href="/account">account page</a>.
+  </p>
+</div>
+</main>
+<footer class="foot shell">
+  <p>FormForge runs locally: SQLite, files on disk, offline billing, an email outbox in a folder. No payment is taken and nothing leaves this machine.</p>
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

@@ -353,7 +353,15 @@ class TestHttpApi:
 
         The API executes model-authored Python. Shipping the development
         runtime belongs in a startup check, not in a runbook.
+
+        Unlike its neighbours this test does not use the `client` fixture, so
+        it never inherited that fixture's skip -- and without the `api` extra
+        installed it failed on FastAPI's own "not installed" RuntimeError
+        instead, which reads as a broken security check rather than a missing
+        dependency. The skip is declared here so the suite has no unexplained
+        failure; CI installs the extra, so the check does run there.
         """
+        pytest.importorskip("fastapi", reason="the startup check needs the `api` extra")
         from formforge.api import create_app
 
         with pytest.raises(RuntimeError) as excinfo:

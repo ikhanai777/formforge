@@ -1,0 +1,786 @@
+id: tableware_cup_holder
+version: 1
+category: tableware
+display_name: "Embossed Cup Holder"
+description: >
+  A holder a cup, glass or tin sits in, ornamented the way a cast one is: three
+  horizontal registers of relief, each carrying its own motif -- rope, beading,
+  dentils, guilloche, lattice, shells, egg-and-dart, acanthus or plain fluting
+  -- divided by raised bead mouldings and, on the body, framed into panels. A
+  spreading foot underneath, a tapered socket bored down from the rim, and one
+  or two cast handles at the sides.
+tags: [cup holder, mug holder, tumbler holder, glass holder, podstakannik, tea glass holder, coaster, caddy, ornament, emboss, antique, victorian, tableware, decor, generative, parametric]
+embedding_text: >
+  cup holder mug holder tumbler holder glass holder tea glass holder
+  podstakannik cup sleeve mug sleeve coffee cup holder ornate cup holder
+  embossed cup holder antique cup holder victorian cup holder acanthus
+  guilloche egg and dart beading rope moulding cast metal look tableware
+  desk tidy pen cup ornamental sleeve
+language: build123d
+
+print_test:
+  # No model in this repository has been physically printed. The target machine
+  # and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    It prints standing on its foot with no support, and the ornament is what
+    makes that non-obvious. Relief on a wall is only free if it is *raised*:
+    everything here is added to the radius rather than cut out of it, so the
+    worst overhang any motif can make is its own side wall, and the sharpness
+    slider is what sets that angle. At the default it is a cosine bump about a
+    millimetre proud over two millimetres of run, which is nearer 25 degrees
+    than 45.
+
+    The two features that would need support if they were drawn the obvious way
+    are the handle and the foot. The handle is a plate whose outline goes out
+    and back at 45 degrees rather than a round loop, which is why it reads as a
+    cast bracket instead of a jug handle. The foot spreads on a cone rather than
+    a disc for the same reason.
+
+    The socket is a plain tapered bore, so the one horizontal face inside is
+    the floor the cup stands on -- and setting the floor to zero makes it a
+    sleeve open at both ends, which is the version to print for a paper cup.
+
+expected_solids: 1
+
+dimension_map:
+  height_mm: height
+
+
+param_schema:
+  type: object
+  required: [height_mm, bore_d_mm]
+  properties:
+    height_mm:
+      type: number
+      minimum: 40
+      maximum: 170
+      default: 92
+      description: "Plate to the rim, foot included."
+      ui: { widget: slider, step: 2, label: "Height" }
+    bore_d_mm:
+      type: number
+      minimum: 55
+      maximum: 105
+      default: 78
+      description: >
+        The socket at the rim, which is what has to fit the cup. A mug is about
+        80 mm across, a takeaway cup 88 at the lip, a tea glass 70.
+      ui: { widget: slider, step: 1, label: "Socket" }
+    bore_taper:
+      type: number
+      minimum: 0
+      maximum: 0.35
+      default: 0.14
+      description: >
+        How much narrower the socket is at the bottom. Cups are tapered; this
+        is what makes one sit rather than rattle.
+      ui: { widget: slider, step: 0.02, label: "Socket taper" }
+    bore_depth:
+      type: number
+      minimum: 0.35
+      maximum: 0.95
+      default: 0.78
+      description: "How far down the socket goes, as a fraction of the height."
+      ui: { widget: slider, step: 0.02, label: "Socket depth" }
+    wall_mm:
+      type: number
+      minimum: 1.6
+      maximum: 7
+      default: 3.2
+      description: "Between the socket and the outside, before any relief is added."
+      ui: { widget: slider, step: 0.2, label: "Wall" }
+    floor_mm:
+      type: number
+      minimum: 0
+      maximum: 10
+      default: 3
+      description: >
+        Under the socket. 0 leaves it open at both ends, which is a sleeve
+        rather than a holder.
+      ui: { widget: slider, step: 0.5, label: "Floor" }
+    belly:
+      type: number
+      minimum: 0
+      maximum: 0.45
+      default: 0.1
+      description: "How far the body swells below the waist."
+      ui: { widget: slider, step: 0.02, label: "Belly" }
+    waist:
+      type: number
+      minimum: 0
+      maximum: 0.45
+      default: 0.1
+      description: "How far the body pinches in at the waist."
+      ui: { widget: slider, step: 0.02, label: "Waist" }
+    waist_pos:
+      type: number
+      minimum: 0.25
+      maximum: 0.8
+      default: 0.55
+      description: "Height fraction of the waist."
+      ui: { widget: slider, step: 0.02, label: "Waist height" }
+    foot_mm:
+      type: number
+      minimum: 0
+      maximum: 26
+      default: 7
+      description: >
+        How far the foot spreads past the body. It spreads on a cone, not a
+        disc, so it needs no support.
+      ui: { widget: slider, step: 0.5, label: "Foot spread" }
+    foot_h_mm:
+      type: number
+      minimum: 0
+      maximum: 34
+      default: 8
+      description: "How tall the foot is."
+      ui: { widget: slider, step: 0.5, label: "Foot height" }
+    band_low:
+      type: string
+      enum: [plain, flute, rope, bead, dentil, guilloche, lattice, scallop, eggdart, acanthus]
+      default: rope
+      description: "The motif on the lowest register, over the foot."
+      ui: { widget: segmented, label: "Lower band" }
+    band_mid:
+      type: string
+      enum: [plain, flute, rope, bead, dentil, guilloche, lattice, scallop, eggdart, acanthus]
+      default: acanthus
+      description: "The motif on the body, which is the one the panels frame."
+      ui: { widget: segmented, label: "Body band" }
+    band_high:
+      type: string
+      enum: [plain, flute, rope, bead, dentil, guilloche, lattice, scallop, eggdart, acanthus]
+      default: eggdart
+      description: "The motif on the cornice, under the rim."
+      ui: { widget: segmented, label: "Upper band" }
+    split_low:
+      type: number
+      minimum: 0.08
+      maximum: 0.45
+      default: 0.24
+      description: "Height fraction where the lower register ends."
+      ui: { widget: slider, step: 0.02, label: "Lower split" }
+    split_high:
+      type: number
+      minimum: 0.5
+      maximum: 0.95
+      default: 0.8
+      description: "Height fraction where the upper register begins."
+      ui: { widget: slider, step: 0.02, label: "Upper split" }
+    emboss_mm:
+      type: number
+      minimum: 0
+      maximum: 3
+      default: 1.1
+      description: >
+        How far the relief stands proud. Raised, never sunk: what a motif adds
+        to the radius cannot thin the wall behind it.
+      ui: { widget: slider, step: 0.05, label: "Relief" }
+    emboss_count:
+      type: integer
+      minimum: 4
+      maximum: 16
+      default: 12
+      description: >
+        Repeats of the motif around. The ceiling is what the surface costs to
+        loft, cut and mesh, which is measured rather than chosen: a section
+        drawn through more points than this is a bigger surface than the
+        booleans after it can afford.
+      ui: { widget: slider, step: 1, label: "Repeats" }
+    emboss_rows:
+      type: integer
+      minimum: 1
+      maximum: 3
+      default: 2
+      description: "Repeats of the motif up each register."
+      ui: { widget: slider, step: 1, label: "Rows" }
+    emboss_sharp:
+      type: number
+      minimum: 0
+      maximum: 1
+      default: 0.6
+      description: >
+        0 is a soft swell, 1 a crisp cast edge. This is also the slider that
+        sets how steep the side of a motif is, so it is the one the overhang
+        rule is written against.
+      ui: { widget: slider, step: 0.05, label: "Crispness" }
+    panels:
+      type: integer
+      minimum: 0
+      maximum: 8
+      default: 6
+      description: >
+        Framed panels round the body register. 0 runs the motif continuously;
+        anything else divides it into cartouches with a raised border.
+      ui: { widget: slider, step: 1, label: "Panels" }
+    panel_frame:
+      type: number
+      minimum: 0.05
+      maximum: 0.4
+      default: 0.18
+      description: "How much of each panel the frame takes."
+      ui: { widget: slider, step: 0.02, label: "Frame width" }
+    bead_mm:
+      type: number
+      minimum: 0
+      maximum: 3
+      default: 0.8
+      description: >
+        The raised bead mouldings that divide the registers. They are what
+        stops two motifs meeting each other in mid-air.
+      ui: { widget: slider, step: 0.05, label: "Mouldings" }
+    handle_count:
+      type: integer
+      minimum: 0
+      maximum: 2
+      default: 1
+      description: "Cast handles at the sides. 2 puts them opposite each other."
+      ui: { widget: slider, step: 1, label: "Handles" }
+    handle_mm:
+      type: number
+      minimum: 4
+      maximum: 40
+      default: 18
+      description: "How far a handle reaches out past the body."
+      ui: { widget: slider, step: 0.5, label: "Handle reach" }
+    handle_lo:
+      type: number
+      minimum: 0.05
+      maximum: 0.6
+      default: 0.2
+      description: "Height fraction where the handle meets the body at the bottom."
+      ui: { widget: slider, step: 0.02, label: "Handle base" }
+    handle_hi:
+      type: number
+      minimum: 0.4
+      maximum: 0.98
+      default: 0.86
+      description: "And at the top."
+      ui: { widget: slider, step: 0.02, label: "Handle top" }
+    handle_t_mm:
+      type: number
+      minimum: 3
+      maximum: 14
+      default: 7
+      description: "How thick a handle is across."
+      ui: { widget: slider, step: 0.5, label: "Handle thickness" }
+    handle_pierce:
+      type: number
+      minimum: 0
+      maximum: 0.8
+      default: 0.5
+      description: >
+        How much of the handle is opening. 0 leaves a solid ear; high leaves a
+        thin loop you can get a finger through.
+      ui: { widget: slider, step: 0.05, label: "Handle opening" }
+    seed:
+      type: integer
+      minimum: 0
+      maximum: 9999
+      default: 1
+      description: "Places the per-repeat variation in the relief. The same seed is the same holder."
+      ui: { widget: number, label: "Seed" }
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  - "trapped_volumes == 0"
+  - "min_wall >= 0.7"
+  - "com_inside_footprint"
+  - "bbox.z <= height_mm + 1.5"
+  - "bbox.z >= height_mm - 1.5"
+  - "bbox.x <= bore_d_mm + wall_mm * 2 + emboss_mm * 2 + foot_mm * 2 + handle_mm * 2 + 6"
+  - "plate_contact_mm2 >= 300"
+
+preconditions:
+  # The socket has to have something round it, and the waist is where that is
+  # thinnest: the bore runs straight while the outside pinches in.
+  - "wall_mm >= 1.6"
+  # The waist is not stated here: the bore runs straight inside the body and the
+  # source takes the waist only as far as the wall between them allows. What is
+  # stated is the one the source cannot rescue -- a wall thinner than a wall.
+  - "floor_mm + 2 <= bore_depth * height_mm"
+  - "bore_depth * height_mm + foot_h_mm <= height_mm + 2"
+  # The relief is raised, so it cannot thin the wall -- but a motif taller than
+  # the wall it stands on reads as a separate thing stuck to the side.
+  - "emboss_mm <= wall_mm * 0.8"
+  - "bead_mm <= wall_mm * 0.8"
+  # A register needs room for its rows, and each row needs enough height that
+  # the motif in it is a shape rather than a scratch.
+  - "split_high >= split_low + 0.3"
+  - "emboss_rows * 3 <= split_low * height_mm"
+  - "emboss_rows * 3 <= (1 - split_high) * height_mm"
+  # One repeat has to be wider than two beads once it is drawn, or the nozzle
+  # cannot lay it.
+  - "emboss_count >= 4 implies 3.14159 * (bore_d_mm + wall_mm * 2) / max(emboss_count, 1) >= 3.0"
+  # A panel frame is a printed wall.
+  - "panels >= 2 implies panel_frame * 3.14159 * (bore_d_mm + wall_mm * 2) / max(panels, 1) >= 1.4"
+  # The handle goes out and back at 45 degrees, so it needs at least as much
+  # height as it has reach, twice over.
+  - "handle_count >= 1 implies handle_hi >= handle_lo + 0.25"
+  - "handle_count >= 1 implies handle_mm * 2 <= (handle_hi - handle_lo) * height_mm"
+  - "handle_count >= 1 implies handle_t_mm >= 3"
+  # What the surface costs, and it is not the mesh that pays. The loft is cheap;
+  # what is expensive is every boolean afterwards, because each one has to
+  # intersect its tool with the whole ornamented skin. Boring the socket costs
+  # about 420 MB at the default resolution and fusing a handle onto it another
+  # 650, against a sandbox that has two gigabytes -- so the ceiling on points
+  # round times sections up is a memory ceiling, and it is lower when there is
+  # a handle to fuse than when there is not. Both numbers below are measured.
+  - >
+    handle_count >= 1 implies
+    min(96, max(60, max(emboss_count, panels * 2, 8) * 6))
+    * min(72, max(24, emboss_rows * 21)) <= 4600
+  - >
+    min(96, max(60, max(emboss_count, panels * 2, 8) * 6))
+    * min(72, max(24, emboss_rows * 21)) <= 7000
+  # The foot spreads on a cone, and a cone that reaches out further than it
+  # rises is an overhang past 45 degrees whatever else is true of it.
+  - "foot_mm <= foot_h_mm + 0.5"
+  - "bore_d_mm + wall_mm * 2 >= 60"
+
+source: |
+  from build123d import *
+
+  import math
+
+  # --- sliders --------------------------------------------------------------
+  HEIGHT_MM = 92.0
+  BORE_D_MM = 78.0
+  BORE_TAPER = 0.14
+  BORE_DEPTH = 0.78
+  WALL_MM = 3.2
+  FLOOR_MM = 3.0
+  BELLY = 0.10
+  WAIST = 0.18
+  WAIST_POS = 0.55
+  FOOT_MM = 7.0
+  FOOT_H_MM = 8.0
+  BAND_LOW = "rope"
+  BAND_MID = "acanthus"
+  BAND_HIGH = "eggdart"
+  SPLIT_LOW = 0.24
+  SPLIT_HIGH = 0.80
+  EMBOSS_MM = 0.9
+  EMBOSS_COUNT = 16
+  EMBOSS_ROWS = 2
+  EMBOSS_SHARP = 0.60
+  PANELS = 8
+  PANEL_FRAME = 0.18
+  BEAD_MM = 0.8
+  HANDLE_COUNT = 1
+  HANDLE_MM = 18.0
+  HANDLE_LO = 0.20
+  HANDLE_HI = 0.86
+  HANDLE_T_MM = 7.0
+  HANDLE_PIERCE = 0.50
+  SEED = 1
+
+  TAU = 6.283185307179586
+  OVER = 2.0
+  # How steep the side of a motif is allowed to get. The relief is raised, so
+  # the only overhang it can make is its own flank, and a cosine bump run
+  # through this exponent is between 20 and 40 degrees off vertical.
+  #
+  # The floor of 1 is not taste, it is what a spline can be drawn through. Below
+  # 1 a raised cosine has an infinite slope where it meets zero, and a section
+  # drawn through a hundred and fifty points that each sit on such a corner
+  # overshoots into itself: the loft then comes out as a hundred and thirty
+  # slivers rather than a cup. At 1 the bump meets the wall tangentially.
+  GAMMA = 1.0 + 1.6 * (1.0 - EMBOSS_SHARP)
+  ROPE_LEAN = 0.8
+  SHELL_RIBS = 5.0
+  VEIN = 0.07
+  BEAD_SPAN = 2.2
+  EDGE_MM = 2.0
+  LAND_MM = 1.0
+
+
+  def hash01(index, salt):
+      """Deterministic pseudo-random in [0,1): the same seed, the same holder."""
+      x = math.sin((index + 1) * 12.9898 + (SEED + 1) * 78.233 + salt * 37.719) * 43758.5453
+      return x - math.floor(x)
+
+
+  def bump(x):
+      """A cosine hump, 1 at the middle and 0 at |x| = 1."""
+      if x <= -1.0 or x >= 1.0:
+          return 0.0
+      return (0.5 + 0.5 * math.cos(math.pi * x)) ** GAMMA
+
+
+  def plateau(x, ramp):
+      """A flat-topped block with a ramp of that width at each side."""
+      return min(1.0, max(0.0, (1.0 - abs(x)) / max(ramp, 1e-6)))
+
+
+  def ribbon(u, centre, width):
+      """A raised band running along `centre`, wrapping round the repeat."""
+      return bump((((u - centre + 0.5) % 1.0) - 0.5) / max(width, 1e-6))
+
+
+  # --- 1. the motifs ----------------------------------------------------------
+  # Each is a field over one cell of the pattern: u runs across one repeat
+  # around, v up one row of the register. All of them are raised -- the value is
+  # added to the radius -- which is what makes the ornament free of overhangs
+  # whatever it draws.
+  def motif(kind, u, v):
+      if kind == "flute":
+          return bump(2.0 * (u - 0.5))
+      if kind == "rope":
+          return bump(2.0 * (((u + v * ROPE_LEAN) % 1.0) - 0.5))
+      if kind == "bead":
+          return bump(2.3 * (u - 0.5)) * bump(2.3 * (v - 0.5))
+      if kind == "dentil":
+          return plateau(2.0 * (u - 0.5), 0.3) * plateau(2.2 * (v - 0.5), 0.35)
+      if kind == "guilloche":
+          swing = 0.5 * math.sin(TAU * v)
+          return max(ribbon(u, 0.5 + swing, 0.17), ribbon(u, 0.5 - swing, 0.17))
+      if kind == "lattice":
+          return max(
+              bump((((u + v) % 1.0) - 0.5) / 0.2), bump((((u - v) % 1.0) - 0.5) / 0.2)
+          )
+      if kind == "scallop":
+          x, y = (u - 0.5) * 2.0, v * 1.2
+          radius = math.hypot(x, y)
+          if radius >= 1.0:
+              return 0.0
+          ribs = 0.5 + 0.5 * math.cos(SHELL_RIBS * math.atan2(y, x))
+          return min(1.0, (1.0 - radius) * 2.4) * (0.55 + 0.45 * ribs)
+      if kind == "eggdart":
+          if u < 0.5:
+              return bump((u - 0.25) / 0.21) * bump((v - 0.5) / 0.46)
+          return bump((u - 0.75) / 0.09) * max(0.0, 1.0 - v * 0.8)
+      if kind == "acanthus":
+          # The leaf narrows as it rises but never to a point: a lobe of zero
+          # width is a spike one sample wide, which is the same overshoot.
+          half = max(0.5 * (1.0 - v * 0.72), 0.06)
+          lobe = bump((u - 0.5) / half)
+          if lobe <= 0.0:
+              return 0.0
+          groove = 1.0 - 0.5 * bump((u - 0.5) / VEIN)
+          side = 0.62 + 0.38 * math.cos(2.0 * TAU * (u - 0.5))
+          return lobe * groove * max(0.0, side) * (1.0 - 0.22 * v)
+      return 0.0
+
+
+  # --- 2. the registers -------------------------------------------------------
+  LOW = min(max(SPLIT_LOW, 0.05), 0.45)
+  HIGH = min(max(SPLIT_HIGH, LOW + 0.2), 0.96)
+  BANDS = [(0.0, LOW, BAND_LOW, 0), (LOW, HIGH, BAND_MID, 1), (HIGH, 1.0, BAND_HIGH, 2)]
+  COUNT = max(int(EMBOSS_COUNT), 1)
+  ROWS = max(int(EMBOSS_ROWS), 1)
+  PANEL_N = int(PANELS)
+  # A moulding is a bead run round the joint between two registers. Its height
+  # is set by its own depth rather than by a slider of its own: a bead that is
+  # taller than it is proud is a fillet, and one that is shorter is a scratch.
+  BEAD_T = max(BEAD_MM, 0.4) * BEAD_SPAN / max(HEIGHT_MM, 1e-6)
+  # The seed turns each register round rather than varying it repeat by repeat.
+  # A per-repeat variation is a step in the field, and a step in the field is a
+  # corner the section spline overshoots.
+  PHASE = [hash01(k, 2.0) for k in range(3)]
+
+
+  def edge_fade(t):
+      """Nothing stands proud right at the plate: the first millimetres are a
+      plain land, which is what a cast piece does at its foot anyway.
+
+      Only at the bottom. The rim at the top is a vertical wall meeting a
+      horizontal face, which is a right angle and measures as thick as the wall
+      is; fading the relief out there would turn that right angle into a wedge
+      and make the thing it is meant to prevent.
+      """
+      return min(1.0, HEIGHT_MM * t / EDGE_MM)
+
+
+  def relief_at(angle, t):
+      """How far the ornament stands proud at this angle and height, in mm."""
+      total = 0.0
+      if BEAD_MM > 0.05:
+          for edge in (LOW, HIGH):
+              total = max(total, BEAD_MM * bump((t - edge) / BEAD_T))
+      if EMBOSS_MM <= 0.05:
+          return total * edge_fade(t)
+      for low, high, kind, index in BANDS:
+          if kind == "plain" or t < low or t > high:
+              continue
+          span = max(high - low, 1e-6)
+          v = ((t - low) / span * ROWS) % 1.0
+          # The body register can be broken into framed panels, and when it is,
+          # the repeat *is* the panel: a cartouche with a leaf and two thirds of
+          # another one in it is not a cartouche. So the motif is locked to the
+          # cell rather than counted round independently of it.
+          framed = index == 1 and PANEL_N >= 2
+          if framed:
+              u = (angle * PANEL_N / TAU + PHASE[index]) % 1.0
+          else:
+              u = (angle * COUNT / TAU + PHASE[index]) % 1.0
+          value = motif(kind, u, v)
+          if framed:
+              # How far into the cell this point is, 0 at its border and 1 at
+              # its centre, measured the same way across and up. The frame is a
+              # ridge running at a fixed inset from that border, and the motif
+              # only starts once the frame has finished -- a cartouche is cast
+              # in one piece, so its border is part of the same field.
+              inset = min(min(u, 1.0 - u), min(v, 1.0 - v)) * 2.0
+              wide = max(PANEL_FRAME, 1e-6)
+              frame = bump((inset - wide) / wide)
+              clear = min(1.0, max(0.0, (inset - wide * 2.0) / wide))
+              value = max(value * clear, frame)
+          if value > 0.0:
+              total = max(total, EMBOSS_MM * value)
+      return total * edge_fade(t)
+
+
+  # --- 3. the silhouette ------------------------------------------------------
+  # The socket first, because the outside is not free to go wherever the waist
+  # slider points: the bore runs straight down inside it, and a waist measured
+  # against the rim can easily be deeper than the whole wall. At the default
+  # here it would be -- 18% of a 42 mm radius is 7.6 mm out of a 3.2 mm wall --
+  # so the waist is taken as far as the wall allows and no further, and the
+  # section clamps it again in case the curve between control points dips.
+  MIN_WALL = 1.2
+  HANDLE_BURY = 1.2
+  HANDLE_CLEAR = 0.6
+  RIM_R = BORE_D_MM / 2 + WALL_MM
+  DEPTH = min(BORE_DEPTH * HEIGHT_MM, HEIGHT_MM - max(FLOOR_MM, 0.0))
+  BORE_TOP = BORE_D_MM / 2
+  BORE_BOT = BORE_TOP * (1.0 - BORE_TAPER)
+  BORE_START = 0.0 if FLOOR_MM <= 0.05 else HEIGHT_MM - DEPTH
+
+
+  def bore_at(t):
+      """The socket's radius at height fraction t, or nothing below its floor."""
+      z = HEIGHT_MM * t
+      if z <= BORE_START:
+          return 0.0
+      run = HEIGHT_MM - BORE_START
+      return BORE_BOT + (BORE_TOP - BORE_BOT) * (z - BORE_START) / max(run, 1e-6)
+
+
+  # Never zero: the four control points are the knots of an interpolation, and
+  # two knots at the same height is a division by the gap between them. A foot
+  # of no height is a foot that spreads over one row of the loft, which is what
+  # a foot of no height should look like anyway.
+  FOOT_T = min(0.95, max(FOOT_H_MM / max(HEIGHT_MM, 1e-6), 0.02))
+  # A short vertical land under the foot, and it is not cosmetic. Without it the
+  # foot's cone runs straight into the flat bottom face, and a cone at 45
+  # degrees meeting a horizontal plane closes at 45 -- an edge with no thickness
+  # in it, which is exactly what the thickness pass samples and rejects. One
+  # millimetre of vertical wall turns that into a right angle.
+  LAND_T = min(LAND_MM / max(HEIGHT_MM, 1e-6), FOOT_T * 0.5)
+  WAIST_T = min(0.92, max(FOOT_T + 0.05, WAIST_POS))
+  WAIST_R = max(RIM_R * (1.0 - WAIST), bore_at(WAIST_T) + MIN_WALL)
+  CONTROL = [
+      (0.0, RIM_R + FOOT_MM),
+      (LAND_T, RIM_R + FOOT_MM),
+      (FOOT_T, RIM_R * (1.0 + BELLY)),
+      (WAIST_T, WAIST_R),
+      (1.0, RIM_R),
+  ]
+
+
+  def monotone_slopes(xs, ys):
+      """Fritsch-Carlson tangents: a curve through the control points that never
+      overshoots them, so the silhouette is the one the sliders describe."""
+      n = len(xs)
+      deltas = [(ys[i + 1] - ys[i]) / (xs[i + 1] - xs[i]) for i in range(n - 1)]
+      slopes = [deltas[0]] + [0.0] * (n - 2) + [deltas[-1]]
+      for i in range(1, n - 1):
+          if deltas[i - 1] * deltas[i] <= 0:
+              slopes[i] = 0.0
+          else:
+              w1 = 2 * (xs[i + 1] - xs[i]) + (xs[i] - xs[i - 1])
+              w2 = (xs[i + 1] - xs[i]) + 2 * (xs[i] - xs[i - 1])
+              slopes[i] = (w1 + w2) / (w1 / deltas[i - 1] + w2 / deltas[i])
+      return slopes
+
+
+  CX = [c[0] for c in CONTROL]
+  CY = [c[1] for c in CONTROL]
+  CM = monotone_slopes(CX, CY)
+
+
+  def radius_at(t):
+      t = min(1.0, max(0.0, t))
+      for i in range(len(CX) - 1):
+          if CX[i] <= t <= CX[i + 1]:
+              h = CX[i + 1] - CX[i]
+              s = (t - CX[i]) / h
+              m0, m1 = CM[i] * h, CM[i + 1] * h
+              return (
+                  (2 * s**3 - 3 * s**2 + 1) * CY[i]
+                  + (s**3 - 2 * s**2 + s) * m0
+                  + (-2 * s**3 + 3 * s**2) * CY[i + 1]
+                  + (s**3 - s**2) * m1
+              )
+      return CY[-1]
+
+
+  # --- 4. resolution ----------------------------------------------------------
+  # Points round the section have to draw the finest thing in the pattern, which
+  # is either a repeat of the motif or a panel frame. Sections up the height are
+  # placed unevenly on purpose: a bead moulding is a millimetre-scale feature on
+  # a hundred-millimetre object, and spacing the whole loft finely enough for it
+  # would spend the entire budget on two rings.
+  # Six samples across a repeat is the floor: a raised cosine drawn through
+  # fewer than that is a spline reconstructing a bump it has barely seen, and
+  # what it reconstructs overshoots. Everything above the floor is spent on the
+  # booleans rather than on the mesh -- the loft itself is nearly free, and each
+  # boolean against it costs about half a gigabyte at the default resolution,
+  # which is what the surface budget in the preconditions is measuring.
+  DETAIL = max(COUNT, PANEL_N * 2, 8)
+  POINTS = int(min(96, max(60, DETAIL * 6)))
+  ROWS_TOTAL = ROWS * 3
+  BASE_SECTIONS = int(min(72, max(24, ROWS_TOTAL * 7)))
+
+  ts = []
+  for i in range(BASE_SECTIONS + 1):
+      ts.append(i / BASE_SECTIONS)
+  STEP = 1.0 / BASE_SECTIONS
+  if BEAD_MM > 0.05:
+      STEP = min(STEP, BEAD_T / 3.0)
+      for edge in (LOW, HIGH):
+          for k in range(-4, 5):
+              value = edge + BEAD_T * k / 3.0
+              if 0.0 < value < 1.0:
+                  ts.append(value)
+  # Two families of stations laid over each other will sooner or later put two
+  # of them a micron apart, and a loft band a micron tall is a face with no
+  # area -- which the mesher tolerates and the boolean after it does not. So
+  # both families are snapped to the same grid, one step of which is the finest
+  # spacing either of them asked for: stations that were meant to be distinct
+  # stay distinct, and stations that were accidentally adjacent become one.
+  ts = sorted(set(int(round(value / STEP)) for value in ts))
+  ts = [value * STEP for value in ts if 0.0 <= value * STEP <= 1.0]
+  ts = [value for value in ts if STEP / 2 < value < 1.0 - STEP / 2]
+  ts = [0.0] + ts + [1.0]
+
+
+  def section(t):
+      points = []
+      z = HEIGHT_MM * t
+      base = max(radius_at(t), bore_at(t) + MIN_WALL)
+      for i in range(POINTS):
+          angle = TAU * i / POINTS
+          r = base + relief_at(angle, t)
+          points.append((r * math.cos(angle), r * math.sin(angle)))
+      with BuildLine(Plane.XY.offset(z)) as line:
+          Spline(*points, points[0])
+      return make_face(line.line)
+
+
+  # A spline section, not a polyline -- and the choice is worth stating, because
+  # the watchtower next door makes the opposite one for the opposite reason. A
+  # polyline section gives the loft one face per point per band, which meshes to
+  # exactly its own facet count and never gets subdivided; that is the right
+  # trade for a faceted tower, where a hundred and fifty faces is the whole
+  # model. Ornament needs a hundred and fifty points round *one section*, and at
+  # that width a polyline loft costs three and a half thousand faces and eighteen
+  # seconds before a single motif is drawn on it. A spline section is one edge,
+  # so the loft is one face per band and the boolean after it is cheap; what it
+  # costs instead is meshing, and that is affordable here precisely because the
+  # relief is shallow. A bump a millimetre proud over fifteen of arc has very
+  # little curvature for the mesher to chase.
+  result = loft([section(t) for t in ts], ruled=True)
+
+  # --- 5. the socket ----------------------------------------------------------
+  # Wider at the top, because that is the way a cup is: a cone the other way up
+  # is an undercut, and on a holder with a floor it cuts the foot clean off.
+  # A cone whose two radii are equal is not a cone, and the kernel says so
+  # rather than quietly building a cylinder, so an untapered socket is opened
+  # by a hundredth of a millimetre. That is a fortieth of a layer.
+  NIP = 0.01
+  if FLOOR_MM <= 0.05:
+      result = result - Pos(0, 0, HEIGHT_MM / 2) * Cone(
+          BORE_BOT, max(BORE_TOP, BORE_BOT + NIP), HEIGHT_MM + OVER + OVER
+      )
+  else:
+      GROW = BORE_TAPER * BORE_TOP * OVER / max(DEPTH, 1e-6)
+      result = result - Pos(0, 0, HEIGHT_MM - DEPTH + (DEPTH + OVER) / 2) * Cone(
+          BORE_BOT, max(BORE_TOP + GROW, BORE_BOT + NIP), DEPTH + OVER
+      )
+
+  # --- 6. the handles ---------------------------------------------------------
+  # A plate in the plane through the axis, whose outline goes out at 45 degrees,
+  # runs straight up, and comes back in at 45. A round loop would be the obvious
+  # shape and would need support under the whole of its lower flank; this one is
+  # a cast bracket, which is both the period detail and the printable answer --
+  # 45 out is the steepest overhang a printer never has to be told about, and 45
+  # back in is not an overhang at all.
+  if HANDLE_COUNT >= 1 and HANDLE_MM > 1.0:
+      LO_Z = HANDLE_LO * HEIGHT_MM
+      HI_Z = HANDLE_HI * HEIGHT_MM
+      MID_Z = (LO_Z + HI_Z) / 2
+      REACH = min(HANDLE_MM, (HI_Z - LO_Z) / 2)
+      # The plate is buried in the body rather than laid against it: a plate
+      # that only reaches the surface touches a curve tangentially and the fuse
+      # leaves knife edges along the join. But the burial has to follow the
+      # body, not cut a straight chord through it -- a vertical inner edge deep
+      # enough to bite at the waist is deep enough to cross the socket at the
+      # rim, and a plate that pokes into the bore hands the fuse a solid that
+      # laps its own cavity. So the inner edge is a chain that stays a fixed
+      # depth under the silhouette and a fixed clearance outside the socket,
+      # whichever of the two binds at that height.
+      SPAN = [HANDLE_LO + (HANDLE_HI - HANDLE_LO) * k / 8.0 for k in range(9)]
+      INNER = [
+          (
+              max(radius_at(t) - HANDLE_BURY, bore_at(t) + HANDLE_CLEAR),
+              t * HEIGHT_MM,
+          )
+          for t in SPAN
+      ]
+      IN_R = max(p[0] for p in INNER)
+      OUT_R = max(
+          radius_at((HANDLE_LO + HANDLE_HI) / 2) + EMBOSS_MM + REACH,
+          IN_R + HANDLE_T_MM,
+      )
+      # The two diagonals rise exactly as far as they reach, which is what makes
+      # them 45 degrees; the straight run between them is whatever height is
+      # left over, and the precondition guarantees there is some.
+      BOT_R = INNER[0][0]
+      TOP_R = INNER[-1][0]
+      KNEE_LO = min(LO_Z + OUT_R - BOT_R, MID_Z)
+      KNEE_HI = max(HI_Z - (OUT_R - TOP_R), MID_Z)
+      outline = [(OUT_R, KNEE_LO)]
+      if KNEE_HI > KNEE_LO + 0.05:
+          outline.append((OUT_R, KNEE_HI))
+      outline = outline + INNER[::-1]
+      with BuildLine(Plane.XZ) as ear:
+          Polyline(*outline, outline[0])
+      plate = extrude(make_face(ear.line), amount=HANDLE_T_MM / 2, both=True)
+      # The opening is the same shape inset by the web -- the strap of metal
+      # left round it -- so the bracket keeps its 45-degree corners whatever the
+      # slider does, and the web is a printed wall wherever it is measured.
+      WEB = max(2.0, (OUT_R - IN_R) * (1.0 - min(HANDLE_PIERCE, 0.85)) / 2)
+      H_IN = IN_R + WEB
+      H_OUT = OUT_R - WEB
+      # A diagonal set back by the web has to move up by the web times root two,
+      # not by the web: inset is measured across the edge, not along an axis.
+      LIFT = WEB * 1.4142
+      H_LO_IN = LO_Z - BOT_R + H_IN + LIFT
+      H_LO_OUT = LO_Z - BOT_R + H_OUT + LIFT
+      H_HI_IN = HI_Z + TOP_R - H_IN - LIFT
+      H_HI_OUT = HI_Z + TOP_R - H_OUT - LIFT
+      if (
+          HANDLE_PIERCE > 0.05
+          and H_OUT - H_IN > 1.5
+          and H_HI_IN - H_LO_IN > 1.5
+          and H_HI_OUT - H_LO_OUT > 1.5
+      ):
+          hole = [
+              (H_IN, H_LO_IN),
+              (H_OUT, H_LO_OUT),
+              (H_OUT, H_HI_OUT),
+              (H_IN, H_HI_IN),
+          ]
+          with BuildLine(Plane.XZ) as gap:
+              Polyline(*hole, hole[0])
+          plate = plate - extrude(
+              make_face(gap.line), amount=HANDLE_T_MM / 2 + OVER, both=True
+          )
+      ears = [Rot(0, 0, 180.0 * k) * plate for k in range(int(HANDLE_COUNT))]
+      result = result.fuse(*ears)

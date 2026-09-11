@@ -317,15 +317,40 @@ Stated plainly, so nothing here reads as more finished than it is.
   itself is not implemented.
 - **OpenSCAD execution.** The adapter is written and reports cleanly when the
   binary is absent; it has not been exercised.
-- **Postgres.** The data model is in `docs/schema.sql` and `formforge/store.py`
-  implements it on SQLite — same tables, same column names, same two views. The
-  Postgres-only parts are absent rather than faked: the `vector(1536)` embedding
-  column and its ivfflat index, `citext`, and the `users` table that auth would
-  need. Moving over is a dialect change; §2 has the reasoning for starting on
-  the file-backed one, which is that a persistence layer needing a running
-  database is one that gets switched off in development, and a table empty for
-  six months is worth nothing.
-- **Auth, quotas, billing.** The API has no authentication.
+- **Postgres — for accounts, not yet for telemetry.**
+  `formforge/accounts/` runs on either engine, chosen by one setting, behind
+  the dialect in `formforge/accounts/dialect.py`. The SQL is written once and
+  the dialect supplies only what the engines genuinely spell differently, so
+  there is a single implementation of `spend` to be right about; the whole
+  accounts suite is parametrised over both backends, which is what makes
+  "Postgres preserves the SQLite ledger semantics" a test result rather than a
+  claim. `docs/accounts-operations.md` covers migrations and how to run the
+  Postgres half locally.
+
+  The **telemetry** store (`formforge/store.py` — `models`,
+  `generation_events`, `print_feedback`, `policy_events`) is still SQLite-only.
+  It is unrelated to billing and nothing in the payment path reads it. The
+  `vector(1536)` embedding column remains unimplemented on both engines.
+- **Auth, quotas, billing — built, and metered only when asked.**
+  `formforge/accounts/` implements identities, sessions, plans and an
+  append-only credit ledger; `formforge/api/accounts_router.py` puts it on
+  HTTP. The two hazards that produce wrong money rather than errors are both
+  guarded and tested: the concurrent spend (the balance is read and written
+  under one lock — `BEGIN IMMEDIATE` on SQLite, `SELECT … FOR UPDATE` on
+  Postgres) and the replayed write (a unique `idempotency_key`, so a retried
+  debit or a redelivered webhook is answered with the row the first attempt
+  wrote). Stripe sits behind the same interface as the offline provider, in
+  test mode, refusing a live key unless explicitly overridden.
+
+  **The gate is opt-in at construction.** `create_app()` with no `accounts=`
+  registers no auth routes, no billing routes and no credit check — which is
+  what the CLI, the MCP server and every self-hosted copy get, and there is a
+  test class asserting it. Passing an `AccountStore` mounts the lot.
+
+  **What that still does not include:** no password reset (no email-delivery
+  direction exists; see `docs/api-reference.md` for what must be decided
+  first), no live billing, and a rate limiter that is per-process rather than
+  shared.
 - **Physical print testing.** Every template carries a `tested` block, and those
   blocks are *unverified* — no model in this repository has been printed. Spec
   section 13.3 is right that thirty physical prints before launch is the highest

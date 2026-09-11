@@ -88,6 +88,8 @@ formforge templates                              # what is available
 formforge templates planter_halfmoon_wall        # parameters, ranges, print test
 formforge generate "a hex planter for a 4in pot"
 formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
+formforge vase --count 8 --style mixed                   # a shelf of vases
+formforge mushroom --count 8 --seed 42 --species mixed   # a population of STLs
 formforge check model.stl --profile bambu_p1s_0.4 --category planter
 formforge render model.stl --out previews/
 formforge rules --profile prusa_mk4_0.4          # the DFM rules being applied
@@ -107,6 +109,78 @@ substitute. Every DFM constant in this system is a conventional maker value;
 a print outcome recorded against a model is the only thing that can make one
 of them a measurement, and it lands next to what the validator measured at the
 time.
+
+### Generators
+
+A template is one model with sliders. A **generator** is the thing that decides
+where the sliders go, so one definition covers a population rather than a
+specimen:
+
+```bash
+formforge vase --count 8 --seed 42 --style mixed --out out/vases
+formforge sculpt --count 6 --style blade --render
+formforge holder --count 6 --style moon --render
+formforge watchtower --count 6 --style lighthouse --render
+formforge cupholder --count 6 --style podstakannik --render
+formforge mushroom --count 8 --seed 42 --species mixed
+formforge vase --explain                        # the definition, as a graph
+formforge vase --params-only --count 12         # the sliders, no geometry
+formforge mushroom --species parasol --set cap_d_mm=90 --render
+```
+
+Six definitions ship today: a **vase** in twenty-one silhouettes -- urn,
+amphora, bottle, bud, tulip, hourglass, cylinder, faceted, crystal, spiral,
+fluted, rippled, and nine more wrapped in a floral relief of vines, laurel,
+ferns, blossom, roses, lilies, damask, trellis or imbricated petals -- a
+**sculpt vase** in twelve more, which is the same silhouette
+machinery wearing solid blades, an oval plan and a cut mouth rather than a
+fluted wall -- a **candle holder** in twelve, from a ribbed heart to a pierced
+lantern to a dish with a crescent moon standing behind the flame -- a tabletop
+**watchtower** in twelve, storeys stepping in under galleried decks and a
+shingled spire -- an embossed **cup holder** in twelve, three registers of cast
+relief round a bored socket with a pierced bracket at the side -- and a detailed
+**mushroom** in seven species. They share a solver, a CLI command and one test
+that every generator in the catalog has to pass.
+
+The last three are where the domain starts arguing back. A tealight is 39 mm
+across whatever size holder you make, so the candle holder's socket is the one
+dimension that does *not* scale, and when the two conflict it is the body that
+grows. The watchtower is that rule pointing the other way: its structure all
+scales with the height, and what refuses to is the *detail* -- a clapboard
+course, a window recess, a mullion -- because those are measured in nozzles. A
+small tower is not a big one shrunk; it is one with fewer, coarser courses. The
+cup holder splits the difference: an acanthus leaf is cast at the size a leaf is
+cast at, so a bigger holder gets *more* of them rather than bigger ones, and
+what does not scale at all is the cup.
+
+Each run writes an STL, a STEP and a 3MF per specimen plus a `variations.json`
+with the parameters, bounding box and DFM verdict of each, so a population is
+reproducible from its manifest. The STEP is a real B-rep -- one solid whose cap
+is a surface of revolution and whose warts are spheres -- so it opens in
+SolidWorks or Fusion with its faces and edges intact. The same seed gives the same mushrooms on any
+machine, and member three of a population is member three whether you asked for
+four or forty.
+
+`web/studio.html` is the same definitions with a face on them: open the file in
+a browser -- no server, no build step -- and a tab per generator gives you every
+slider in that template, with the model rebuilding live, the printability rules
+checked as you move them, and buttons that export the mesh as STL or hand you a
+script that builds the STEP. It also writes the exact `formforge build` command
+for whatever is on screen, which is how a shape you liked in the browser becomes
+the validated, watertight model with STEP and 3MF beside it. All six
+generators are in it -- **Mushroom**, **Vase**, **Sculpt Vase**, **Candle
+Holder**, **Watchtower** and **Cup Holder** -- and a seventh is an entry in one
+registry at the bottom of the page.
+
+The definition follows Grasshopper's rules rather than its interface: sliders
+are the only free values, components are pure functions of their inputs wired
+into a DAG, and a solve is a deterministic walk of it. What that buys is a
+generator you can read a variation out of -- "why did this one come out squat"
+is answered by the node that decided it. `docs/mushroom-generator.md` maps each
+idea to where it lives; `docs/vase-generator.md`,
+`docs/sculpt-vase-generator.md`, `docs/candle-holder-generator.md`,
+`docs/watchtower-generator.md` and `docs/cup-holder-generator.md` are what is
+specific to the other five.
 
 ### From Claude, over MCP
 
@@ -138,6 +212,24 @@ regenerate is the clearest possible argument for the whole approach.
 `GET /v1/stats` reports template health and the dominant failure classes;
 `POST /v1/feedback` takes a print outcome and `GET /v1/stats/prints` reads it
 back beside what the validator measured at the time.
+
+Started with an account store (`formforge serve --accounts`) the same app is
+metered: sessions, a credit ledger, signed download links, and every model
+route gated on ownership. Without one it is exactly what it was before any of
+that existed — no signup, no session, no credit check, no billing routes at
+all. The free self-hosted path is not a tier, it is the absence of the whole
+mechanism.
+
+```bash
+formforge bootstrap --demo-user you@example.com   # directories, migrations, an account
+formforge preflight --environment staging         # is this deployment ready to serve
+formforge backup create && formforge backup verify backups/<latest>
+formforge events                                  # what gets logged about access and money
+```
+
+`docs/runbook.md` is the operator's copy of all of it; `docs/configuration.md`
+is every setting; `docs/staging-validation.md` is the script for a private
+staging pass before anyone outside the team is invited.
 
 ## How it works
 
@@ -223,6 +315,7 @@ than in a runbook.
 pytest                                             # the suite
 python -m formforge.eval.check_templates           # every template builds
 python -m formforge.eval.check_templates --extremes  # ...at every range extreme
+python -m formforge.eval.check_vase_relief        # the vase's floral motifs, lofted two ways
 python -m formforge.eval.benchmark                 # the metrics from the spec
 python -m formforge.eval.benchmark --baseline docs/benchmark-baseline.json
 ```
@@ -255,6 +348,10 @@ formforge/
   policy.py       IP and safety screening, before any geometry
   registry.py     the template registry, matching and routing
   store.py        the tables that cannot be backfilled
+  config.py       every setting, typed; production fails closed
+  logs.py         structured logging, and a filter that redacts credentials
+  storage.py      artifact storage: local filesystem or S3-compatible
+  accounts/       identities, sessions, credits, billing, password reset
   sandbox/        isolated execution and the in-sandbox runner
   validation/     the three tiers and the measurements behind them
   render/         numpy rasteriser, PNG encoder, section cuts
@@ -262,7 +359,10 @@ formforge/
   mcp/            the MCP server
   api/            the HTTP gateway
   eval/           the template harness and the benchmark
-  templates/      12 verified parametric definitions
+  generators/     dataflow definitions that decide where the sliders go
+  templates/      18 verified parametric definitions
+web/
+  studio.html     both definitions as a browser front end, no build step
 ```
 
 `docs/architecture.md` covers the parts that need more than a paragraph:

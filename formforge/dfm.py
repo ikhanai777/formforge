@@ -368,6 +368,23 @@ CATEGORY_RULES: dict[str, list[str]] = {
         "Print with the load path in-plane; never pull layers apart.",
         "Screw bosses need >= 2 mm of material around the shank.",
     ],
+    "vessel": [
+        "An FDM vessel does not hold water: the wall is a spiral of beads with a "
+        "seam. Say so, and suggest a liner, a test tube, or a coat of sealant.",
+        "Wall >= 3 extrusion widths, or exactly one if it is printed in vase mode.",
+        "Flat base wide enough to stay stuck for the whole print; a narrow base "
+        "under a wide belly wants a brim.",
+        "The rim prints last and is the easiest thing to knock: keep it at least "
+        "one wall thick.",
+        "No support: keep every overhang inside what the walls can bridge to.",
+    ],
+    "nature": [
+        "An organic form prints with supports; do not flatten the shape to avoid them.",
+        "Every feature must be at least one nozzle width thick -- a cap margin or a fin "
+        "that tapers to nothing prints as a gap.",
+        "The base must be flat and wide enough that the piece stands once supports come off.",
+        "One closed solid, not a pile of overlapping parts.",
+    ],
     "box": [
         "Lid clearance 0.30 mm per side.",
         "Fillet internal corners r >= 1.5 mm.",

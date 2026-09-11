@@ -27,6 +27,14 @@ best demo the product has.
 kernel.** The development runtime executes model-authored Python directly; that
 is fine on a laptop and a serious incident in production, so the check is code
 rather than a paragraph in a runbook.
+
+**Two deployments, one app.** Constructed without an account store this is the
+free self-hosted gateway: no sessions, no credits, every route open, exactly
+as it always was. Constructed *with* one it is the hosted product, and then
+every model route requires a session and checks ownership -- reads, the event
+stream, modify, slice and download alike. `/v1/stats` is not served at all in
+that mode: business aggregates belong to whoever runs the instance, and on a
+hosted one the operator reads them from the CLI.
 """
 
 from __future__ import annotations
@@ -48,10 +56,11 @@ try:
         FastAPI,
         HTTPException,
         Query,
+        Request,
         WebSocket,
         WebSocketDisconnect,
     )
-    from fastapi.responses import FileResponse, JSONResponse
+    from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
     from pydantic import BaseModel, Field
 
     FASTAPI_AVAILABLE = True
@@ -59,21 +68,56 @@ except ImportError:  # pragma: no cover - optional dependency
     FASTAPI_AVAILABLE = False
     BaseModel = object  # type: ignore[assignment,misc]
 
+from ..accounts import InsufficientCredits, plans
 from ..bundle import write_bundle
+from ..config import ConfigError, Mode, Settings
+from ..events import (
+    ARTIFACT_GONE,
+    ARTIFACT_LINK_REJECTED,
+    ARTIFACT_SERVED,
+    AUTHZ_DENIED,
+    CREDIT_REFUSED,
+    emit,
+)
 from ..dfm import DEFAULT_PROFILE_ID, PROFILES
 from ..llm import build_client
 from ..orchestrator import Orchestrator
 from ..registry import TemplateRegistry
 from ..sandbox import GeometrySandbox
 from ..slicer import slice_model
+from ..storage import (
+    LINK_TTL_SECONDS,
+    StorageError,
+    artifact_key,
+    open_storage,
+    sign_download,
+    verify_download,
+)
 from ..store import PRINT_ISSUES, Store
 
-STORE_DIR = Path(os.environ.get("FORMFORGE_STORE", Path.home() / ".formforge" / "models"))
+STORE_DIR = Settings.from_env().model_dir
 
 # How many events to retain per job for a client that connects late. A loop
 # emits well under this, so a client that connects after the run finished still
 # gets the whole story.
 EVENT_BUFFER = 256
+
+# Download formats mapped to the names the plans use. `3mf` and `stl` are both
+# meshes but only STL is on the free tier, so they are not interchangeable
+# here; `source` covers the generating script.
+_PLAN_FORMAT = {"3mf": "3mf", "stl": "stl", "step": "step", "source": "source"}
+
+# What each format is called when it reaches the user's disk. One definition,
+# because the session route and the signed-link route must not disagree about
+# the name of the file they are serving.
+_FILENAMES = {
+    "3mf": "model.3mf",
+    "stl": "model.stl",
+    "step": "model.step",
+    "source": "source.py",
+    "params": "params.json",
+    "report": "report.json",
+}
 
 
 @dataclass
@@ -89,6 +133,9 @@ class Job:
     result: Any = None
     error: str = ""
     parent_id: str | None = None
+    # Whose build this is, on a metered deployment. None on the free
+    # self-hosted path, which is what makes every credit check a no-op there.
+    owner_id: str | None = None
 
     @property
     def progress(self) -> float:
@@ -179,6 +226,14 @@ if FASTAPI_AVAILABLE:
     class ModifyRequest(BaseModel):
         param_changes: dict[str, Any]
 
+    class TemplateBuildRequest(BaseModel):
+        # Exact parameters, not a prompt and not a sample. This is what the
+        # studio's sliders produce, and what `formforge build --set k=v` has
+        # always been able to do from the command line.
+        params: dict[str, Any] = Field(default_factory=dict)
+        printer_profile: str = DEFAULT_PROFILE_ID
+        material: str = "PLA"
+
     class SliceRequest(BaseModel):
         printer_profile: str | None = None
         quality: str = "standard"
@@ -209,15 +264,46 @@ def create_app(
     store_dir: Path | None = None,
     db: Store | None = None,
     allow_unsafe_sandbox: bool = False,
+    accounts: Any = None,
+    billing_provider: Any = None,
+    settings: Settings | None = None,
+    mailer: Any = None,
+    storage: Any = None,
 ):
-    """Build the FastAPI application."""
+    """Build the FastAPI application.
+
+    `accounts` is what turns this from the free self-hosted gateway into the
+    hosted product. Left as None -- which is the default, and what the CLI, the
+    MCP server and anyone running their own copy get -- there are no auth
+    routes, no billing routes, no sessions and no credit check anywhere in the
+    request path. Passing an `AccountStore` mounts all of it.
+
+    The switch is a constructor argument rather than a setting read from the
+    environment inside a handler, so "is this deployment metered?" is decided
+    once, at startup, by the caller who knows.
+    """
     if not FASTAPI_AVAILABLE:
         raise RuntimeError(
             "FastAPI is not installed. Install it with `pip install "
             "'formforge[api]'` to run the HTTP gateway."
         )
 
-    store = Path(store_dir or STORE_DIR)
+    _settings = settings or Settings.from_env()
+    if _settings.mode.is_deployed:
+        # A deployed mode validates at startup. Production raises; staging
+        # reports and continues, because blocking a staging box on a missing
+        # origin allowlist helps nobody.
+        problems = _settings.problems()
+        if problems and _settings.mode is Mode.PRODUCTION:
+            raise ConfigError("refusing to start: " + "; ".join(problems))
+        for problem in problems:
+            log.warning("configuration: %s", problem)
+
+    store = Path(store_dir or _settings.model_dir)
+    # The artifact store. Present on every deployment, but only *written* when
+    # metered: the free self-hosted path serves generated files straight from
+    # the bundle directory, exactly as it always has.
+    artifacts = storage if storage is not None else open_storage(_settings.artifacts)
     store.mkdir(parents=True, exist_ok=True)
     templates = registry or TemplateRegistry.load(strict=False)
     sandbox = GeometrySandbox(keep_workdir=True)
@@ -261,12 +347,193 @@ def create_app(
         ),
     )
 
+    # -- accounts (only when this deployment is metered) ----------------
+    metered = accounts is not None
+    # Signs download links. Generated per process when unset, which means a
+    # restart invalidates outstanding links and a second worker rejects the
+    # first's -- acceptable on a laptop for something that lives five minutes,
+    # and an outage in a deployment. `Settings.problems()` reports it and
+    # production refuses to start without it, so the fallback is only ever
+    # reached locally.
+    _link_secret = _settings.link_secret.reveal() or uuid.uuid4().hex
+    if metered:
+        from .accounts_router import build_accounts_router
+        from .security import COOKIE_NAME
+
+        provider = billing_provider or _default_provider()
+        router = build_accounts_router(
+            accounts, provider, store=database, mailer=mailer, settings=_settings
+        )
+        app.include_router(router)
+
+        def _session_user(request) -> dict[str, Any] | None:
+            return accounts.user_for_token(request.cookies.get(COOKIE_NAME) or "")
+
+        def _require_owner(model_id: str, request) -> dict[str, Any]:
+            """The account this model belongs to, or a refusal.
+
+            Every model route on a metered deployment goes through this. It
+            did not exist in Phase 1, which gated the download path and left
+            the rest open: an anonymous request could read another account's
+            prompt, parameters and generated source, and `modify` would start
+            a whole new generation from someone else's model with no owner and
+            no credit check. Model ids are UUID4 and hard to guess, but ids
+            leak through URLs, logs and referrer headers, and unguessable is
+            not the same as authorised.
+
+            Ownership is read from *both* places it can live, because a
+            generation that is still running has no `models` row yet -- the
+            row is written when it finishes -- so the in-memory job is the
+            only record of who started it. A model with no owner in either
+            place is refused rather than allowed: on a metered deployment an
+            ownerless model is a bug, and the safe reading of a bug is no.
+
+            The refusal is 404 rather than 403 for a model that exists but
+            belongs to somebody else. A 403 confirms the id names something
+            real, which turns every one of these routes into an oracle for
+            enumerating other people's models.
+            """
+            route = str(request.url.path)
+            user = _session_user(request)
+            if user is None:
+                emit(log, AUTHZ_DENIED, route=route, reason="no_session",
+                     model_id=model_id)
+                raise HTTPException(status_code=401, detail="Not signed in.")
+            job = jobs.for_model(model_id)
+            record = database.get_model(model_id)
+            owner = (job.owner_id if job else None) or (
+                record.get("user_id") if record else None
+            )
+            if owner is None or owner != user["id"]:
+                # The caller is told 404 either way. The log keeps the
+                # distinction, because "somebody is walking ids they do not
+                # own" and "an ownerless model exists" are different problems
+                # and only one of them is an attack.
+                emit(log, AUTHZ_DENIED, route=route,
+                     reason="ownerless" if owner is None else "not_owner",
+                     user_id=user["id"], model_id=model_id)
+                raise HTTPException(status_code=404, detail="No such model.")
+            return user
+
+        def _authorise_download(model_id: str, fmt: str, request) -> dict[str, Any]:
+            """Three separate questions, answered in the order that leaks least.
+
+            1. Is anyone signed in?
+            2. Is this model *theirs*? Answered from the persisted `user_id`,
+               and a model belonging to somebody else gets a 404 rather than a
+               403 -- a 403 confirms the id names something real, which turns
+               this endpoint into an oracle for enumerating other people's
+               model ids.
+            3. Was it paid for, and does their plan include this format?
+
+            Ownership before payment, deliberately: telling a stranger whether
+            somebody else's model has been paid for is a disclosure in itself.
+            """
+            route = str(request.url.path)
+            user = _session_user(request)
+            if user is None:
+                emit(log, AUTHZ_DENIED, route=route, reason="no_session",
+                     model_id=model_id)
+                raise HTTPException(status_code=401, detail="Not signed in.")
+
+            record = database.get_model(model_id)
+            if record is None or record.get("user_id") != user["id"]:
+                emit(log, AUTHZ_DENIED, route=route, reason="not_owner",
+                     user_id=user["id"], model_id=model_id)
+                raise HTTPException(status_code=404, detail="No such model.")
+
+            # Metadata about their own build is not the paid artifact; the
+            # report and the parameters are what a user needs to see *why* a
+            # build cost what it did, and paywalling those makes a refund
+            # argument unanswerable.
+            if fmt in ("report", "params"):
+                return user
+
+            if accounts.spend_for_model(model_id) is None:
+                raise HTTPException(
+                    status_code=402,
+                    detail=(
+                        "This model has not been paid for. Add credits and it "
+                        "will be available."
+                    ),
+                )
+            if not plans.allows_format(user["plan"], _PLAN_FORMAT.get(fmt, fmt)):
+                tier = plans.get(user["plan"])
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        f"The {tier.name} plan includes "
+                        f"{', '.join(tier.formats).upper()}. Upgrade to export {fmt.upper()}."
+                    ),
+                )
+            return user
+
     # -- generation ----------------------------------------------------
     @app.post("/v1/generate", status_code=202)
-    async def generate(request: GenerateRequest, background: BackgroundTasks):
+    async def generate(request: GenerateRequest, background: BackgroundTasks, http: Request):
+        owner = None
+        if metered:
+            user = _session_user(http)
+            if user is None:
+                raise HTTPException(status_code=401, detail="Not signed in.")
+            # Checked before the sandbox runs, not after. A build costs real
+            # CPU and a user with no credits cannot pay for it, so refusing up
+            # front is both cheaper and a clearer answer than letting them wait
+            # for a model they will not be allowed to download.
+            #
+            # This is a *pre-check*, not a reservation: the credit is taken
+            # after validation passes. Two builds started together can both
+            # pass here and only one be paid for, which is handled where it
+            # happens -- see `_charge_for`.
+            accounts.roll_to_current_period(user["id"])
+            if accounts.balance(user["id"]) < 1:
+                raise HTTPException(
+                    status_code=402,
+                    detail="You have no credits left. Add credits to keep building.",
+                )
+            owner = user["id"]
         job = jobs.create()
+        job.owner_id = owner
         background.add_task(_run_generation, job, request)
         return {"job_id": job.job_id, "model_id": job.model_id, "status": "queued"}
+
+    def _charge_for(job: Job, result) -> None:
+        """Take the credit for a finished build. Only ever called on success.
+
+        The rule, which resolves retries, refreshes and mid-flight crashes
+        together: one credit per model, keyed on the model id, at the moment
+        validation passes. A second attempt to record the same build is a
+        no-op rather than a second charge, so a retried request is free; and a
+        crash between here and the file reaching the browser leaves the user
+        charged *and* entitled, because entitlement is this ledger row and the
+        artifacts are still on disk.
+
+        If the balance went to zero between the pre-check and here -- two
+        builds racing for one last credit -- the model is kept, unpaid. It
+        becomes downloadable when they have a credit again. Nobody is
+        overcharged and nobody gets a paid export they did not pay for.
+        """
+        if not metered or not job.owner_id or result.status != "ok":
+            return
+        try:
+            # The `credit.spent` event is emitted by the store, from the one
+            # place every ledger movement passes through and only after the
+            # transaction commits. Emitting a second one here would double
+            # every spend in the stream.
+            accounts.spend(
+                job.owner_id,
+                model_id=result.model_id,
+                note=f"{result.template_id or 'freeform'} build",
+            )
+        except InsufficientCredits as exc:
+            emit(log, CREDIT_REFUSED, user_id=job.owner_id,
+                 balance=exc.balance, requested=exc.requested)
+            log.warning(
+                "model %s finished but could not be paid for; kept unpaid",
+                result.model_id,
+            )
+        except Exception:
+            log.exception("could not record the charge for model %s", result.model_id)
 
     async def _run_generation(job: Job, request: GenerateRequest) -> None:
         loop = asyncio.get_running_loop()
@@ -289,7 +556,7 @@ def create_app(
                 interactive=request.interactive,
                 on_event=on_event,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.exception("generation %s failed", job.job_id)
             job.status = "failed"
             job.error = f"{type(exc).__name__}: {exc}"
@@ -313,11 +580,16 @@ def create_app(
                 write_bundle, result, store / result.model_id / "bundle", template=template
             )
             result.artifacts.update(bundle.files)
+            if metered and job.owner_id:
+                _store_artifacts(job, result)
 
         # Persisted for every terminal status, not just success: a store that
         # holds only the runs that worked cannot answer a question worth
         # asking. The write is best-effort by design -- see store.Store.
-        database.record_generation(result, parent_id=job.parent_id)
+        database.record_generation(result, user_id=job.owner_id, parent_id=job.parent_id)
+        # After the record, so a charge always has a model row behind it, and
+        # after validation, so only a build that actually succeeded is billable.
+        _charge_for(job, result)
         _record_policy(result)
 
         jobs.publish(
@@ -326,20 +598,41 @@ def create_app(
         )
 
     @app.get("/v1/models/{model_id}")
-    async def get_model(model_id: str):
+    async def get_model(model_id: str, http: Request):
+        if metered:
+            _require_owner(model_id, http)
         job = _require_model(model_id)
         if job.result is None:
             return JSONResponse(job.as_status(), status_code=202)
         return job.result.as_dict()
 
     @app.get("/v1/models/{model_id}/status")
-    async def get_status(model_id: str):
+    async def get_status(model_id: str, http: Request):
+        if metered:
+            _require_owner(model_id, http)
         return _require_model(model_id).as_status()
 
     @app.websocket("/v1/models/{model_id}/stream")
     async def stream(websocket: WebSocket, model_id: str):
         await websocket.accept()
         job = jobs.for_model(model_id)
+        if metered:
+            # The socket replays every step of a generation -- the prompt, the
+            # parameters, the validator's findings. Same ownership rule as the
+            # HTTP routes, and the same refusal for a model that is not yours:
+            # a close code that does not distinguish "no such model" from "not
+            # yours" is what keeps this from being an enumeration oracle.
+            user = accounts.user_for_token(websocket.cookies.get(COOKIE_NAME) or "")
+            record = database.get_model(model_id)
+            owner = (job.owner_id if job else None) or (
+                record.get("user_id") if record else None
+            )
+            if user is None or owner is None or owner != user["id"]:
+                await websocket.send_json({"error": "not found"})
+                # 1008: policy violation. Deliberately the same for
+                # unauthenticated and for somebody else's model.
+                await websocket.close(code=1008)
+                return
         if job is None:
             await websocket.send_json({"error": f"no model {model_id}"})
             await websocket.close()
@@ -365,7 +658,24 @@ def create_app(
             jobs.unsubscribe(job, queue)
 
     @app.post("/v1/models/{model_id}/modify", status_code=202)
-    async def modify(model_id: str, request: ModifyRequest, background: BackgroundTasks):
+    async def modify(
+        model_id: str, request: ModifyRequest, background: BackgroundTasks, http: Request
+    ):
+        owner = None
+        if metered:
+            # A modification is a new generation: it runs the sandbox and
+            # produces a downloadable model, so it costs a credit and is
+            # checked exactly like `generate`. Before this it was neither
+            # owned nor charged, which made it an unauthenticated way to spend
+            # somebody else's compute.
+            user = _require_owner(model_id, http)
+            accounts.roll_to_current_period(user["id"])
+            if accounts.balance(user["id"]) < 1:
+                raise HTTPException(
+                    status_code=402,
+                    detail="You have no credits left. Add credits to keep building.",
+                )
+            owner = user["id"]
         parent = _require_model(model_id)
         if parent.result is None or not parent.result.template_id:
             raise HTTPException(
@@ -376,6 +686,7 @@ def create_app(
                 ),
             )
         child = jobs.create(parent_id=model_id)
+        child.owner_id = owner
         template_id = parent.result.template_id
         merged = {**(parent.result.params or {}), **request.param_changes}
 
@@ -397,13 +708,20 @@ def create_app(
             # Recorded with its parent: a modification is a new model with a
             # parent, never an edit in place, and the lineage is only useful
             # if it outlives the process.
-            database.record_generation(result, parent_id=child.parent_id)
+            database.record_generation(
+                result, user_id=child.owner_id, parent_id=child.parent_id
+            )
+            _charge_for(child, result)
 
         background.add_task(run)
         return {"job_id": child.job_id, "model_id": child.model_id, "parent_id": model_id}
 
     @app.post("/v1/models/{model_id}/slice", status_code=202)
-    async def slice_endpoint(model_id: str, request: SliceRequest, background: BackgroundTasks):
+    async def slice_endpoint(
+        model_id: str, request: SliceRequest, background: BackgroundTasks, http: Request
+    ):
+        if metered:
+            _require_owner(model_id, http)
         job = _require_result(model_id)
         source = job.result.artifacts.get("3mf") or job.result.artifacts.get("stl")
         if not source:
@@ -424,30 +742,74 @@ def create_app(
         background.add_task(run)
         return {"job_id": job.job_id, "status": "queued"}
 
+    @app.post("/v1/models/{model_id}/download-link")
+    async def download_link(
+        model_id: str,
+        http: Request,
+        format: str = Query("3mf", pattern="^(3mf|stl|step|source|params|report)$"),
+    ):
+        """A short-lived URL that carries its own authorisation.
+
+        For the cases a session cookie cannot reach -- handing a URL to a
+        download manager, or (once artifacts live in a bucket) letting the
+        bucket serve it directly. The session route is still the primary path.
+
+        The entitlement checks run *here*, at minting time, so a token can only
+        ever exist for a file its holder was already allowed to fetch.
+        """
+        if not metered:
+            raise HTTPException(
+                status_code=404, detail="signed links are only issued on a metered deployment"
+            )
+        user = _authorise_download(model_id, format, http)
+        token = sign_download(
+            _link_secret, user_id=user["id"], model_id=model_id, fmt=format
+        )
+        return {
+            "url": f"/v1/download/{token}",
+            "expires_in": LINK_TTL_SECONDS,
+            "format": format,
+        }
+
+    @app.get("/v1/download/{token}")
+    async def download_signed(token: str):
+        """Serve a file to whoever holds a valid token.
+
+        No session required -- that is the point of the token, and also its
+        cost: within its few minutes it is a bearer credential for exactly one
+        model in exactly one format. Re-checking entitlement here as well as at
+        minting time, because a subscription can lapse or a refund can land in
+        between, and a token is not a promise about the future.
+        """
+        if not metered:
+            raise HTTPException(status_code=404, detail="not found")
+        try:
+            grant = verify_download(_link_secret, token)
+        except StorageError as exc:
+            # The token is not a field. It is a bearer credential for one
+            # model, and a rejected one is often a valid one that arrived late.
+            emit(log, ARTIFACT_LINK_REJECTED, reason=type(exc).__name__)
+            log.info("rejected a download token: %s", exc)
+            raise HTTPException(status_code=403, detail="This link is invalid or has expired.") \
+                from None
+        record = database.get_model(grant.model_id)
+        if record is None or record.get("user_id") != grant.user_id:
+            raise HTTPException(status_code=404, detail="No such model.")
+        if grant.fmt not in ("report", "params") and accounts.spend_for_model(
+            grant.model_id
+        ) is None:
+            raise HTTPException(status_code=402, detail="This model has not been paid for.")
+        return _serve(grant.model_id, grant.fmt)
+
     @app.get("/v1/models/{model_id}/download")
     async def download(
         model_id: str,
+        http: Request,
         format: str = Query("3mf", pattern="^(3mf|stl|step|source|params|report)$"),
     ):
-        job = _require_result(model_id)
-        path = job.result.artifacts.get(format)
-        if not path or not Path(path).exists():
-            raise HTTPException(
-                status_code=404,
-                detail=(
-                    f"this model has no {format} artifact. The STEP export is "
-                    "only produced on the parametric path."
-                ),
-            )
-        filename = {
-            "3mf": "model.3mf",
-            "stl": "model.stl",
-            "step": "model.step",
-            "source": "source.py",
-            "params": "params.json",
-            "report": "report.json",
-        }[format]
-        return FileResponse(path, filename=filename)
+        if metered:
+            _authorise_download(model_id, format, http)
+        return _serve(model_id, format)
 
     # -- catalogue -----------------------------------------------------
     @app.get("/v1/templates")
@@ -462,6 +824,129 @@ def create_app(
             return templates.get(template_id).detail()
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from None
+
+    @app.post("/v1/templates/{template_id}/build", status_code=202)
+    async def build_template(
+        template_id: str,
+        request: TemplateBuildRequest,
+        background: BackgroundTasks,
+        http: Request,
+    ):
+        """Build a template from parameters somebody chose.
+
+        The third way in, beside a prompt and a generator, and the one the
+        studio needs: a person moving sliders already knows exactly what they
+        want, so asking them to describe it in English and hope the parser
+        agrees would be a worse product and a worse test of the geometry.
+
+        `formforge build <template> --set k=v` has done this from the command
+        line since the beginning. Everything here is the same call underneath.
+        """
+        owner = None
+        if metered:
+            user = _session_user(http)
+            if user is None:
+                raise HTTPException(status_code=401, detail="Not signed in.")
+            accounts.roll_to_current_period(user["id"])
+            if accounts.balance(user["id"]) < 1:
+                raise HTTPException(
+                    status_code=402,
+                    detail="You have no credits left. Add credits to keep building.",
+                )
+            owner = user["id"]
+
+        try:
+            template = templates.get(template_id)
+        except KeyError:
+            raise HTTPException(
+                status_code=404, detail=f"no template {template_id!r}"
+            ) from None
+
+        # Merged against the template's defaults first, so a caller may send
+        # only what they changed; then validated, so a value outside the range
+        # the geometry has been swept across is a 422 rather than a build that
+        # fails four minutes later.
+        merged = template.merge_params(request.params or {})
+        problems = template.validate_params(merged)
+        if problems:
+            raise HTTPException(status_code=422, detail="; ".join(problems))
+
+        job = jobs.create()
+        job.owner_id = owner
+        background.add_task(
+            _run_specimen, job, None, template, merged,
+            request.printer_profile, request.material, template_id,
+        )
+        return {"job_id": job.job_id, "model_id": job.model_id, "status": "queued"}
+
+    # -- generators --------------------------------------------------------
+
+    async def _run_specimen(
+        job: Job, generator, template, params: dict, profile: str, material: str,
+        template_id: str | None = None,
+    ) -> None:
+        """One specimen, through the ordinary build path.
+
+        Deliberately mirrors `_run_generation` rather than the CLI's
+        `_build_specimens`: that one writes to a directory and knows nothing
+        about owners, credits or the artifact store, which is exactly why the
+        generators could not be served over HTTP before.
+        """
+        loop = asyncio.get_running_loop()
+
+        def on_event(event) -> None:
+            job.phase = event.phase
+            job.step = event.step
+            loop.call_soon_threadsafe(jobs.publish, job, event.as_dict())
+
+        job.status = "running"
+        # A prompt is required by the signature and is recorded with the
+        # model; for a build that came from sliders there is no English
+        # description, so the template says what it is.
+        target = generator.template_id if generator else template_id
+        prompt = (
+            f"{generator.name}: {generator.describe(params)}" if generator
+            else f"{template.display_name} built from parameters"
+        )
+        try:
+            result = await asyncio.to_thread(
+                engine.generate,
+                prompt,
+                printer_profile=profile,
+                material=material,
+                interactive=False,
+                template_id=target,
+                params=params,
+                on_event=on_event,
+            )
+        except Exception as exc:
+            log.exception("build %s failed", job.job_id)
+            job.status = "failed"
+            job.error = f"{type(exc).__name__}: {exc}"
+            jobs.publish(job, {"phase": "failed", "ok": False, "message": job.error})
+            return
+
+        result.model_id = job.model_id
+        job.result = result
+        job.status = result.status
+        job.phase = "done"
+
+        if result.status == "ok":
+            bundle = await asyncio.to_thread(
+                write_bundle, result, store / result.model_id / "bundle", template=template
+            )
+            result.artifacts.update(bundle.files)
+            if metered and job.owner_id:
+                _store_artifacts(job, result)
+
+        database.record_generation(result, user_id=job.owner_id, parent_id=job.parent_id)
+        _charge_for(job, result)
+        _record_policy(result)
+        jobs.publish(
+            job,
+            {"phase": "done", "ok": result.ok, "message": result.message,
+             "status": result.status},
+        )
 
     @app.get("/v1/profiles")
     async def list_profiles():
@@ -480,8 +965,24 @@ def create_app(
         }
 
     @app.post("/v1/feedback", status_code=201)
-    async def feedback(request: FeedbackRequest):
+    async def feedback(request: FeedbackRequest, http: Request):
+        """Record what happened to a print.
+
+        The model id arrives in the *body* rather than the path, which is why
+        this route was missed when every path-parameter route was gated: an
+        anonymous caller could write a `print_feedback` row against somebody
+        else's model, and the 201-versus-404 split answered whether a model id
+        existed. Both matter. `print_feedback` is the only ground truth this
+        system has for whether any of it prints and it cannot be
+        reconstructed, so a stranger able to write to it can quietly poison
+        the dataset every DFM constant will eventually be tuned from.
+
+        Ownership uses the same helper as every other model route, so the
+        refusal is the same 404 and this stops being an existence oracle.
+        """
         payload = request.model_dump()
+        if metered:
+            _require_owner(payload["model_id"], http)
         unknown = [i for i in payload.get("issues") or [] if i not in PRINT_ISSUES]
         if unknown:
             raise HTTPException(
@@ -509,7 +1010,15 @@ def create_app(
         The three questions this system cannot answer without persistence:
         which templates are quietly failing, which errors actually dominate,
         and whether any of it prints.
+
+        **Not served on a metered deployment.** These are business aggregates
+        -- how many generations, what they cost, which templates are failing --
+        and they belong to whoever runs the instance, not to whoever can reach
+        it. On a self-hosted copy that is the same person, so it stays open
+        there. On a hosted one the operator reads them from the CLI, which
+        needs no second privilege tier on the public API to exist.
         """
+        _refuse_if_metered()
         return {
             "totals": database.totals(),
             "templates": database.template_health(),
@@ -523,16 +1032,21 @@ def create_app(
         Empty until real prints are reported, and that is the honest state:
         every DFM constant in this system is a conventional maker value until
         this endpoint has rows behind it.
+
+        Not served on a metered deployment; see `/v1/stats`.
         """
+        _refuse_if_metered()
         return {"outcomes": database.print_outcomes()}
 
     @app.get("/v1/models/{model_id}/events")
-    async def model_events(model_id: str):
+    async def model_events(model_id: str, http: Request):
         """The per-step log for one generation.
 
         A four-iteration run is inexplicable without this: you can see that it
         took four attempts but not what changed between them.
         """
+        if metered:
+            _require_owner(model_id, http)
         events = database.events_for(model_id)
         if not events and database.get_model(model_id) is None:
             raise HTTPException(status_code=404, detail=f"no model {model_id}")
@@ -540,12 +1054,26 @@ def create_app(
 
     @app.get("/healthz")
     async def health():
+        """Liveness, and dependency state on an unmetered deployment.
+
+        A load balancer polls this every few seconds from anywhere that can
+        reach the port. On a *metered* deployment that is a stranger, so the
+        answer narrows to the one bit a probe needs: template counts, sandbox
+        internals and store totals all describe the deployment to whoever
+        asked. Self-hosted, the person asking runs the thing, and the detail is
+        what makes the endpoint useful -- so it stays.
+
+        Readiness -- can it actually serve? -- is `/readyz`.
+        """
         totals = database.totals()
+        # Telemetry writes are swallowed by design so they can never fail a
+        # generation, which means a broken database is silent unless a health
+        # check looks for it. This is where it looks.
+        ok = totals["write_failures"] == 0
+        if metered:
+            return {"ok": ok}
         return {
-            # Telemetry writes are swallowed by design so they can never fail a
-            # generation, which means a broken database is silent unless a
-            # health check looks for it. This is where it looks.
-            "ok": totals["write_failures"] == 0,
+            "ok": ok,
             "templates": len(templates),
             "sandbox": sandbox.describe(),
             "model_client": engine.client.available,
@@ -554,6 +1082,57 @@ def create_app(
                 "prints_reported": totals["prints_reported"],
                 "write_failures": totals["write_failures"],
             },
+        }
+
+    @app.get("/readyz")
+    async def ready():
+        """Readiness: can this process serve a request?
+
+        Checks the things whose absence makes the answer no. Reports *whether*,
+        never *what* -- a failing check says "accounts", not the DSN it could
+        not reach.
+
+        503 rather than 200-with-a-flag, so an orchestrator takes the instance
+        out of rotation instead of sending traffic at a broken one.
+        """
+        checks: dict[str, str] = {}
+        healthy = True
+        try:
+            database.totals()
+            checks["telemetry"] = "ok"
+        except Exception:
+            log.exception("readiness: the telemetry store did not answer")
+            checks["telemetry"] = "unavailable"
+            healthy = False
+        if metered:
+            try:
+                # A read that is guaranteed to miss: it proves the database
+                # answers without depending on any particular row existing.
+                accounts.get_user_by_email("readiness-probe@invalid")
+                checks["accounts"] = "ok"
+            except Exception:
+                log.exception("readiness: the account store did not answer")
+                checks["accounts"] = "unavailable"
+                healthy = False
+        checks["sandbox"] = "isolated" if sandbox.production_ready() else "not-isolated"
+        body = {"ok": healthy, "checks": checks}
+        return body if healthy else JSONResponse(body, status_code=503)
+
+    @app.get("/v1/meta")
+    async def meta():
+        """What this deployment is, for an operator rather than a probe.
+
+        `Settings.describe()` names modes and says whether each secret is set,
+        never what it is. Not served when metered: even that much describes
+        somebody else's deployment to a stranger, and an operator there has
+        the CLI.
+        """
+        _refuse_if_metered()
+        return {
+            "config": _settings.describe(),
+            "templates": len(templates),
+            "sandbox": sandbox.describe(),
+            "model_client": engine.client.available,
         }
 
     # -- helpers -------------------------------------------------------
@@ -584,6 +1163,75 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"no model {model_id}")
         return job
 
+    def _store_artifacts(job: Job, result) -> None:
+        """Copy a finished build into the artifact store and record it.
+
+        Recorded in the account store rather than only on disk, because "what
+        files exist, whose are they, and are they still there" is a question
+        about storage cost and retention that a directory listing answers
+        badly and a deleted directory answers not at all.
+
+        Best-effort: a storage failure must not fail a generation the user has
+        already waited for and been charged for. It is logged, and the download
+        path falls back to the bundle directory, which is still there.
+        """
+        for fmt, path in list(result.artifacts.items()):
+            try:
+                source = Path(path)
+                if not source.exists():
+                    continue
+                key = artifact_key(result.model_id, fmt)
+                artifacts.put(key, source)
+                accounts.record_artifact(
+                    result.model_id, fmt, key,
+                    user_id=job.owner_id, size=source.stat().st_size,
+                )
+            except Exception:
+                log.exception("could not store the %s artifact for %s", fmt, result.model_id)
+
+    def _refuse_if_metered() -> None:
+        if metered:
+            raise HTTPException(status_code=404, detail="Not found.")
+
+    def _serve(model_id: str, fmt: str):
+        """Hand back one artifact, whoever has already been authorised for it.
+
+        Storage first when this deployment records artifacts, because that is
+        the copy whose lifecycle is tracked. A row marked deleted answers 410
+        rather than 404: the model existed and the file is gone, which is a
+        different thing from never having had one, and the difference is what
+        a support conversation turns on.
+        """
+        if metered:
+            for row in accounts.artifacts_for(model_id):
+                if row["fmt"] != fmt:
+                    continue
+                if row["status"] == "deleted":
+                    emit(log, ARTIFACT_GONE, model_id=model_id, fmt=fmt)
+                    raise HTTPException(
+                        status_code=410,
+                        detail="This file has been deleted under the retention policy.",
+                    )
+                try:
+                    stream = artifacts.open(row["storage_key"])
+                except StorageError:
+                    break  # fall through to the bundle directory
+                emit(log, ARTIFACT_SERVED, model_id=model_id, fmt=fmt, via="storage")
+                return StreamingResponse(
+                    stream,
+                    media_type="application/octet-stream",
+                    headers={
+                        "content-disposition": f'attachment; filename="{_FILENAMES[fmt]}"'
+                    },
+                )
+        job = _require_result(model_id)
+        path = job.result.artifacts.get(fmt)
+        if not path or not Path(path).exists():
+            raise HTTPException(status_code=404, detail=f"this model has no {fmt} artifact")
+        if metered:
+            emit(log, ARTIFACT_SERVED, model_id=model_id, fmt=fmt, via="bundle")
+        return FileResponse(path, filename=_FILENAMES[fmt])
+
     def _require_result(model_id: str) -> Job:
         job = _require_model(model_id)
         if job.result is None:
@@ -593,9 +1241,53 @@ def create_app(
             )
         return job
 
+    # The pieces a test needs to stand in for a real generation. Exposed
+    # deliberately rather than reached for through closures: the alternative is
+    # tests that reimplement the charging and recording steps, which makes them
+    # agree with a copy of the logic rather than with the logic.
+    # -- the browser front end -----------------------------------------
+    # Only on a metered deployment, for the same reason the account routes
+    # are: every page here is about an account, and serving a sign-in form
+    # against a gateway with no accounts would be a door onto a wall. A
+    # self-hosted copy keeps the CLI and the JSON API and gains nothing it
+    # has to reason about.
+    #
+    # Same origin as the API, which is what lets the session stay an HttpOnly
+    # cookie: a front end on another origin would need a token JavaScript can
+    # read, and that is strictly worse. These routes serve identical bytes to
+    # everyone; all authorising happens in the JSON API above. See `web.py`.
+    if metered:
+        from .web import build_web_router
+
+        app.include_router(build_web_router())
+
+    app.state.formforge = {
+        "jobs": jobs,
+        "db": database,
+        "accounts": accounts,
+        "charge": _charge_for,
+        "store_dir": store,
+        "metered": metered,
+        "artifacts": artifacts,
+        "settings": _settings,
+    }
     return app
 
 
 app = None
 if FASTAPI_AVAILABLE and os.environ.get("FORMFORGE_AUTO_APP") == "1":  # pragma: no cover
     app = create_app()
+
+
+def _default_provider():
+    """The billing provider to use when the caller named none.
+
+    Falls back to the offline one rather than to Stripe. A deployment that
+    means to take money says so explicitly; defaulting the other way means a
+    misconfiguration silently starts talking to a payment processor, which is
+    the wrong direction to be wrong in.
+    """
+    from ..accounts import OfflineProvider
+    from ..accounts.stripe_provider import provider_from_env
+
+    return provider_from_env() or OfflineProvider()

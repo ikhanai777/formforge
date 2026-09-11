@@ -1,0 +1,320 @@
+"""The payment processor, behind an interface, and what its events mean.
+
+Which processor this will be is `docs/monetization-site-spec.md` open question
+4, and it is still open. That is a reason to build this way rather than a
+reason to wait: everything below the adapter -- what a renewal does to a
+ledger, what a failed payment does to a plan -- is the same whoever takes the
+card, and it is the part that can be got wrong in ways that cost real money.
+So the processor is a small interface with a normalised event vocabulary, and
+answering question 4 means writing one adapter against a handler that is
+already tested.
+
+`OfflineProvider` is a working implementation with no credentials, in the same
+spirit as `OfflineClient` in `formforge/llm.py`: the whole flow -- signup,
+subscribe, renew, cancel, spend -- runs end to end in CI and on a laptop, and
+signature verification is real HMAC rather than a stub that returns True. What
+it cannot do is move money, and it says so on every event it produces.
+
+The trust boundary is `verify_webhook`. Everything arriving there is attacker
+controlled until the signature checks out: a forged `subscription.renewed` is
+free credits, and a forged `credits.purchased` is free money. Treat any
+implementation of that method as security code.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import logging
+import secrets
+import time
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Protocol
+
+from ..events import (
+    WEBHOOK_ACCEPTED,
+    WEBHOOK_DUPLICATE,
+    WEBHOOK_STALE,
+    emit,
+)
+from . import plans
+from .store import AccountStore
+
+log = logging.getLogger("formforge.accounts.billing")
+
+# The internal vocabulary. Adapters translate their processor's event names
+# into these; nothing downstream of an adapter knows what a processor calls
+# anything. Keeping this small is deliberate -- each one is a distinct thing
+# that happens to a balance, and an event type nobody acts on is a webhook
+# handler that silently drops a payment.
+EVENT_TYPES = frozenset(
+    {
+        "subscription.activated",   # a plan started: grant its allowance
+        "subscription.renewed",     # a period rolled: expire, then grant
+        "subscription.cancelled",   # will not renew; still paid up until it ends
+        "subscription.expired",     # it has now ended: back to free
+        "payment.failed",           # mark past_due; do not strip credits
+        "payment.refunded",         # money returned: claw back what is unspent
+        "credits.purchased",        # pay-as-you-go top-up
+    }
+)
+
+# Events that move the account's *state* rather than its balance. Only these
+# need the out-of-order guard: a balance movement is idempotent on its own key
+# and so is safe in any order, but a status is last-write-wins and a
+# cancellation overtaking the renewal it followed would leave the wrong one
+# standing.
+STATUS_EVENTS = frozenset(
+    {
+        "subscription.activated",
+        "subscription.cancelled",
+        "subscription.expired",
+        "payment.failed",
+    }
+)
+
+
+class BillingError(Exception):
+    pass
+
+
+class SignatureError(BillingError):
+    """The payload did not come from the processor, or was tampered with."""
+
+
+@dataclass(frozen=True, slots=True)
+class BillingEvent:
+    """One normalised thing that happened, whoever reported it."""
+
+    id: str
+    type: str
+    customer_id: str
+    plan_id: str | None = None
+    credits: int | None = None
+    period_start: str | None = None
+    # When the processor says this happened. Used to recognise an event that
+    # has been overtaken; see STATUS_EVENTS.
+    created: datetime | None = None
+    # True when this came from the offline stand-in, so nothing downstream can
+    # mistake a simulated payment for a real one.
+    offline: bool = False
+    raw: dict[str, Any] = field(default_factory=dict)
+
+
+class BillingProvider(Protocol):
+    """What the rest of the system needs from a payment processor."""
+
+    name: str
+
+    def create_customer(self, user_id: str, email: str) -> str:
+        """Register the payer, returning the processor's own id for them."""
+
+    def start_subscription(self, customer_id: str, plan_id: str) -> dict[str, Any]:
+        """Begin checkout for a plan. Returns whatever the caller must show the
+        user next (usually a redirect URL)."""
+
+    def cancel_subscription(self, customer_id: str) -> None: ...
+
+    def verify_webhook(self, body: bytes, signature: str) -> BillingEvent:
+        """Authenticate a webhook and normalise it. Raises SignatureError if it
+        does not verify -- never returns an unverified event."""
+
+
+class OfflineProvider:
+    """A processor that keeps the books but cannot move money.
+
+    Every event it produces carries `offline=True`. The signature scheme is
+    real HMAC-SHA256 over the raw body, because a stubbed-out verifier is
+    exactly the kind of thing that survives into production behind a config
+    flag, and this way the code path that runs in tests is the same shape as
+    the code path that will run against a real processor.
+    """
+
+    name = "offline"
+
+    def __init__(self, secret: str | None = None):
+        # A random secret when none is given: an offline provider that
+        # accepted a well-known default signature would be worse than one that
+        # cannot be called from outside the process at all.
+        self.secret = secret or secrets.token_hex(32)
+
+    def create_customer(self, user_id: str, email: str) -> str:
+        return f"offline_cus_{user_id[:12]}"
+
+    def start_subscription(self, customer_id: str, plan_id: str) -> dict[str, Any]:
+        tier = plans.get(plan_id)
+        return {
+            "offline": True,
+            "customer_id": customer_id,
+            "plan_id": tier.id,
+            "amount_usd": tier.price_usd,
+            # No redirect: there is nowhere to send anyone. The caller is
+            # expected to feed `sign()`/`verify_webhook` the activation event
+            # itself, which is what the tests do.
+            "checkout_url": None,
+        }
+
+    def cancel_subscription(self, customer_id: str) -> None:
+        return None
+
+    # -- the signature scheme ---------------------------------------------
+    def sign(self, body: bytes) -> str:
+        return hmac.new(self.secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+
+    def verify_webhook(self, body: bytes, signature: str) -> BillingEvent:
+        if not hmac.compare_digest(self.sign(body), signature or ""):
+            raise SignatureError("webhook signature does not verify")
+        try:
+            payload = json.loads(body)
+        except (TypeError, ValueError) as exc:
+            raise BillingError(f"webhook body is not JSON: {exc}") from exc
+        return self.to_event(payload)
+
+    @staticmethod
+    def to_event(payload: dict[str, Any]) -> BillingEvent:
+        kind = payload.get("type")
+        if kind not in EVENT_TYPES:
+            raise BillingError(f"unknown event type {kind!r}")
+        if not payload.get("customer_id"):
+            raise BillingError("event names no customer")
+        return BillingEvent(
+            id=str(payload.get("id") or f"offline_{time.time_ns()}"),
+            type=kind,
+            customer_id=str(payload["customer_id"]),
+            plan_id=payload.get("plan_id"),
+            credits=payload.get("credits"),
+            period_start=payload.get("period_start"),
+            # Optional, and epoch seconds when present, matching what a real
+            # processor sends. Lets the out-of-order guard be exercised without
+            # a payment provider in the loop.
+            created=(
+                datetime.fromtimestamp(payload["created"], tz=timezone.utc)
+                if isinstance(payload.get("created"), (int, float))
+                else None
+            ),
+            offline=True,
+            raw=payload,
+        )
+
+
+def apply_event(
+    accounts: AccountStore, event: BillingEvent, *, provider: str = "offline"
+) -> bool:
+    """Turn a verified event into whatever it means for an account.
+
+    Returns True if this call did the work, False if the event had already been
+    applied. The order is load-bearing: the event is *recorded first*, then
+    acted on, then marked handled. Acting first means a crash in the middle
+    turns the processor's redelivery into a second charge; recording first
+    means the redelivery is recognised and skipped, and a row left unhandled is
+    visible to `unhandled_billing_events` rather than lost.
+
+    The ledger writes underneath are independently idempotent on their own
+    keys, so even a redelivery that slipped past the event check cannot double
+    a grant.
+    """
+    user = accounts.user_for_billing_customer(event.customer_id)
+    row_id, is_new = accounts.record_billing_event(
+        provider,
+        event.id,
+        event.type,
+        event.raw,
+        user_id=user["id"] if user else None,
+        event_created=event.created,
+    )
+    if not is_new:
+        # Expected, not exceptional: processors redeliver on purpose when they
+        # did not see a 200. This event firing is the replay guard working.
+        emit(log, WEBHOOK_DUPLICATE, provider=provider, event_id=event.id)
+        return False
+    if user is None:
+        # Left deliberately unhandled rather than dropped: a payment for a
+        # customer id we do not recognise is a real problem -- a half-finished
+        # signup, or two environments pointed at one processor account -- and
+        # it should show up in the unhandled queue where someone will see it.
+        raise BillingError(f"no account for billing customer {event.customer_id!r}")
+
+    user_id = user["id"]
+    # An adapter is expected to supply the period the processor is billing
+    # for; the current month is a fallback for one that does not. Note what
+    # that fallback costs: two renewals in the same calendar month with no
+    # period_start collapse onto one idempotency key, and the second grants
+    # nothing. That is the safe direction to fail -- a missed grant is a
+    # support ticket, a doubled one is money -- but an adapter that relies on
+    # it is wrong, and this is the line to look at when a customer says a
+    # renewal did not land.
+    period = event.period_start or time.strftime("%Y-%m", time.gmtime())
+
+    # Out-of-order delivery. Only status changes need this: every balance
+    # movement below is idempotent on its own key and therefore order-safe,
+    # but a status is last-write-wins, and a cancellation delivered after the
+    # renewal it preceded would leave the account cancelled when it is paid up.
+    stale = event.type in STATUS_EVENTS and accounts.has_newer_status_event(
+        user_id, event.created, provider=provider, exclude_id=event.id
+    )
+    if stale:
+        emit(log, WEBHOOK_STALE, provider=provider, event_id=event.id,
+             event_type=event.type, user_id=user_id)
+
+    if event.type in ("subscription.activated", "subscription.renewed"):
+        accounts.start_period(user_id, period, plan_id=event.plan_id or user["plan"])
+        if not stale:
+            accounts.set_plan_status(user_id, "active")
+    elif event.type == "subscription.cancelled":
+        # "Will not renew", not "is over". The credits already granted stay:
+        # they were paid for, and confiscating them at the moment somebody
+        # cancels is charging for a month and then taking it back.
+        if not stale:
+            accounts.set_plan_status(user_id, "cancelled")
+    elif event.type == "subscription.expired":
+        # Now it is actually over. Back to the free plan, and still without
+        # touching the balance -- the remainder of a paid month expires the
+        # ordinary way, at the next period roll, as a visible ledger entry.
+        if not stale:
+            accounts.set_plan(user_id, "free")
+            accounts.set_plan_status(user_id, "cancelled")
+    elif event.type == "payment.failed":
+        # Marked, not stripped. A failed renewal is usually an expired card,
+        # and deleting the balance of someone who is about to fix it is how a
+        # recoverable billing problem becomes a cancelled account. Credits
+        # already held stay spendable -- the approved policy.
+        if not stale:
+            accounts.set_plan_status(user_id, "past_due")
+    elif event.type == "payment.refunded":
+        # The approved refund policy: take back what is unspent, floored at
+        # zero, never creating a debt. See AccountStore.claw_back for why the
+        # full reversal into a negative balance was rejected.
+        credits = int(event.credits or 0)
+        if credits <= 0:
+            tier = plans.get(event.plan_id) if event.plan_id else None
+            credits = tier.credits if tier else 0
+        if credits > 0:
+            accounts.claw_back(
+                user_id,
+                credits,
+                idempotency_key=f"refund:{provider}:{event.id}",
+                note="payment refunded",
+            )
+    elif event.type == "credits.purchased":
+        credits = int(event.credits or 0)
+        if credits <= 0:
+            raise BillingError("credits.purchased names no credits")
+        accounts.grant(
+            user_id,
+            credits,
+            reason="purchase",
+            idempotency_key=f"purchase:{provider}:{event.id}",
+            note=f"pay-as-you-go, ${credits * plans.PAY_AS_YOU_GO_USD:.2f}",
+        )
+    else:  # pragma: no cover - EVENT_TYPES is checked before we get here
+        raise BillingError(f"no handler for {event.type!r}")
+
+    accounts.mark_billing_event_handled(row_id)
+    # After the work, not before: an event that raised on the way here is
+    # recorded and unhandled, and announcing it as accepted would put a
+    # reassuring line in the log for a payment that did nothing.
+    emit(log, WEBHOOK_ACCEPTED, provider=provider, event_id=event.id,
+         event_type=event.type, user_id=user_id)
+    return True

@@ -1,0 +1,634 @@
+id: nature_mushroom
+version: 1
+category: nature
+display_name: "Parametric Mushroom"
+description: >
+  A detailed mushroom built the way a Grasshopper definition builds one: a
+  meridian profile revolved into a cap, a wavy prism trimming the margin into
+  lobes, a polar array of gill blades under it, a lofted stem on a leaning
+  axis, and a scatter of warts across the crown. Every feature is a slider, and
+  a seed drives the scatter, so one definition covers a whole genus rather than
+  one specimen.
+tags: [mushroom, toadstool, amanita, fungus, nature, organic, decor, generative, parametric]
+embedding_text: >
+  mushroom toadstool model fungus fungi amanita fly agaric parasol bolete
+  porcini chanterelle morel mushroom sculpture mushroom ornament mushroom
+  decoration forest decor woodland toadstool cottagecore mushroom
+language: build123d
+
+print_test:
+  # No model in this repository has been physically printed. The target machine
+  # and the rationale below are design intent, not a test record.
+  status: untested
+  target_printer: "Bambu P1S"
+  target_material: PLA
+  rationale: >
+    Sized for a desk ornament: a 62 mm cap on a 58 mm stem fits any bed and
+    prints in about three hours in PLA. The underside is the reason this needs
+    supports -- the gills hang from a near-horizontal roof and no orientation
+    fixes that -- so the defaults keep the blades at 1.3 mm, which is three
+    perimeters at a 0.4 mm nozzle and thick enough to survive support removal.
+    Gill depth stays under the flesh thickness so a blade never breaks through
+    to the cap surface, and the wart spheres are shrunk automatically wherever
+    the flesh is too thin to contain them.
+
+expected_solids: 1
+
+param_schema:
+  type: object
+  required: [cap_d_mm, stem_h_mm]
+  properties:
+    cap_d_mm:
+      type: number
+      minimum: 30
+      maximum: 120
+      default: 62
+      description: >
+        Diameter of the circle the margin is cut from. The widest lobe reaches
+        it; the notches between lobes fall inside it.
+      ui: { widget: slider, step: 2, label: "Cap diameter" }
+    cap_h_mm:
+      type: number
+      minimum: 6
+      maximum: 60
+      default: 26
+      description: "Rim to crown, before the umbo is added."
+      ui: { widget: slider, step: 1, label: "Cap height" }
+    cap_fullness:
+      type: number
+      minimum: 1.0
+      maximum: 6.0
+      default: 2.2
+      description: >
+        Exponent on radius in the cap curve. Low is conical, high is flat with
+        a steep skirt. Paired with cap_shoulder it covers the whole family:
+        2.0/0.5 is a hemisphere, 1.0/1.0 a cone, 4.0/0.4 a parasol.
+      ui: { widget: slider, step: 0.1, label: "Cap fullness" }
+    cap_shoulder:
+      type: number
+      minimum: 0.3
+      maximum: 1.2
+      default: 0.62
+      description: "Exponent on the curve itself. Low rounds the shoulder over."
+      ui: { widget: slider, step: 0.02, label: "Cap shoulder" }
+    cap_dish_mm:
+      type: number
+      minimum: 0
+      maximum: 25
+      default: 0
+      description: "Drops the centre below the rim. This is what makes a funnel."
+      ui: { widget: slider, step: 1, label: "Dish" }
+    cap_umbo_mm:
+      type: number
+      minimum: 0
+      maximum: 8
+      default: 2.5
+      description: "Height of the central boss. Solid, so it never thins the flesh."
+      ui: { widget: slider, step: 0.5, label: "Umbo" }
+    cap_flesh_mm:
+      type: number
+      minimum: 2.5
+      maximum: 12
+      default: 6
+      description: "Flesh thickness at the centre, measured normal to the surface."
+      ui: { widget: slider, step: 0.5, label: "Flesh" }
+    cap_margin_mm:
+      type: number
+      minimum: 0.8
+      maximum: 3.0
+      default: 1.6
+      description: "Thickness at the very edge. Below 0.8 mm the rim will not print."
+      ui: { widget: slider, step: 0.1, label: "Margin" }
+    cap_lobes:
+      type: integer
+      minimum: 0
+      maximum: 9
+      default: 5
+      description: "Number of waves around the margin. 0 leaves it circular."
+      ui: { widget: slider, step: 1, label: "Lobes" }
+    cap_wave_mm:
+      type: number
+      minimum: 0
+      maximum: 6
+      default: 2.0
+      description: >
+        How deep each lobe bites into the margin. The trim is a shallow cone
+        rather than a vertical cut, so the waves read as an undulating edge
+        rather than deep scallops -- a vertical cut leaves a feather edge all
+        the way round that no nozzle can print.
+      ui: { widget: slider, step: 0.2, label: "Wave depth" }
+    cap_tilt_deg:
+      type: number
+      minimum: 0
+      maximum: 10
+      default: 4
+      description: "Tips the cap off axis, the way a real one sits on a leaning stem."
+      ui: { widget: slider, step: 1, label: "Cap tilt" }
+    underside:
+      type: string
+      enum: [gills, pores, smooth]
+      default: gills
+      description: >
+        gills is the bladed underside of an agaric; pores stands in for a
+        bolete's tube layer as concentric grooving, because a real pore is
+        smaller than a 0.4 mm nozzle can print; smooth leaves the flesh bare.
+      ui: { widget: select, label: "Underside" }
+    gill_count:
+      type: integer
+      minimum: 10
+      maximum: 18
+      default: 16
+      description: >
+        Full-length gills. The same number of half-length lamellulae is added
+        between them, so the margin carries twice this count -- and every blade
+        is a solid in the union, which is what the ceiling is really about: 18
+        gills is 36 blades, and 36 blades is most of the build's CPU budget.
+      ui: { widget: slider, step: 1, label: "Gills" }
+    gill_t_mm:
+      type: number
+      minimum: 0.8
+      maximum: 2.2
+      default: 1.3
+      description: "Blade thickness. 1.3 mm is three perimeters at a 0.4 mm nozzle."
+      ui: { widget: slider, step: 0.1, label: "Gill thickness" }
+    gill_depth_mm:
+      type: number
+      minimum: 2
+      maximum: 9
+      default: 5
+      description: "How far the blades hang below the cap flesh."
+      ui: { widget: slider, step: 0.5, label: "Gill depth" }
+    stem_h_mm:
+      type: number
+      minimum: 20
+      maximum: 110
+      default: 58
+      description: "Base of the stem to where it enters the cap."
+      ui: { widget: slider, step: 2, label: "Stem height" }
+    stem_d_mm:
+      type: number
+      minimum: 6
+      maximum: 30
+      default: 14
+      description: "Stem diameter at the base of the shaft, above the bulb."
+      ui: { widget: slider, step: 1, label: "Stem diameter" }
+    stem_taper:
+      type: number
+      minimum: -0.25
+      maximum: 0.5
+      default: 0.2
+      description: "Fraction narrowed toward the cap. Negative widens upward, as a bolete does."
+      ui: { widget: slider, step: 0.05, label: "Stem taper" }
+    stem_bulb:
+      type: number
+      minimum: 0
+      maximum: 1.2
+      default: 0.5
+      description: "Swelling at the base. Also the model's footprint on the plate."
+      ui: { widget: slider, step: 0.05, label: "Basal bulb" }
+    stem_lean_mm:
+      type: number
+      minimum: 0
+      maximum: 15
+      default: 6
+      description: "Sideways offset of the stem top. Nothing in a forest grows plumb."
+      ui: { widget: slider, step: 1, label: "Lean" }
+    stem_flare:
+      type: number
+      minimum: 0
+      maximum: 0.6
+      default: 0.25
+      description: "Widening in the last tenth of the stem, where it meets the cap."
+      ui: { widget: slider, step: 0.05, label: "Apex flare" }
+    ring_style:
+      type: string
+      enum: [none, skirt, band]
+      default: skirt
+      description: "The annulus left by a torn veil: a drooping skirt, a tight band, or nothing."
+      ui: { widget: select, label: "Ring" }
+    ring_pos:
+      type: number
+      minimum: 0.35
+      maximum: 0.9
+      default: 0.72
+      description: >
+        Height up the stem as a fraction. Clamped down automatically so the ring
+        always sits clear of the cap.
+      ui: { widget: slider, step: 0.02, label: "Ring height" }
+    ring_w_mm:
+      type: number
+      minimum: 2
+      maximum: 10
+      default: 5
+      description: "How far the ring stands out from the stem."
+      ui: { widget: slider, step: 0.5, label: "Ring width" }
+    wart_count:
+      type: integer
+      minimum: 0
+      maximum: 26
+      default: 20
+      description: "Veil remnants scattered over the crown. 0 for a bare cap."
+      ui: { widget: slider, step: 1, label: "Warts" }
+    wart_d_mm:
+      type: number
+      minimum: 1.5
+      maximum: 7
+      default: 4.4
+      description: "Wart diameter before the seed jitters each one by +/- 40%."
+      ui: { widget: slider, step: 0.2, label: "Wart size" }
+    wart_flatten:
+      type: number
+      minimum: 0.15
+      maximum: 0.9
+      default: 0.45
+      description: >
+        Fraction of each sphere left proud of the cap. Low reads as a flat
+        scale, high as a hemisphere sitting on the surface.
+      ui: { widget: slider, step: 0.05, label: "Wart relief" }
+    seed:
+      type: integer
+      minimum: 0
+      maximum: 9999
+      default: 7
+      description: >
+        Drives every scattered detail: wart placement and size, and the
+        irregularity of each lobe. Same seed, same mushroom, on any machine.
+      ui: { widget: slider, step: 1, label: "Seed" }
+
+invariants:
+  - "solids == 1"
+  - "is_watertight"
+  # The gills are the thinnest feature by design, so the wall floor is the
+  # blade thickness rather than a structural minimum.
+  - "min_wall >= 0.7"
+  - "trapped_volumes == 0"
+  # Total height is the stem plus however much cap sits above where the stem
+  # enters it: the flesh at the centre, the umbo, and the tilt.
+  - "bbox.z <= stem_h_mm + cap_flesh_mm + cap_umbo_mm + cap_d_mm * 0.12 + 6"
+  - "bbox.z >= stem_h_mm * 0.85"
+  # cap_d_mm is the circle the margin is cut from, so a lobed cap measures a
+  # little under it and a leaning one a little over.
+  - "bbox.x <= cap_d_mm + stem_lean_mm + 6"
+  - "bbox.x >= cap_d_mm * 0.85"
+  # It has to stand up on its own base once the supports come off.
+  - "com_inside_footprint"
+
+preconditions:
+  # The cap has to have somewhere to sit: the stem enters it from below, so a
+  # stem shorter than the cap is deep would push it through the build plate.
+  - "stem_h_mm >= cap_h_mm * 0.5 + 12"
+  - "cap_flesh_mm + cap_margin_mm < cap_h_mm"
+  # A gill or pore layer needs an annulus between the stem and the margin.
+  - >
+    underside != 'smooth' implies
+    cap_d_mm / 2 - cap_margin_mm * 1.5 - cap_wave_mm - (stem_d_mm * 0.625 + 1.5) > 5
+  # Blades that hang deeper than the flesh is thick would break the cap surface.
+  - "underside == 'gills' implies gill_depth_mm <= cap_flesh_mm + 3"
+  # The ring is clamped below the cap, so it needs room below the cap to clamp to.
+  - "ring_style != 'none' implies stem_h_mm - cap_h_mm + cap_flesh_mm * 0.7 > ring_w_mm + 4"
+  # The stem must fit under the cap it carries.
+  - "stem_d_mm < cap_d_mm * 0.62"
+  # A leaning cap has to stay over the base, or the piece topples the moment
+  # the supports come off -- which the `com_inside_footprint` invariant catches
+  # after the build, and this catches before it. The basal bulb is the whole
+  # footprint, so how far the stem may lean is set by how wide the bulb is.
+  - "stem_lean_mm * 0.75 < stem_d_mm / 2 * (1 + stem_bulb)"
+
+source: |
+  from build123d import *
+
+  import math
+
+  # --- sliders --------------------------------------------------------------
+  CAP_D_MM = 62.0
+  CAP_H_MM = 26.0
+  CAP_FULLNESS = 2.2
+  CAP_SHOULDER = 0.62
+  CAP_DISH_MM = 0.0
+  CAP_UMBO_MM = 2.5
+  CAP_FLESH_MM = 6.0
+  CAP_MARGIN_MM = 1.6
+  CAP_LOBES = 5
+  CAP_WAVE_MM = 2.0
+  CAP_TILT_DEG = 4.0
+  UNDERSIDE = "gills"
+  GILL_COUNT = 16
+  GILL_T_MM = 1.3
+  GILL_DEPTH_MM = 5.0
+  STEM_H_MM = 58.0
+  STEM_D_MM = 14.0
+  STEM_TAPER = 0.20
+  STEM_BULB = 0.50
+  STEM_LEAN_MM = 6.0
+  STEM_FLARE = 0.25
+  RING_STYLE = "skirt"
+  RING_POS = 0.72
+  RING_W_MM = 5.0
+  WART_COUNT = 20
+  WART_D_MM = 4.4
+  WART_FLATTEN = 0.45
+  SEED = 7
+
+  TAU = 6.283185307179586
+  CAP_R = CAP_D_MM / 2
+  STEM_R = STEM_D_MM / 2
+  STEPS = 18
+
+
+  def hash01(index, salt):
+      """Deterministic pseudo-random in [0,1): the seed is a slider, so the same
+      seed rebuilds the same mushroom on any machine."""
+      x = math.sin((index + 1) * 12.9898 + (SEED + 1) * 78.233 + salt * 37.719) * 43758.5453
+      return x - math.floor(x)
+
+
+  def dome_z(s):
+      """Cap surface at normalised radius s, before the umbo is added.
+
+      (1 - s^fullness)^shoulder covers the whole family in two sliders: 2/0.5 is
+      a hemisphere, 1/1 a cone, 4/0.4 a flat cap with a steep skirt. The dish
+      term drops the centre below the rim, which is what makes a funnel.
+      """
+      return CAP_H_MM * (1.0 - s**CAP_FULLNESS) ** CAP_SHOULDER - CAP_DISH_MM * (1.0 - s * s)
+
+
+  def crown_z(s):
+      return dome_z(s) + CAP_UMBO_MM * math.exp(-((s / 0.24) ** 2))
+
+
+  def flesh_at(s):
+      return CAP_FLESH_MM * (1.0 - s) ** 0.7 + CAP_MARGIN_MM
+
+
+  def resample(points, count):
+      """Equal arc-length resampling. A spline through evenly spaced points
+      overshoots wherever the curve is steep, and the cap margin is a cliff."""
+      run = [0.0]
+      for (x0, z0), (x1, z1) in zip(points, points[1:]):
+          run.append(run[-1] + math.hypot(x1 - x0, z1 - z0))
+      total = run[-1]
+      out = []
+      j = 0
+      for k in range(count + 1):
+          target = total * k / count
+          # Bounded walk rather than a while loop: the sandbox's static gate
+          # rejects any loop it cannot prove terminates, and it is right to.
+          for _ in range(len(run)):
+              if j >= len(run) - 2 or run[j + 1] >= target:
+                  break
+              j += 1
+          span = run[j + 1] - run[j]
+          f = 0.0 if span <= 0 else (target - run[j]) / span
+          out.append(
+              (
+                  points[j][0] + (points[j + 1][0] - points[j][0]) * f,
+                  points[j][1] + (points[j + 1][1] - points[j][1]) * f,
+              )
+          )
+      return out
+
+
+  def interp_z(points, x):
+      """Height of a sampled curve at radius x."""
+      for (x0, z0), (x1, z1) in zip(points, points[1:]):
+          if x0 <= x <= x1 and x1 > x0:
+              return z0 + (z1 - z0) * (x - x0) / (x1 - x0)
+      return points[-1][1] if x > points[-1][0] else points[0][1]
+
+
+  def meridian(upper, lower, curved=True):
+      """Close an upper and a lower sampled curve into one meridian face."""
+      lower = list(reversed(lower))
+      with BuildLine(Plane.XZ) as outline:
+          (Spline if curved else Polyline)(*upper)
+          Line(upper[-1], lower[0])
+          (Spline if curved else Polyline)(*lower)
+          Line(lower[-1], upper[0])
+      return make_face(outline.line)
+
+
+  # --- 1. cap profile: crown curve + normal-offset underside ------------------
+  DENSE = 400
+  dome_pts = [(CAP_R * i / DENSE, dome_z(i / DENSE)) for i in range(DENSE + 1)]
+  crown_pts = [(x, crown_z(x / CAP_R)) for x, _ in dome_pts]
+
+  top_curve = resample(crown_pts, STEPS)
+  top_curve[0] = (0.0, crown_pts[0][1])
+  top_curve[-1] = crown_pts[-1]
+
+  offsets = []
+  for x, z in resample(dome_pts, STEPS):
+      eps = CAP_R * 1e-3
+      dz = dome_z(min(1.0, (x + eps) / CAP_R)) - dome_z(max(0.0, (x - eps) / CAP_R))
+      length = math.hypot(2 * eps, dz) or 1.0
+      thickness = flesh_at(min(1.0, x / CAP_R))
+      offsets.append((x + dz / length * thickness, z - 2 * eps / length * thickness))
+
+  # A normal offset folds over wherever the cap turns tighter than the flesh is
+  # thick -- a pointed cap is the case that does it. Dropping the folded points
+  # and extrapolating back to the axis keeps the profile closed, at the cost of
+  # a slightly thicker apex.
+  inner_curve = []
+  for x, z in offsets:
+      if x <= 0.0 or (inner_curve and x <= inner_curve[-1][0] + CAP_R * 1e-3):
+          continue
+      inner_curve.append((x, z))
+  (x0, z0), (x1, z1) = inner_curve[0], inner_curve[1]
+  axis_z = z0 - (z1 - z0) * x0 / max(x1 - x0, 1e-6)
+  inner_curve.insert(0, (0.0, min(axis_z, dome_z(0.0) - max(0.5, flesh_at(0.0) * 0.35))))
+
+  # --- 2. gill zone: flatten the underside where the blades attach ------------
+  GILL_R_IN = STEM_R * 1.25 + 1.5
+  GILL_R_OUT = min(CAP_R - CAP_MARGIN_MM * 1.5 - CAP_WAVE_MM, inner_curve[-1][0] - 1.0)
+  HAS_GILLS = UNDERSIDE == "gills" and GILL_R_OUT > GILL_R_IN + 4.0
+  ROOF_IN = interp_z(inner_curve, GILL_R_IN)
+  ROOF_OUT = interp_z(inner_curve, GILL_R_OUT)
+
+
+  def roof_z(r):
+      """The cone the gills hang from. Straight, not curved: a blade meeting a
+      cone is a cheap boolean, a blade meeting a revolved spline is not."""
+      span = max(GILL_R_OUT - GILL_R_IN, 1e-6)
+      return ROOF_IN + (ROOF_OUT - ROOF_IN) * (r - GILL_R_IN) / span
+
+
+  # The cone runs wider than the blades do, so every blade meets it well inside
+  # its edges: a blade whose end lands exactly where the underside changes from
+  # cone to spline is a tangency, and a tangency is the expensive case for the
+  # kernel. The straight run is a Line rather than two points on a spline, which
+  # is what makes it an analytic cone -- and takes a third off the union.
+  PAD_MM = 2.0
+  OUTER_PTS = [p for p in inner_curve if p[0] > GILL_R_OUT + PAD_MM + 0.5]
+  INNER_PTS = [p for p in inner_curve if p[0] < GILL_R_IN - PAD_MM - 0.5]
+  if HAS_GILLS and (len(OUTER_PTS) < 2 or len(INNER_PTS) < 2):
+      PAD_MM = 0.5
+      OUTER_PTS = [p for p in inner_curve if p[0] > GILL_R_OUT + PAD_MM + 0.3]
+      INNER_PTS = [p for p in inner_curve if p[0] < GILL_R_IN - PAD_MM - 0.3]
+  HAS_GILLS = HAS_GILLS and len(OUTER_PTS) >= 2 and len(INNER_PTS) >= 2
+
+  if HAS_GILLS:
+      cone_out = (GILL_R_OUT + PAD_MM, roof_z(GILL_R_OUT + PAD_MM))
+      cone_in = (GILL_R_IN - PAD_MM, roof_z(GILL_R_IN - PAD_MM))
+      underside = [
+          ("spline", [*reversed(OUTER_PTS), cone_out]),
+          ("line", [cone_out, cone_in]),
+          ("spline", [cone_in, *reversed(INNER_PTS)]),
+      ]
+  else:
+      underside = [("spline", list(reversed(inner_curve)))]
+
+  with BuildLine(Plane.XZ) as cap_outline:
+      Spline(*top_curve)
+      Line(top_curve[-1], underside[0][1][0])
+      for kind, points in underside:
+          (Line if kind == "line" else Spline)(*points)
+      Line(underside[-1][1][-1], top_curve[0])
+  cap = revolve(make_face(cap_outline.line), axis=Axis.Z)
+
+  # --- 3. lobed margin: trim the cap with a wavy, bevelled cone ---------------
+  if CAP_WAVE_MM > 0 and CAP_LOBES > 0:
+      samples = max(72, CAP_LOBES * 18)
+      TRIM_MM = max(0.6, CAP_MARGIN_MM * 0.4)
+
+      def plan_ring(z, inset):
+          """One closed wavy section of the trim solid at height z."""
+          points = []
+          for i in range(samples):
+              angle = TAU * i / samples
+              lobe = 0.5 - 0.5 * math.cos(CAP_LOBES * angle)
+              # Each lobe gets its own depth from the seed, so the margin reads as
+              # grown rather than machined.
+              depth = CAP_WAVE_MM * (0.7 + 0.6 * hash01(int(i * CAP_LOBES / samples), 3.0))
+              radius = max(1.0, CAP_R - TRIM_MM - depth * lobe - inset)
+              points.append((radius * math.cos(angle), radius * math.sin(angle)))
+          with BuildLine(Plane.XY.offset(z)) as ring:
+              Spline(*points, points[0])
+          return make_face(ring.line)
+
+      # The trim is a cone, not a prism. A vertical cut meets the cap's underside
+      # at about 30 degrees and leaves a feather edge all the way round the
+      # margin -- 3% of the surface under the 0.8 mm the nozzle can extrude. A
+      # cone that opens upward at BEVEL_DEG meets it square instead, and the
+      # bevel it leaves on the notches is what a torn margin looks like anyway.
+      BEVEL_DEG = 32.0
+      RISE = 1.0 / math.tan(math.radians(BEVEL_DEG))
+      KNEE_Z = -CAP_MARGIN_MM - 2.0
+      FLOOR_Z = min(KNEE_Z, min(z for _, z in inner_curve)) - 2.0
+      ROOF_Z = CAP_H_MM + CAP_UMBO_MM + 5.0
+      # The cone passes through the wave radius at the rim (z = 0) and opens
+      # upward from there; below the knee it goes straight down, where there is
+      # nothing left to cut.
+      trim = loft(
+          [
+              plan_ring(FLOOR_Z, -RISE * KNEE_Z),
+              plan_ring(KNEE_Z, -RISE * KNEE_Z),
+              plan_ring(ROOF_Z, -RISE * ROOF_Z),
+          ],
+          ruled=True,
+      )
+      cap = cap & trim
+
+  # --- 4. underside: gill blades in a polar array, or pore rings --------------
+  blades = []
+  if HAS_GILLS:
+
+      def blade(r0):
+          upper = [(r0, roof_z(r0) + 0.8), (GILL_R_OUT, roof_z(GILL_R_OUT) + 0.8)]
+          lower = [
+              (r0, roof_z(r0) - GILL_DEPTH_MM * 0.3),
+              ((r0 + GILL_R_OUT) / 2, roof_z((r0 + GILL_R_OUT) / 2) - GILL_DEPTH_MM),
+              (GILL_R_OUT, roof_z(GILL_R_OUT) - GILL_DEPTH_MM * 0.15),
+          ]
+          return extrude(meridian(upper, lower, curved=False), amount=GILL_T_MM / 2, both=True)
+
+      # Full-length gills alternating with lamellulae, the short gills that start
+      # halfway out. Doubling the blade count near the margin is what a real
+      # underside does, and it costs one extra solid rather than one per gill.
+      long_blade = blade(GILL_R_IN)
+      short_blade = blade((GILL_R_IN + GILL_R_OUT) / 2)
+      for k in range(GILL_COUNT):
+          blades.append(Rot(0, 0, 360.0 * k / GILL_COUNT) * long_blade)
+          blades.append(Rot(0, 0, 360.0 * (k + 0.5) / GILL_COUNT) * short_blade)
+
+  elif UNDERSIDE == "pores":
+      # Boletes have tubes, not gills. At a 0.4 mm nozzle a real pore layer is
+      # below the resolution of the printer, so this is concentric grooving that
+      # reads as one from arm's length.
+      grooves = []
+      rings = max(2, int((GILL_R_OUT - GILL_R_IN) / 3.0))
+      depth = min(GILL_DEPTH_MM * 0.5, 2.5)
+      for k in range(rings):
+          radius = GILL_R_IN + (GILL_R_OUT - GILL_R_IN) * (k + 0.5) / rings
+          z = interp_z(inner_curve, radius)
+          with BuildLine(Plane.XZ) as groove:
+              Polyline(
+                  (radius - 0.85, z + 0.5), (radius, z - depth), (radius + 0.85, z + 0.5), close=True
+              )
+          grooves.append(revolve(make_face(groove.line), axis=Axis.Z))
+      cap = cap.cut(*grooves)
+
+  # --- 5. stem: circles lofted along a leaning axis ---------------------------
+  SECTIONS = 12
+  sections = []
+  for i in range(SECTIONS + 1):
+      t = i / SECTIONS
+      radius = (
+          STEM_R
+          * (1.0 - STEM_TAPER * t)
+          * (1.0 + STEM_BULB * math.exp(-((t / 0.18) ** 2)))
+          * (1.0 + STEM_FLARE * t**6)
+      )
+      sections.append(Plane(origin=(STEM_LEAN_MM * t**1.7, 0, STEM_H_MM * t)) * Circle(radius))
+  stem = loft(sections)
+
+  # --- 6. ring ----------------------------------------------------------------
+  CAP_Z = STEM_H_MM - CAP_H_MM + CAP_FLESH_MM * 0.7
+  extras = []
+  if RING_STYLE != "none":
+      # Clamped below the cap: a ring placed inside the cap is a ring nobody sees.
+      t = max(0.12, min(RING_POS, (CAP_Z - RING_W_MM * 0.6) / STEM_H_MM))
+      z = STEM_H_MM * t
+      r0 = STEM_R * (1.0 - STEM_TAPER * t) * 0.85
+      # A parallelogram swept along the droop direction, not a spline through
+      # three points: a spline pinches somewhere between them, and "somewhere"
+      # turned out to be 0.35 mm -- under half of what the nozzle can extrude.
+      droop = 0.45 if RING_STYLE == "skirt" else 0.08
+      length = math.hypot(1.0, droop)
+      dr, dz = 1.0 / length, -droop / length
+      thick = max(1.4, RING_W_MM * 0.28)
+      nr, nz = -dz * thick / 2, dr * thick / 2
+      tip_r, tip_z = r0 + dr * RING_W_MM, z + dz * RING_W_MM
+      upper = [(r0 + nr, z + nz), (tip_r + nr, tip_z + nz)]
+      lower = [(r0 - nr, z - nz), (tip_r - nr, tip_z - nz)]
+      extras.append(
+          Pos(STEM_LEAN_MM * t**1.7, 0, 0)
+          * revolve(meridian(upper, lower, curved=False), axis=Axis.Z)
+      )
+
+  # --- 7. warts: flattened spheres scattered over the crown -------------------
+  warts = []
+  for k in range(WART_COUNT):
+      # sqrt of a uniform draw spreads the scatter evenly per unit area rather
+      # than crowding the apex.
+      s = math.sqrt(hash01(k, 1.0)) * 0.85
+      angle = TAU * hash01(k, 2.0)
+      r = max(0.7, WART_D_MM / 2 * (0.6 + 0.8 * hash01(k, 5.0)))
+      # A wart sunk deeper than the flesh is thick comes out the other side as a
+      # pimple on the gills. Shrink it instead.
+      if r * (1.0 - WART_FLATTEN) > flesh_at(s) * 0.5:
+          r = flesh_at(s) * 0.5 / max(1.0 - WART_FLATTEN, 0.05)
+      # Sunk spheres rather than scaled ones: a non-uniform scale turns an
+      # analytic sphere into a spline surface and roughly triples what the union
+      # costs, for a bump that reads the same once it is half buried.
+      warts.append(
+          Pos(
+              CAP_R * s * math.cos(angle),
+              CAP_R * s * math.sin(angle),
+              crown_z(s) - r * (1.0 - WART_FLATTEN),
+          )
+          * Sphere(r)
+      )
+
+  # --- 8. seat the cap on the stem and union in one boolean -------------------
+  PLACE = Pos(STEM_LEAN_MM, 0, CAP_Z) * Rot(0, CAP_TILT_DEG, 0)
+  result = stem.fuse(*[PLACE * part for part in [cap, *blades, *warts]], *extras).clean()

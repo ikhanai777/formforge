@@ -44,7 +44,7 @@ _CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
     "planter": (
         "planter", "plant pot", "flower pot", "pot for", "succulent", "cactus",
-        "herb pot", "vase", "propagation", "plant holder", "planter box",
+        "herb pot", "propagation", "plant holder", "planter box",
     ),
     "organizer": (
         "organizer", "organiser", "pen cup", "pencil holder", "desk tidy",
@@ -58,6 +58,14 @@ _CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
     "hook": (
         "hook", "coat hook", "key hook", "towel hook", "peg", "hanger",
         "french cleat", "wall mount", "bracket",
+    ),
+    "vessel": (
+        "vase", "vessel", "urn", "amphora", "carafe", "decanter", "bud vase",
+        "flower vase", "jar", "pitcher",
+    ),
+    "nature": (
+        "mushroom", "toadstool", "fungus", "fungi", "amanita", "figurine",
+        "ornament", "sculpture", "statuette", "miniature", "leaf", "shell",
     ),
     "box": (
         "box", "case", "container", "lid", "bin", "storage", "gridfinity",
