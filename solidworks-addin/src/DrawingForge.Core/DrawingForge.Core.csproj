@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- netstandard2.0 so the same binary loads into the .NET Framework 4.8
+         add-in and into the net8.0 test host. No package references: this
+         assembly is copied next to a COM add-in that lives inside the
+         SOLIDWORKS process, and every extra dependency there is a binding
+         conflict waiting to happen. -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>DrawingForge.Core</RootNamespace>
+    <AssemblyName>DrawingForge.Core</AssemblyName>
+  </PropertyGroup>
+
+</Project>

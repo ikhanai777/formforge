@@ -1,0 +1,19 @@
+# The repository root ignores build/, and git matches ignore patterns
+# case-insensitively on Windows and macOS. Without this, a new file added to the
+# add-in's Build/ folder would be silently ignored on those machines.
+!src/DrawingForge.AddIn/Build/
+
+# .NET build output
+bin/
+obj/
+*.user
+*.suo
+.vs/
+
+# Test results
+TestResults/
+*.trx
+
+# Generated run artefacts
+DrawingForge-report-*.json
+DrawingForge-*.log

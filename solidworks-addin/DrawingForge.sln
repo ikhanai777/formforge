@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{0AFE89A1-C38E-477A-8DE0-0A75650DAF89}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DrawingForge.Core", "src\DrawingForge.Core\DrawingForge.Core.csproj", "{BC95EA04-1F34-4FDD-AABE-A0A8FEA581AB}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DrawingForge.AddIn", "src\DrawingForge.AddIn\DrawingForge.AddIn.csproj", "{3F7A1C92-58D4-4B0E-9C6A-2D8B4E7F1A03}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{F138F76C-7FEC-4479-9867-91C46876B028}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DrawingForge.Core.Tests", "tests\DrawingForge.Core.Tests\DrawingForge.Core.Tests.csproj", "{58615617-A2C9-462D-82E8-7B2A6FE2587B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DrawingForge.AddIn.CompileCheck", "tests\DrawingForge.AddIn.CompileCheck\DrawingForge.AddIn.CompileCheck.csproj", "{E9ED1773-9467-4636-86FC-87F5566EDD55}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{BC95EA04-1F34-4FDD-AABE-A0A8FEA581AB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BC95EA04-1F34-4FDD-AABE-A0A8FEA581AB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BC95EA04-1F34-4FDD-AABE-A0A8FEA581AB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BC95EA04-1F34-4FDD-AABE-A0A8FEA581AB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3F7A1C92-58D4-4B0E-9C6A-2D8B4E7F1A03}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3F7A1C92-58D4-4B0E-9C6A-2D8B4E7F1A03}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3F7A1C92-58D4-4B0E-9C6A-2D8B4E7F1A03}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3F7A1C92-58D4-4B0E-9C6A-2D8B4E7F1A03}.Release|Any CPU.Build.0 = Release|Any CPU
+		{58615617-A2C9-462D-82E8-7B2A6FE2587B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{58615617-A2C9-462D-82E8-7B2A6FE2587B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{58615617-A2C9-462D-82E8-7B2A6FE2587B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{58615617-A2C9-462D-82E8-7B2A6FE2587B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E9ED1773-9467-4636-86FC-87F5566EDD55}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E9ED1773-9467-4636-86FC-87F5566EDD55}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E9ED1773-9467-4636-86FC-87F5566EDD55}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E9ED1773-9467-4636-86FC-87F5566EDD55}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{BC95EA04-1F34-4FDD-AABE-A0A8FEA581AB} = {0AFE89A1-C38E-477A-8DE0-0A75650DAF89}
+		{3F7A1C92-58D4-4B0E-9C6A-2D8B4E7F1A03} = {0AFE89A1-C38E-477A-8DE0-0A75650DAF89}
+		{58615617-A2C9-462D-82E8-7B2A6FE2587B} = {F138F76C-7FEC-4479-9867-91C46876B028}
+		{E9ED1773-9467-4636-86FC-87F5566EDD55} = {F138F76C-7FEC-4479-9867-91C46876B028}
+	EndGlobalSection
+EndGlobal

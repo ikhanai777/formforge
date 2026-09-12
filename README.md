@@ -268,3 +268,11 @@ formforge/
 `docs/architecture.md` covers the parts that need more than a paragraph:
 tessellation, the measurement approximations and where they are wrong, the
 repair ladder, and the deployment topology.
+
+## Also in this repository
+
+`solidworks-addin/` is a separate tool that shares nothing with the Python
+package above: **DrawingForge**, a SOLIDWORKS add-in that generates
+fabrication-ready drawings for every part in an assembly — ASME or ISO, first or
+third angle, with dimensions, notes, tables and a fabrication-readiness check.
+See `solidworks-addin/README.md`.

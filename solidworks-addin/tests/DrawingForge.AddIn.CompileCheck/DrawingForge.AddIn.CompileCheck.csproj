@@ -1,0 +1,75 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Compiles the add-in's source against stubbed SOLIDWORKS interfaces so that
+    syntax, typing and dependency errors are caught on any machine, not only on
+    a CAD workstation. See Stubs/SolidWorksInteropStubs.cs for what this does
+    and does not prove. Never shipped; not part of the add-in build.
+
+    Windows Forms is referenced through the WindowsDesktop *reference*
+    assemblies from NuGet rather than through UseWindowsForms, because the
+    WindowsDesktop SDK only exists on a Windows SDK install and this check has
+    to run everywhere — including CI on Linux. Reference assemblies are enough
+    to compile against; nothing here is ever run.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>DrawingForge.AddIn</RootNamespace>
+    <AssemblyName>DrawingForge.AddIn.CompileCheck</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <LangVersion>7.3</LangVersion>
+    <!-- CS1685: the stubs deliberately redeclare nothing, but the desktop ref
+         pack and the base framework both define a few types. -->
+    <NoWarn>$(NoWarn);CA1416;CS1685</NoWarn>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <!-- The add-in brings its own AssemblyInfo.cs, which the SDK would
+         otherwise duplicate. -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Stubs\**\*.cs" />
+    <Compile Include="..\..\src\DrawingForge.AddIn\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsDesktop.App.Ref" Version="8.0.20"
+                      GeneratePathProperty="true" ExcludeAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DrawingForge.Core\DrawingForge.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Resolve the desktop reference assemblies once the package path is known. -->
+  <Target Name="AddWindowsDesktopReferences" BeforeTargets="ResolveAssemblyReferences">
+    <PropertyGroup>
+      <WindowsDesktopRefDir>$(PkgMicrosoft_WindowsDesktop_App_Ref)\ref\net8.0</WindowsDesktopRefDir>
+    </PropertyGroup>
+    <ItemGroup>
+      <Reference Include="System.Windows.Forms">
+        <HintPath>$(WindowsDesktopRefDir)\System.Windows.Forms.dll</HintPath>
+        <Private>false</Private>
+      </Reference>
+      <Reference Include="System.Windows.Forms.Primitives">
+        <HintPath>$(WindowsDesktopRefDir)\System.Windows.Forms.Primitives.dll</HintPath>
+        <Private>false</Private>
+      </Reference>
+      <Reference Include="System.Drawing.Common">
+        <HintPath>$(WindowsDesktopRefDir)\System.Drawing.Common.dll</HintPath>
+        <Private>false</Private>
+      </Reference>
+      <Reference Include="Microsoft.Win32.Registry.AccessControl">
+        <HintPath>$(WindowsDesktopRefDir)\Microsoft.Win32.Registry.AccessControl.dll</HintPath>
+        <Private>false</Private>
+      </Reference>
+      <Reference Include="Microsoft.Win32.SystemEvents">
+        <HintPath>$(WindowsDesktopRefDir)\Microsoft.Win32.SystemEvents.dll</HintPath>
+        <Private>false</Private>
+      </Reference>
+    </ItemGroup>
+  </Target>
+
+</Project>
