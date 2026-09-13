@@ -52,15 +52,22 @@ all = [
 
 [project.scripts]
 formforge = "formforge.cli:main"
+# The bullion signal engine ships in the same distribution but shares none of
+# formforge's dependencies: its core runs on the standard library alone, so the
+# console script works from a base install with no extras.
+bullion = "bullion.cli:main"
+bullion-api = "bullion.api.app:main"
 
 [project.urls]
 Homepage = "https://github.com/ikhanai777/the-garden"
 
 [tool.setuptools.packages.find]
-include = ["formforge*"]
+include = ["formforge*", "bullion*"]
 
 [tool.setuptools.package-data]
 formforge = ["templates/*.yaml"]
+# The dashboard is a single file served by the API; it has to ship in the wheel.
+bullion = ["webapp/index.html"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

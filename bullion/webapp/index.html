@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bullion — gold &amp; silver signal engine</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='none' stroke='%23e8c267' stroke-width='5' stroke-dasharray='61 82' stroke-linecap='round' transform='rotate(-90 16 16)'/%3E%3C/svg%3E">
+<!--
+  Single file, no build step, no CDN. Spec section 7 asks for a single-file
+  HTML/React build; this is the same idea one step further out, because a dashboard
+  that pulls React and Tailwind from a CDN is a dashboard that renders blank on a
+  locked-down network or an offline demo, and every dependency here would be used
+  for about forty lines of state management.
+
+  The confidence gauge is the headline, not the Buy/Sell word (spec section 7). The
+  four-layer bars are the second thing your eye lands on, because the "why" is the
+  product. The track record is on the first screen, not in settings, because it is
+  the credibility anchor and burying it would be the tell that we did not mean it.
+-->
+<style>
+  :root {
+    --bg: #07080c;
+    --bg-raise: #0d1016;
+    --bg-card: #11141c;
+    --line: #1e2430;
+    --line-soft: #171c26;
+    --text: #e7ecf4;
+    --muted: #8b95a7;
+    --faint: #5b6576;
+    --buy: #2fd39b;
+    --buy-dim: #1b6e55;
+    --sell: #ff5f6d;
+    --sell-dim: #7a2a33;
+    --hold: #d7b65c;
+    --none: #5b6576;
+    --gold: #e8c267;
+    --silver: #bcc6d6;
+    --accent: #6f8cff;
+    --shadow: 0 1px 0 rgba(255,255,255,.03), 0 18px 40px -24px rgba(0,0,0,.9);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+  body {
+    font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased;
+    /* Generative accent rather than a flat field: two very low-opacity radial
+       gradients, no images, no canvas loop burning battery on a page people leave open. */
+    background-image:
+      radial-gradient(ellipse 80% 50% at 15% -10%, rgba(111,140,255,.10), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 95% 0%, rgba(232,194,103,.07), transparent 60%);
+    background-attachment: fixed;
+  }
+  a { color: var(--accent); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 24px 18px 72px; }
+
+  /* ---- banner ---- */
+  .banner {
+    border: 1px solid #5a3d12; background: linear-gradient(90deg, #2a1d07, #1a1406);
+    color: #f2c97a; border-radius: 10px; padding: 10px 14px; margin-bottom: 18px;
+    font-size: 13px; display: flex; gap: 10px; align-items: flex-start;
+  }
+  .banner strong { color: #ffd894; letter-spacing: .02em; }
+  .banner[hidden] { display: none !important; }
+
+  /* ---- header ---- */
+  header.top { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end;
+    justify-content: space-between; margin-bottom: 22px; }
+  .brand { display: flex; align-items: baseline; gap: 12px; }
+  .brand h1 { font-size: 20px; margin: 0; letter-spacing: -.01em; font-weight: 600; }
+  .brand .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--buy);
+    box-shadow: 0 0 12px var(--buy); }
+  .brand .sub { color: var(--muted); font-size: 12.5px; }
+  .controls { display: flex; gap: 8px; align-items: center; }
+  select, button {
+    background: var(--bg-raise); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 7px 11px; font: inherit; font-size: 13px; cursor: pointer;
+  }
+  button:hover, select:hover { border-color: #2b3442; }
+  button:disabled { opacity: .5; cursor: default; }
+  .stamp { color: var(--faint); font-size: 12px; font-family: var(--mono); }
+
+  /* ---- layout ---- */
+  /* min() so the column floor never exceeds the viewport: a bare minmax(430px, 1fr)
+     makes the card 430px wide on a 400px phone and the whole page scrolls sideways. */
+  .grid { display: grid; gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(min(430px, 100%), 1fr)); }
+  .card {
+    background: var(--bg-card); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px; box-shadow: var(--shadow);
+  }
+  .card h2 { margin: 0 0 2px; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+  .card h3 { margin: 18px 0 8px; font-size: 11.5px; font-weight: 600; color: var(--muted);
+    text-transform: uppercase; letter-spacing: .09em; }
+  section.full { margin-top: 16px; }
+
+  /* ---- signal card ---- */
+  .sig-head { display: flex; gap: 18px; align-items: center; }
+  .gauge { position: relative; flex: 0 0 132px; width: 132px; height: 132px; }
+  .gauge svg { transform: rotate(-90deg); display: block; }
+  .gauge .mid { position: absolute; inset: 0; display: grid; place-content: center;
+    text-align: center; gap: 0; }
+  .gauge .pct { font-size: 30px; font-weight: 650; font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em; line-height: 1; }
+  .gauge .pct-label { font-size: 9.5px; color: var(--faint); text-transform: uppercase;
+    letter-spacing: .14em; margin-top: 5px; }
+  .gauge circle.track { stroke: #1c2230; }
+  .gauge circle.fill { transition: stroke-dashoffset 900ms cubic-bezier(.22,.9,.24,1); }
+
+  .sig-meta { flex: 1 1 auto; min-width: 0; }
+  .asset-row { display: flex; align-items: center; gap: 9px; }
+  .asset-row .name { font-size: 15px; font-weight: 600; }
+  .asset-row .tick { font-family: var(--mono); color: var(--faint); font-size: 11.5px; }
+  .state {
+    display: inline-flex; align-items: center; gap: 7px; margin-top: 8px;
+    font-size: 21px; font-weight: 650; letter-spacing: -.02em;
+  }
+  .state small { font-size: 11px; font-weight: 500; color: var(--muted);
+    letter-spacing: .04em; text-transform: uppercase; }
+  .px { font-family: var(--mono); font-size: 20px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .px span { color: var(--faint); font-size: 12px; }
+  .why { color: var(--muted); font-size: 12.5px; margin-top: 9px; }
+
+  /* ---- layer bars ---- */
+  .layer { margin: 11px 0; }
+  .layer-top { display: flex; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+  .layer-top .lname { font-weight: 550; }
+  .layer-top .lval { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .layer-top .lw { color: var(--faint); font-size: 11px; font-family: var(--mono); }
+  .bar { position: relative; height: 7px; background: var(--line-soft); border-radius: 4px;
+    margin-top: 6px; overflow: hidden; }
+  .bar .zero { position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px;
+    background: #2b3442; }
+  .bar .fill { position: absolute; top: 0; bottom: 0; border-radius: 4px;
+    transition: width 700ms cubic-bezier(.22,.9,.24,1), left 700ms cubic-bezier(.22,.9,.24,1); }
+  .layer .reason { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  .layer.dark .lname, .layer.dark .reason { color: var(--faint); font-style: italic; }
+  .locked { color: var(--hold); font-size: 12.5px; background: #1a1608; border: 1px dashed #55461b;
+    padding: 9px 11px; border-radius: 9px; }
+
+  /* ---- levels ---- */
+  .levels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-top: 12px;
+    background: var(--line); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .levels div { background: var(--bg-raise); padding: 9px 11px; }
+  .levels .k { color: var(--faint); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; }
+  .levels .v { font-family: var(--mono); font-size: 14.5px; margin-top: 3px; }
+  .basis { color: var(--faint); font-size: 11.5px; margin-top: 7px; }
+
+  /* ---- tide strip ---- */
+  .tide { width: 100%; height: 168px; display: block; }
+  .tide-legend { display: flex; gap: 16px; flex-wrap: wrap; color: var(--faint);
+    font-size: 11.5px; margin-top: 8px; }
+  .tide-legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+    margin-right: 5px; vertical-align: -1px; }
+
+  /* ---- table ---- */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: right; padding: 7px 9px; border-bottom: 1px solid var(--line-soft); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--faint); font-weight: 500; font-size: 11px; text-transform: uppercase;
+    letter-spacing: .08em; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  tr.thin td { color: var(--muted); }
+  .ci { color: var(--faint); font-size: 11.5px; font-family: var(--mono); }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 10.5px;
+    border: 1px solid var(--line); color: var(--muted); }
+  .pill.warn { border-color: #55461b; color: var(--hold); background: #1a1608; }
+
+  .note { color: var(--faint); font-size: 12px; margin-top: 10px; }
+  .err { color: var(--sell); font-size: 13px; }
+  footer.disc { margin-top: 28px; border-top: 1px solid var(--line); padding-top: 14px;
+    color: var(--faint); font-size: 11.5px; }
+  .scroll { overflow-x: auto; }
+  /* Let the record tables keep their columns readable and scroll the container
+     instead; squeezing seven columns into 360px makes the numbers unreadable. */
+  .scroll table { min-width: 520px; }
+  @media (max-width: 560px) {
+    .sig-head { flex-direction: column; align-items: flex-start; }
+    .levels { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="banner" id="synthetic-banner" hidden>
+    <span>⚠</span>
+    <span><strong>SYNTHETIC DATA.</strong> No price feed is configured, so prices, macro
+    series, positioning and headlines on this page are <em>generated</em>. Nothing here
+    reflects any real market. Set <code>TWELVEDATA_API_KEY</code> for live data.</span>
+  </div>
+
+  <header class="top">
+    <div class="brand">
+      <span class="dot" id="live-dot"></span>
+      <h1>Bullion</h1>
+      <span class="sub">confidence-scored signals for gold &amp; silver</span>
+    </div>
+    <div class="controls">
+      <select id="tier" title="Tier (sent as X-Bullion-Tier)">
+        <option value="free">Free tier</option>
+        <option value="paid" selected>Paid tier</option>
+        <option value="pro">Pro tier</option>
+      </select>
+      <button id="refresh">Reload</button>
+      <span class="stamp" id="stamp"></span>
+    </div>
+  </header>
+
+  <div id="error" class="err" hidden></div>
+
+  <div class="grid" id="signals"></div>
+
+  <section class="full card" id="tide-card">
+    <h2>Live timeline</h2>
+    <div class="sub" style="color:var(--muted);font-size:12.5px">
+      Price, scored news sentiment, issued signals and scheduled macro events on one axis.
+    </div>
+    <div class="controls" style="margin:12px 0 6px">
+      <select id="tide-asset"></select>
+    </div>
+    <svg class="tide" id="tide" viewBox="0 0 1000 168" preserveAspectRatio="none"></svg>
+    <div class="tide-legend">
+      <span><i style="background:var(--accent)"></i>price</span>
+      <span><i style="background:var(--buy)"></i>bullish headline</span>
+      <span><i style="background:var(--sell)"></i>bearish headline</span>
+      <span><i style="background:var(--gold)"></i>signal issued</span>
+      <span><i style="background:var(--silver)"></i>scheduled event</span>
+    </div>
+  </section>
+
+  <section class="full card">
+    <h2>Track record</h2>
+    <div style="color:var(--muted);font-size:12.5px" id="record-caveat"></div>
+    <h3>Overall</h3>
+    <div class="scroll"><table id="record-overall"></table></div>
+    <h3>By asset</h3>
+    <div class="scroll"><table id="record-asset"></table></div>
+    <h3>By signal strength</h3>
+    <div class="scroll"><table id="record-strength"></table></div>
+    <h3>By regime</h3>
+    <div class="scroll"><table id="record-regime"></table></div>
+    <h3>By confidence bucket</h3>
+    <div class="scroll"><table id="record-confidence"></table></div>
+    <div class="note" id="record-drift"></div>
+  </section>
+
+  <footer class="disc" id="disclosure"></footer>
+</div>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const STATE_COLOR = {
+  STRONG_BUY: "var(--buy)", BUY: "var(--buy)", HOLD: "var(--hold)",
+  SELL: "var(--sell)", STRONG_SELL: "var(--sell)", NO_SIGNAL: "var(--none)",
+};
+const ASSET_COLOR = { "XAU/USD": "var(--gold)", "XAG/USD": "var(--silver)" };
+const ASSET_NAME = { "XAU/USD": "Gold", "XAG/USD": "Silver" };
+const LAYER_ORDER = ["technical", "macro", "sentiment", "positioning"];
+
+let tier = "paid";
+let lastSignals = {};
+
+function fmt(n, places) {
+  if (n === null || n === undefined) return "—";
+  return Number(n).toLocaleString(undefined, {
+    minimumFractionDigits: places, maximumFractionDigits: places,
+  });
+}
+function pct(n, places) {
+  if (n === null || n === undefined) return "—";
+  return (n * 100).toFixed(places === undefined ? 0 : places) + "%";
+}
+function esc(s) {
+  return String(s === null || s === undefined ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+async function api(path) {
+  const res = await fetch(path, { headers: { "X-Bullion-Tier": tier } });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { detail = (await res.json()).detail || detail; } catch (e) { /* not json */ }
+    throw new Error(path + ": " + detail);
+  }
+  return res.json();
+}
+
+/* ---------------- signal cards ---------------- */
+
+function gauge(value, color) {
+  // Radial fill, 270 degrees of sweep. The confidence *is* the headline (spec 7), so it
+  // gets the largest glyph on the page and an animated fill rather than a bare number.
+  const r = 56, c = 2 * Math.PI * r, sweep = 0.75;
+  const shown = Math.max(0, Math.min(1, value || 0));
+  const dash = c * sweep, offset = dash * (1 - shown);
+  return `
+    <div class="gauge">
+      <svg width="132" height="132" viewBox="0 0 132 132">
+        <circle class="track" cx="66" cy="66" r="${r}" fill="none" stroke-width="9"
+          stroke-dasharray="${dash} ${c}" stroke-linecap="round"></circle>
+        <circle class="fill" cx="66" cy="66" r="${r}" fill="none" stroke-width="9"
+          stroke="${color}" stroke-dasharray="${dash} ${c}"
+          stroke-dashoffset="${offset}" stroke-linecap="round"></circle>
+      </svg>
+      <div class="mid">
+        <div class="pct">${pct(value)}</div>
+        <div class="pct-label">confidence</div>
+      </div>
+    </div>`;
+}
+
+function layerBars(signal) {
+  const layers = signal.layers || {};
+  if (layers.locked) return `<div class="locked">🔒 ${esc(layers.locked)}</div>`;
+  const weights = signal.weights || {};
+  return LAYER_ORDER.filter((name) => layers[name]).map((name) => {
+    const layer = layers[name];
+    const score = layer.available ? layer.score : 0;
+    const width = Math.abs(score) * 50;
+    const left = score >= 0 ? 50 : 50 - width;
+    const color = !layer.available ? "var(--none)" : score >= 0 ? "var(--buy)" : "var(--sell)";
+    const weight = weights[name];
+    return `
+      <div class="layer ${layer.available ? "" : "dark"}">
+        <div class="layer-top">
+          <span class="lname">${esc(name)}</span>
+          <span>
+            <span class="lw">${weight ? "weight " + pct(weight) : "no weight — dark"}</span>
+            &nbsp;<span class="lval" style="color:${color}">${
+              layer.available ? (score >= 0 ? "+" : "") + score.toFixed(2) : "n/a"}</span>
+          </span>
+        </div>
+        <div class="bar"><div class="zero"></div>
+          <div class="fill" style="left:${left}%;width:${width}%;background:${color}"></div>
+        </div>
+        <div class="reason">${esc(layer.reasoning)}</div>
+      </div>`;
+  }).join("");
+}
+
+function levelsBlock(signal) {
+  const levels = signal.levels || {};
+  if (levels.locked) return `<div class="locked">🔒 ${esc(levels.locked)}</div>`;
+  if (!levels.stop) return `<div class="basis">${esc(levels.basis || "no levels")}</div>`;
+  const places = signal.asset === "XAG/USD" ? 3 : 2;
+  return `
+    <div class="levels">
+      <div><div class="k">entry</div><div class="v">${fmt(levels.entry, places)}</div></div>
+      <div><div class="k">invalidation</div>
+        <div class="v" style="color:var(--sell)">${fmt(levels.stop, places)}</div></div>
+      <div><div class="k">target</div>
+        <div class="v" style="color:var(--buy)">${fmt(levels.target, places)}</div></div>
+    </div>
+    <div class="basis">${esc(levels.basis)}${
+      levels.risk_reward ? " · " + levels.risk_reward.toFixed(1) + "R" : ""}</div>`;
+}
+
+function signalCard(asset, signal) {
+  if (!signal) {
+    return `<div class="card">
+      <div class="asset-row"><span class="name" style="color:${ASSET_COLOR[asset] || ""}">
+        ${esc(ASSET_NAME[asset] || asset)}</span><span class="tick">${esc(asset)}</span></div>
+      <p class="why">No signal stored yet for this asset and tier. Run a recompute
+      (<code>bullion signal --persist</code>) to populate it.</p></div>`;
+  }
+  const color = STATE_COLOR[signal.signal] || "var(--none)";
+  const places = asset === "XAG/USD" ? 3 : 2;
+  const delayed = signal.delayed_minutes
+    ? `<span class="pill warn">delayed ${signal.delayed_minutes}m</span>` : "";
+  const regime = signal.regime || {};
+  return `
+  <div class="card">
+    <div class="sig-head">
+      ${gauge(signal.confidence, color)}
+      <div class="sig-meta">
+        <div class="asset-row">
+          <span class="name" style="color:${ASSET_COLOR[asset] || ""}">
+            ${esc(ASSET_NAME[asset] || asset)}</span>
+          <span class="tick">${esc(asset)}</span>
+          ${delayed}
+        </div>
+        <div class="state" style="color:${color}">
+          ${esc(signal.signal.replace("_", " "))}
+          <small>score ${signal.composite_score >= 0 ? "+" : ""}${
+            Number(signal.composite_score).toFixed(2)}</small>
+        </div>
+        <div class="px">${fmt(signal.price_at_signal, places)}
+          <span>at ${esc((signal.timestamp || "").slice(0, 16).replace("T", " "))} UTC</span></div>
+        <div class="why">${esc(signal.confidence_explained || "")}</div>
+      </div>
+    </div>
+
+    <h3>Why</h3>
+    ${layerBars(signal)}
+
+    <h3>Suggested levels</h3>
+    ${levelsBlock(signal)}
+
+    <h3>Conditions</h3>
+    <div class="why">${esc(regime.regime ? regime.regime.toUpperCase() + " — " + regime.reason : "—")}</div>
+    ${(signal.notes || []).map((n) => `<div class="note">· ${esc(n)}</div>`).join("")}
+  </div>`;
+}
+
+/* ---------------- tide strip ---------------- */
+
+function drawTide(data) {
+  const svg = $("tide");
+  const W = 1000, H = 168, padTop = 14, priceH = 92, sentY = 124, eventY = 152;
+  const price = data.price || [];
+  if (!price.length) {
+    svg.innerHTML = `<text x="12" y="84" fill="#5b6576" font-size="13">
+      No stored price history yet — run an ingest cycle.</text>`;
+    return;
+  }
+  const t0 = Date.parse(price[0].ts), t1 = Date.parse(price[price.length - 1].ts);
+  const span = Math.max(1, t1 - t0);
+  const lows = price.map((p) => p.low), highs = price.map((p) => p.high);
+  const lo = Math.min(...lows), hi = Math.max(...highs);
+  const range = Math.max(1e-9, hi - lo);
+  const x = (ts) => ((Date.parse(ts) - t0) / span) * (W - 16) + 8;
+  const y = (v) => padTop + priceH - ((v - lo) / range) * priceH;
+
+  const line = price.map((p, i) => `${i ? "L" : "M"}${x(p.ts).toFixed(1)},${y(p.close).toFixed(1)}`).join("");
+  const area = `${line}L${x(price[price.length - 1].ts).toFixed(1)},${padTop + priceH}`
+    + `L${x(price[0].ts).toFixed(1)},${padTop + priceH}Z`;
+
+  const sentiment = (data.sentiment || []).filter((s) => Date.parse(s.ts) >= t0).map((s) => {
+    const h = 2 + Math.abs(s.direction) * (s.relevance || 0.5) * 20;
+    const up = s.direction >= 0;
+    return `<rect x="${(x(s.ts) - 1).toFixed(1)}" y="${(up ? sentY - h : sentY).toFixed(1)}"
+      width="2" height="${h.toFixed(1)}" rx="1"
+      fill="${up ? "var(--buy)" : "var(--sell)"}" opacity="${0.35 + (s.relevance || 0.5) * 0.55}">
+      <title>${esc(s.title)} (${s.direction >= 0 ? "+" : ""}${Number(s.direction).toFixed(2)})</title>
+      </rect>`;
+  }).join("");
+
+  const signals = (data.signals || []).filter((s) => Date.parse(s.ts) >= t0
+    && s.state !== "HOLD" && s.state !== "NO_SIGNAL").map((s) => {
+    const up = s.state.indexOf("BUY") >= 0;
+    const px = x(s.ts), py = y(s.price);
+    const d = up ? `M${px},${py - 9}l5,9l-10,0z` : `M${px},${py + 9}l5,-9l-10,0z`;
+    return `<path d="${d}" fill="var(--gold)" opacity=".9">
+      <title>${esc(s.state)} @ ${fmt(s.price, 2)} (confidence ${pct(s.confidence)})</title></path>`;
+  }).join("");
+
+  const events = (data.events || []).map((e) => {
+    const ts = Date.parse(e.ts);
+    if (ts < t0 || ts > t1 + span * 0.25) return "";
+    const px = Math.min(W - 8, x(e.ts));
+    return `<g><line x1="${px}" y1="${padTop}" x2="${px}" y2="${eventY}"
+      stroke="var(--silver)" stroke-width="1" stroke-dasharray="2 4" opacity=".5"></line>
+      <circle cx="${px}" cy="${eventY}" r="3" fill="var(--silver)" opacity=".8">
+      <title>${esc(e.name)} — ${esc(e.ts.slice(0, 10))}</title></circle></g>`;
+  }).join("");
+
+  svg.innerHTML = `
+    <defs>
+      <linearGradient id="priceFill" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#6f8cff" stop-opacity=".30"/>
+        <stop offset="100%" stop-color="#6f8cff" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <path d="${area}" fill="url(#priceFill)"></path>
+    <path d="${line}" fill="none" stroke="var(--accent)" stroke-width="1.6"></path>
+    <line x1="8" y1="${sentY}" x2="${W - 8}" y2="${sentY}" stroke="#1e2430" stroke-width="1"></line>
+    ${sentiment}${signals}${events}
+    <text x="8" y="${padTop - 3}" fill="#5b6576" font-size="10">${fmt(hi, 2)}</text>
+    <text x="8" y="${padTop + priceH + 10}" fill="#5b6576" font-size="10">${fmt(lo, 2)}</text>
+    <text x="${W - 8}" y="${padTop - 3}" fill="#5b6576" font-size="10" text-anchor="end">
+      ${esc(price[price.length - 1].ts.slice(0, 10))}</text>`;
+}
+
+/* ---------------- track record ---------------- */
+
+function recordTable(el, buckets, label) {
+  const rows = Array.isArray(buckets) ? buckets : Object.values(buckets || {});
+  if (!rows.length || rows.every((b) => !b.trades)) {
+    el.innerHTML = `<tr><td style="color:var(--faint)">No graded signals yet. Signals are
+      graded once their 7-bar horizon has fully elapsed.</td></tr>`;
+    return;
+  }
+  const head = `<tr><th>${esc(label)}</th><th>signals</th><th>win rate</th>
+    <th>95% interval</th><th>expectancy</th><th>avg 7d</th><th></th></tr>`;
+  const body = rows.filter((b) => b.trades).map((b) => `
+    <tr class="${b.reliable ? "" : "thin"}">
+      <td>${esc(b.name)}</td>
+      <td class="num">${b.trades}</td>
+      <td class="num">${pct(b.win_rate, 1)}</td>
+      <td class="num ci">${pct(b.win_rate_ci[0])}–${pct(b.win_rate_ci[1])}</td>
+      <td class="num" style="color:${b.expectancy_r >= 0 ? "var(--buy)" : "var(--sell)"}">
+        ${b.expectancy_r === null ? "—" : (b.expectancy_r >= 0 ? "+" : "") + b.expectancy_r.toFixed(2) + "R"}</td>
+      <td class="num">${b.avg_return_7d === null ? "—" : pct(b.avg_return_7d, 2)}</td>
+      <td>${b.reliable ? "" : '<span class="pill warn">thin sample</span>'}</td>
+    </tr>`).join("");
+  el.innerHTML = head + body;
+}
+
+/* ---------------- load ---------------- */
+
+async function load() {
+  $("error").hidden = true;
+  $("refresh").disabled = true;
+  try {
+    const [signals, card, health] = await Promise.all([
+      api("/v1/signals"), api("/v1/scorecard"), api("/health"),
+    ]);
+
+    const synthetic = signals.data_mode === "synthetic";
+    $("synthetic-banner").hidden = !synthetic;
+    $("live-dot").style.background = synthetic ? "var(--hold)" : "var(--buy)";
+    $("live-dot").style.boxShadow = `0 0 12px ${synthetic ? "var(--hold)" : "var(--buy)"}`;
+    $("stamp").textContent = new Date().toISOString().slice(11, 19) + "Z · "
+      + (health.counts ? health.counts.signals + " signals stored" : "");
+
+    lastSignals = signals.signals || {};
+    const assets = Object.keys(lastSignals);
+    $("signals").innerHTML = assets.map((a) => signalCard(a, lastSignals[a])).join("")
+      + (signals.withheld_assets || []).map((a) => `
+        <div class="card"><div class="asset-row">
+          <span class="name">${esc(ASSET_NAME[a] || a)}</span>
+          <span class="tick">${esc(a)}</span></div>
+          <p class="locked" style="margin-top:12px">🔒 ${esc(ASSET_NAME[a] || a)} is not
+          included in the ${esc(signals.tier.name)} tier.</p></div>`).join("");
+
+    const picker = $("tide-asset");
+    if (picker.options.length !== assets.length) {
+      picker.innerHTML = assets.map((a) =>
+        `<option value="${esc(a)}">${esc(ASSET_NAME[a] || a)}</option>`).join("");
+    }
+    if (assets.length) {
+      drawTide(await api("/v1/timeline/" + encodeURIComponent(picker.value || assets[0])));
+    } else {
+      $("tide-card").hidden = true;
+    }
+
+    const sc = card.scorecard;
+    $("record-caveat").textContent = sc.caveat;
+    recordTable($("record-overall"), [sc.overall], "all signals");
+    recordTable($("record-asset"), sc.by_asset, "asset");
+    recordTable($("record-strength"), sc.by_strength, "strength");
+    recordTable($("record-regime"), sc.by_regime, "regime");
+    recordTable($("record-confidence"), sc.by_confidence, "confidence");
+
+    const drift = await api("/v1/drift");
+    $("record-drift").textContent =
+      `${sc.pending} signal(s) still open and ungraded.`
+      + (sc.excluded_synthetic ? ` ${sc.excluded_synthetic} synthetic row(s) excluded.` : "")
+      + ` Drift: ${drift.drift.verdict.replace(/_/g, " ")} — ${drift.drift.detail}.`;
+
+    const full = await api("/v1/disclosure");
+    $("disclosure").textContent = full.full;
+  } catch (err) {
+    $("error").hidden = false;
+    $("error").textContent = String(err.message || err);
+  } finally {
+    $("refresh").disabled = false;
+  }
+}
+
+$("refresh").addEventListener("click", load);
+$("tier").addEventListener("change", (e) => { tier = e.target.value; load(); });
+$("tide-asset").addEventListener("change", async (e) => {
+  try { drawTide(await api("/v1/timeline/" + encodeURIComponent(e.target.value))); }
+  catch (err) { $("error").hidden = false; $("error").textContent = String(err.message || err); }
+});
+load();
+// Periodic reload. Two minutes, not five seconds: the engine recomputes on its own
+// schedule and a dashboard that polls faster than the data changes is just heat.
+setInterval(load, 120000);
+</script>
+</body>
+</html>

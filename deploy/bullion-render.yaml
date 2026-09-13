@@ -1,0 +1,107 @@
+# Render blueprint for the bullion signal engine (spec section 8: Render/Railway).
+#
+# Three services, because they have genuinely different shapes:
+#
+#   bullion-api     a web service that only ever reads the store
+#   bullion-cycle   a cron job that ingests, scores and alerts
+#   bullion-grade   a cron job that resolves matured signals and re-runs the backtest
+#
+# Splitting the cycle out of the web service is the decision worth explaining. If the
+# API recomputed on request, two users loading the dashboard would see different
+# prices, a refresh would cost provider quota, and a free tier's 500 monthly requests
+# would be gone in a day. The cron job writes; the web service reads what was written.
+#
+# The disk matters as much: the `signals` table is the published track record and it
+# cannot be rebuilt, so it lives on a persistent disk mounted into every service.
+# On Render, a disk can only attach to one service at a time -- so if the plan does
+# not allow a shared disk, move the store to Postgres (docs/bullion-schema.sql is the
+# target schema) before scaling past one instance.
+
+services:
+  - type: web
+    name: bullion-api
+    runtime: docker
+    dockerfilePath: ./deploy/bullion.Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    disk:
+      name: bullion-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: BULLION_STORE
+        value: /data/bullion.db
+      # Production posture: no price key means fail loudly, not serve invented bars.
+      - key: BULLION_ALLOW_SYNTHETIC
+        value: "0"
+      - key: BULLION_HOST
+        value: 0.0.0.0
+      - key: TWELVEDATA_API_KEY
+        sync: false
+      - key: GOLDAPI_KEY
+        sync: false
+      - key: FRED_API_KEY
+        sync: false
+      - key: FINNHUB_KEY
+        sync: false
+      - key: MARKETAUX_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Fitted weights from the last walk-forward, as JSON. Set from the output of
+      # `bullion backtest`; unset means the priors in config.BASE_WEIGHTS.
+      - key: BULLION_WEIGHTS
+        sync: false
+
+  - type: cron
+    name: bullion-cycle
+    runtime: docker
+    dockerfilePath: ./deploy/bullion.Dockerfile
+    plan: starter
+    # Hourly, on the hour. Faster is not better: the daily bars the weights are tuned
+    # for close once a day, and a five-minute loop would spend a month of GoldAPI
+    # budget in two days to recompute the same number.
+    schedule: "0 * * * *"
+    dockerCommand: bullion signal --persist
+    disk:
+      name: bullion-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: BULLION_STORE
+        value: /data/bullion.db
+      - key: BULLION_ALLOW_SYNTHETIC
+        value: "0"
+      - key: TWELVEDATA_API_KEY
+        sync: false
+      - key: GOLDAPI_KEY
+        sync: false
+      - key: FRED_API_KEY
+        sync: false
+      - key: FINNHUB_KEY
+        sync: false
+      - key: MARKETAUX_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: BULLION_WEIGHTS
+        sync: false
+
+  - type: cron
+    name: bullion-grade
+    runtime: docker
+    dockerfilePath: ./deploy/bullion.Dockerfile
+    plan: starter
+    # 06:00 UTC daily: grade yesterday's matured signals before anyone reads the
+    # scorecard. Grading reads stored bars, so it costs no provider quota.
+    schedule: "0 6 * * *"
+    dockerCommand: sh -c "bullion grade && bullion scorecard"
+    disk:
+      name: bullion-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: BULLION_STORE
+        value: /data/bullion.db
+      - key: BULLION_ALLOW_SYNTHETIC
+        value: "0"
