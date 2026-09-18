@@ -35,10 +35,21 @@ from ..bundle import write_bundle
 from ..dfm import DEFAULT_PROFILE_ID, PROFILES
 from ..llm import build_client
 from ..orchestrator import Orchestrator
-from ..store import PRINT_ISSUES, Store
+from ..patterns import (
+    FAMILIES,
+    JOINT_STYLES,
+    MOUNT_STYLES,
+    PATTERNS,
+    JointSpec,
+    MountSpec,
+    PanelSpec,
+    build_panel,
+    get_pattern,
+)
 from ..registry import TemplateRegistry
 from ..render import STANDARD_VIEWS, render_views
 from ..slicer import slice_model
+from ..store import PRINT_ISSUES, Store
 from ..validation import validate
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
@@ -266,6 +277,94 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "list_patterns",
+        "description": (
+            "List the relief patterns available for wall panels: waves, ocean swell, "
+            "sand dunes, hills, mountain ridges, contour maps, gyroids, quasicrystals, "
+            "Voronoi cells and more. These are a different thing from templates -- a "
+            "pattern is a continuous surface generated at any size, then cut into "
+            "tiles that fit the plate and join back together, so it answers "
+            "'something textured for a 2 metre wall' where a template cannot. Each "
+            "entry carries its parameters and the relief depth that suits it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "family": {"type": "string", "enum": sorted(FAMILIES)},
+                "pattern_id": {
+                    "type": "string",
+                    "description": "Return full parameter detail for one pattern.",
+                },
+            },
+        },
+    },
+    {
+        "name": "build_pattern_panel",
+        "description": (
+            "Build a relief panel of any size from a pattern and cut it into "
+            "printable tiles. The surface is one continuous field, so the tiles line "
+            "up exactly at their seams however many there are. Returns a tile per "
+            "printable piece, the loose parts the joint needs and how many to print, "
+            "and a grid map -- every tile also carries its own grid reference "
+            "recessed into its back. Ask the user for the wall size first; the tile "
+            "count follows from it and the printer, not from a choice they have to "
+            "make. Use joint 'key' unless there is a reason not to: it assembles "
+            "face-down in any order and works on both axes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "required": ["pattern_id", "width_mm", "height_mm"],
+            "properties": {
+                "pattern_id": {"type": "string", "enum": sorted(PATTERNS)},
+                "width_mm": {"type": "number", "minimum": 20, "maximum": 5000},
+                "height_mm": {"type": "number", "minimum": 20, "maximum": 5000},
+                "params": {
+                    "type": "object",
+                    "description": (
+                        "Pattern parameters; see list_patterns for each one's range."
+                    ),
+                },
+                "seed": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": (
+                        "Changes the pattern for the noise-driven ones. Reproducible."
+                    ),
+                },
+                "relief_mm": {
+                    "type": "number",
+                    "description": "Relief depth. Defaults to what suits the pattern.",
+                },
+                "base_mm": {
+                    "type": "number",
+                    "default": 4.0,
+                    "description": (
+                        "Flat backing under the relief. Must clear any joint or mount "
+                        "pocket."
+                    ),
+                },
+                "joint": {"type": "string", "enum": sorted(JOINT_STYLES), "default": "key"},
+                "mount": {"type": "string", "enum": sorted(MOUNT_STYLES), "default": "none"},
+                "profile_id": {"type": "string", "enum": sorted(PROFILES)},
+                "material": {"type": "string", "default": "PLA"},
+                "cols": {"type": "integer", "minimum": 1},
+                "rows": {"type": "integer", "minimum": 1},
+                "terraces": {
+                    "type": "integer",
+                    "default": 0,
+                    "description": "Quantise into contour steps. 0 leaves the surface smooth.",
+                },
+                "invert": {"type": "boolean", "default": False},
+                "border_mm": {
+                    "type": "number",
+                    "default": 0,
+                    "description": "Taper the relief to flat around the panel edge.",
+                },
+                "render": {"type": "boolean", "default": True},
+            },
+        },
+    },
+    {
         "name": "report_print_result",
         "description": (
             "Record what happened when a generated model was actually printed. "
@@ -476,8 +575,9 @@ class FormForgeTools:
             brep_features=execution.stats.get("brep_features"),
         )
 
-        from ..orchestrator.loop import GenerationResult  # noqa: PLC0415
         import uuid  # noqa: PLC0415
+
+        from ..orchestrator.loop import GenerationResult  # noqa: PLC0415
 
         result = GenerationResult(
             model_id=uuid.uuid4().hex,
@@ -613,6 +713,127 @@ class FormForgeTools:
         }
 
     # -- internals ---------------------------------------------------------
+    # -- patterns ----------------------------------------------------------
+    def list_patterns(self, family: str | None = None, pattern_id: str | None = None) -> dict:
+        if pattern_id:
+            spec = get_pattern(pattern_id)
+            return {
+                "pattern": {
+                    "id": spec.id,
+                    "family": spec.family,
+                    "display_name": spec.display_name,
+                    "description": spec.description.strip(),
+                    "suggested_relief_mm": spec.suggested_relief_mm,
+                    "print_note": spec.print_note,
+                    "parameters": {
+                        p.name: {
+                            "default": p.default,
+                            "range": p.describe_range(),
+                            "description": p.description,
+                        }
+                        for p in spec.params
+                    },
+                }
+            }
+        specs = [s for s in PATTERNS.values() if not family or s.family == family]
+        return {
+            "families": FAMILIES,
+            "patterns": [
+                {
+                    "id": s.id,
+                    "family": s.family,
+                    "display_name": s.display_name,
+                    "description": s.description.strip(),
+                    "parameters": [p.name for p in s.params],
+                    "suggested_relief_mm": s.suggested_relief_mm,
+                }
+                for s in specs
+            ],
+            "joints": JOINT_STYLES,
+            "mounts": MOUNT_STYLES,
+        }
+
+    def build_pattern_panel(
+        self,
+        pattern_id: str,
+        width_mm: float,
+        height_mm: float,
+        params: dict | None = None,
+        seed: int = 0,
+        relief_mm: float | None = None,
+        base_mm: float = 4.0,
+        joint: str = "key",
+        mount: str = "none",
+        profile_id: str | None = None,
+        material: str = "PLA",
+        cols: int | None = None,
+        rows: int | None = None,
+        terraces: int = 0,
+        invert: bool = False,
+        border_mm: float = 0.0,
+        render: bool = True,
+    ) -> dict:
+        spec = PanelSpec(
+            pattern_id=pattern_id,
+            width_mm=width_mm,
+            height_mm=height_mm,
+            params=params or {},
+            seed=seed,
+            relief_mm=relief_mm,
+            base_mm=base_mm,
+            rows=rows,
+            cols=cols,
+            joint=JointSpec(style=joint),
+            mount=MountSpec(style=mount),
+            profile_id=profile_id or DEFAULT_PROFILE_ID,
+            material=material,
+            terraces=terraces,
+            invert=invert,
+            border_mm=border_mm,
+        )
+        panel_id = f"panel-{pattern_id}-{seed}-{int(width_mm)}x{int(height_mm)}"
+        directory = self.store / panel_id
+        try:
+            result = build_panel(spec, directory)
+        except Exception as exc:  # noqa: BLE001 - the message is the product here
+            raise ToolError(str(exc)) from exc
+
+        payload = {
+            "panel_id": panel_id,
+            "directory": str(result.directory),
+            "pattern": result.pattern.display_name,
+            "grid": result.assembly["grid"],
+            "panel": result.assembly["panel"],
+            "joint": result.assembly["joint"],
+            "mount": result.assembly["mount"],
+            "tiles": [
+                {
+                    "label": t.label,
+                    "file": t.files.get("3mf") or t.files["stl"],
+                    "size_mm": [round(v, 1) for v in t.size_mm],
+                    "mass_g": round(t.mass_g, 1),
+                    "neighbours": t.neighbours,
+                }
+                for t in result.tiles
+            ],
+            "parts": result.parts,
+            "totals": result.assembly["totals"],
+            "assembly_instructions": str(result.directory / "ASSEMBLY.md"),
+            "warnings": result.warnings,
+        }
+        if render:
+            # The whole assembled panel, not one tile: the thing worth showing
+            # back is whether the pattern reads at this size, and a single tile
+            # of a six-tile panel cannot answer that.
+            preview_source = result.directory / "assembled_preview.stl"
+            if not preview_source.exists():
+                preview_source = Path(result.tiles[0].files["stl"])
+            rendered = render_views(
+                preview_source, result.directory / "previews", views=("iso", "front", "top")
+            )
+            payload["previews"] = rendered.views
+        return payload
+
     def _record(self, result, template, *, parent_id: str | None = None) -> dict:
         self._models[result.model_id] = result
         # Every generation, whatever its outcome. The in-session cache above is
@@ -709,6 +930,8 @@ class FormForgeTools:
             "slice_preview": self.slice_preview,
             "export_model": self.export_model,
             "report_print_result": self.report_print_result,
+            "list_patterns": self.list_patterns,
+            "build_pattern_panel": self.build_pattern_panel,
         }.get(name)
         if handler is None:
             raise ToolError(f"unknown tool {name!r}")

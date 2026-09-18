@@ -26,9 +26,22 @@ from . import __version__
 from .dfm import DEFAULT_PROFILE_ID, PROFILES, rules_block
 from .llm import build_client
 from .orchestrator import Orchestrator
+from .patterns import (
+    FAMILIES,
+    JOINT_STYLES,
+    MOUNT_STYLES,
+    PATTERNS,
+    JointSpec,
+    MountSpec,
+    PanelError,
+    PanelSpec,
+    build_panel,
+    get_pattern,
+)
 from .registry import TemplateRegistry
 from .render import STANDARD_VIEWS, render_views
-from .slicer import available as slicer_available, slice_model
+from .slicer import available as slicer_available
+from .slicer import slice_model
 from .validation import validate
 
 # Terminal colour, off when not a tty so piped output stays clean.
@@ -66,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
     _add_generate(subparsers)
     _add_build(subparsers)
     _add_templates(subparsers)
+    _add_patterns(subparsers)
+    _add_pattern(subparsers)
     _add_check(subparsers)
     _add_render(subparsers)
     _add_slice(subparsers)
@@ -388,6 +403,313 @@ def _print_template(template) -> None:
         print(_c("Guarantees", "1"))
         for invariant in template.invariants:
             print(f"  {invariant}")
+
+
+# ---------------------------------------------------------------------------
+# patterns
+# ---------------------------------------------------------------------------
+
+
+def _add_patterns(subparsers) -> None:
+    parser = subparsers.add_parser("patterns", help="list or inspect relief patterns")
+    parser.add_argument("pattern_id", nargs="?", help="show one pattern in detail")
+    parser.add_argument("--family", choices=sorted(FAMILIES))
+    parser.add_argument("--json", action="store_true")
+    parser.set_defaults(handler=_cmd_patterns)
+
+
+def _cmd_patterns(args) -> int:
+    if args.pattern_id:
+        try:
+            spec = get_pattern(args.pattern_id)
+        except KeyError as exc:
+            print(_bad(str(exc)), file=sys.stderr)
+            return 1
+        if args.json:
+            print(json.dumps(_pattern_detail(spec), indent=2))
+            return 0
+        _print_pattern(spec)
+        return 0
+
+    specs = [s for s in PATTERNS.values() if not args.family or s.family == args.family]
+    if args.json:
+        print(json.dumps([_pattern_detail(s) for s in specs], indent=2))
+        return 0
+
+    print(f"{len(specs)} pattern(s)\n")
+    for family in FAMILIES:
+        in_family = [s for s in specs if s.family == family]
+        if not in_family:
+            continue
+        print(_c(family.upper(), "1"), _dim(f"-- {FAMILIES[family]}"))
+        for spec in in_family:
+            print(f"  {spec.id:<16} {spec.display_name}")
+            print(_dim(f"    {spec.description.strip().splitlines()[0]}"))
+        print()
+    print(_dim("formforge patterns <id>          parameters and printing notes"))
+    print(_dim("formforge pattern <id> --size WxH   build a tiled panel"))
+    return 0
+
+
+def _pattern_detail(spec) -> dict:
+    return {
+        "id": spec.id,
+        "family": spec.family,
+        "display_name": spec.display_name,
+        "description": spec.description,
+        "tags": list(spec.tags),
+        "suggested_relief_mm": spec.suggested_relief_mm,
+        "print_note": spec.print_note,
+        "parameters": {
+            p.name: {
+                "kind": p.kind,
+                "default": p.default,
+                "range": p.describe_range(),
+                "description": p.description,
+            }
+            for p in spec.params
+        },
+    }
+
+
+def _print_pattern(spec) -> None:
+    print(_c(spec.display_name, "1"))
+    print(_dim(f"{spec.id} -- {spec.family}"))
+    print()
+    print(spec.description)
+    print()
+    print(_c("Parameters", "1"))
+    for param in spec.params:
+        print(f"  {param.name:<18} = {param.default!r:<14} [{param.describe_range()}]")
+        print(_dim(f"    {param.description}"))
+    print()
+    print(_c("Printing", "1"))
+    print(f"  suggested relief: {spec.suggested_relief_mm:g} mm")
+    if spec.print_note:
+        print(_dim("  " + spec.print_note))
+    print()
+    print(_dim(f"formforge pattern {spec.id} --size 600x400 --joint key --mount keyhole"))
+
+
+def _add_pattern(subparsers) -> None:
+    parser = subparsers.add_parser(
+        "pattern",
+        help="build a tiled relief panel from a pattern",
+        description=(
+            "Generate a continuous relief surface at any size and cut it into tiles "
+            "that fit the plate and join back together."
+        ),
+    )
+    parser.add_argument("pattern_id", help=f"one of: {', '.join(sorted(PATTERNS))}")
+    parser.add_argument(
+        "--size", default="300x200", help="panel WIDTHxHEIGHT in mm, e.g. 600x400"
+    )
+    parser.add_argument("--out", help="output directory (default out/pattern-<id>)")
+    parser.add_argument(
+        "--set",
+        action="append",
+        default=[],
+        metavar="NAME=VALUE",
+        help="pattern parameter; repeatable",
+    )
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--relief", type=float, help="relief depth in mm (default: per pattern)"
+    )
+    parser.add_argument("--base", type=float, default=3.0, help="flat backing thickness in mm")
+    parser.add_argument(
+        "--tiles",
+        default="auto",
+        help="COLSxROWS, or 'auto' to use the fewest tiles that fit the plate",
+    )
+    parser.add_argument("--max-tile", type=float, help="cap the tile size in mm")
+    parser.add_argument("--joint", default="key", choices=sorted(JOINT_STYLES))
+    parser.add_argument(
+        "--clearance", type=float, default=0.25, help="joint fit clearance in mm"
+    )
+    parser.add_argument("--mount", default="none", choices=sorted(MOUNT_STYLES))
+    parser.add_argument("--profile", default=DEFAULT_PROFILE_ID, choices=sorted(PROFILES))
+    parser.add_argument("--material", default="PLA")
+    parser.add_argument(
+        "--resolution", type=float, help="sample pitch in mm (default: 2x nozzle)"
+    )
+    parser.add_argument(
+        "--triangles", type=int, default=400_000, help="triangle budget per tile"
+    )
+    parser.add_argument(
+        "--snap-layers", action="store_true", help="quantise relief to whole layers"
+    )
+    parser.add_argument("--invert", action="store_true", help="swap crests and troughs")
+    parser.add_argument("--contrast", type=float, default=1.0)
+    parser.add_argument("--terraces", type=int, default=0, help="quantise into n contour steps")
+    parser.add_argument(
+        "--border", type=float, default=0.0, help="flat border around the panel, mm"
+    )
+    parser.add_argument(
+        "--no-labels", action="store_true", help="omit the grid reference on the back"
+    )
+    parser.add_argument("--no-3mf", action="store_true")
+    parser.add_argument(
+        "--single", action="store_true", help="also write the panel as one piece"
+    )
+    parser.add_argument("--preview", action="store_true", help="render the assembled panel")
+    parser.add_argument("--check", action="store_true", help="run the DFM suite on every tile")
+    parser.add_argument("--json", action="store_true")
+    parser.set_defaults(handler=_cmd_pattern)
+
+
+def _cmd_pattern(args) -> int:
+    try:
+        width, height = _parse_size(args.size)
+        cols, rows = _parse_tiles(args.tiles)
+        params = _parse_sets(args.set)
+    except ValueError as exc:
+        print(_bad(str(exc)), file=sys.stderr)
+        return 1
+
+    out_dir = Path(args.out) if args.out else Path("out") / f"pattern-{args.pattern_id}"
+    spec = PanelSpec(
+        pattern_id=args.pattern_id,
+        width_mm=width,
+        height_mm=height,
+        params=params,
+        seed=args.seed,
+        relief_mm=args.relief,
+        base_mm=args.base,
+        rows=rows,
+        cols=cols,
+        max_tile_mm=args.max_tile,
+        joint=JointSpec(style=args.joint, clearance_mm=args.clearance),
+        mount=MountSpec(style=args.mount),
+        profile_id=args.profile,
+        material=args.material,
+        pitch_mm=args.resolution,
+        triangle_budget=args.triangles,
+        snap_layers=args.snap_layers,
+        invert=args.invert,
+        contrast=args.contrast,
+        terraces=args.terraces,
+        border_mm=args.border,
+        label_tiles=not args.no_labels,
+        write_3mf=not args.no_3mf,
+        single=args.single,
+    )
+
+    quiet = args.json
+
+    def on_step(step: str, message: str) -> None:
+        print(f"  {_ok('[' + step + ']'):<20} {message}")
+
+    try:
+        result = build_panel(spec, out_dir, progress=None if quiet else on_step)
+    except (PanelError, ValueError, KeyError) as exc:
+        print(_bad(str(exc).strip("'")), file=sys.stderr)
+        return 1
+
+    if args.preview:
+        previews = render_views(
+            str(result.directory / "assembled_preview.stl")
+            if (result.directory / "assembled_preview.stl").exists()
+            else result.tiles[0].files["stl"],
+            result.directory / "previews",
+            views=("iso", "front", "top"),
+        )
+        result.assembly["previews"] = previews.views
+        _rewrite_assembly(result)
+
+    failures = 0
+    if args.check:
+        if not quiet:
+            print()
+            print(_c("Validating each tile", "1"))
+        checks = []
+        for tile in result.tiles:
+            report = validate(
+                tile.files["stl"],
+                profile_id=args.profile,
+                material=args.material,
+            )
+            checks.append(
+                {
+                    "tile": tile.label,
+                    "passed": report.passed,
+                    "summary": report.summary_line(),
+                }
+            )
+            failures += 0 if report.passed else 1
+            if not quiet:
+                line = f"  {tile.label:<6} {report.summary_line()}"
+                print(_ok(line) if report.passed else _bad(line))
+        result.assembly["validation"] = checks
+        _rewrite_assembly(result)
+
+    if args.json:
+        print(json.dumps(result.assembly, indent=2))
+        return 1 if failures else 0
+
+    print()
+    print(
+        f"Built a {result.pattern.display_name} panel -- "
+        f"{spec.width_mm:g} x {spec.height_mm:g} mm, "
+        f"{result.plan.count} tile(s) of "
+        f"{result.plan.footprint_mm[0]:.0f} x {result.plan.footprint_mm[1]:.0f} mm, "
+        f"{result.total_triangles} triangles."
+    )
+    for name, part in result.parts.items():
+        print(f"Also print {part['count']} x {name} from parts/{name}.stl.")
+    for warning in result.warnings:
+        print(_warn(f"  {warning}"))
+    print(f"bundle: {result.directory}")
+    print(_dim(f"        read {result.directory / 'ASSEMBLY.md'} before printing"))
+    return 1 if failures else 0
+
+
+def _rewrite_assembly(result) -> None:
+    """Re-write assembly.json after adding previews or validation to it."""
+    (result.directory / "assembly.json").write_text(
+        json.dumps(result.assembly, indent=2) + "\n"
+    )
+
+
+def _parse_size(text: str) -> tuple[float, float]:
+    parts = text.lower().replace("*", "x").split("x")
+    if len(parts) != 2:
+        raise ValueError(f"--size {text!r} should look like 600x400 (millimetres)")
+    try:
+        width, height = float(parts[0]), float(parts[1])
+    except ValueError:
+        raise ValueError(f"--size {text!r} should look like 600x400 (millimetres)") from None
+    if width <= 0 or height <= 0:
+        raise ValueError("--size needs two positive numbers")
+    return width, height
+
+
+def _parse_tiles(text: str) -> tuple[int | None, int | None]:
+    """COLSxROWS, in the same order as --size. 'auto' leaves it to the plate."""
+    if not text or text.lower() == "auto":
+        return None, None
+    parts = text.lower().replace("*", "x").split("x")
+    if len(parts) != 2:
+        raise ValueError(f"--tiles {text!r} should look like 3x2 (columns x rows), or 'auto'")
+    try:
+        cols, rows = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise ValueError(
+            f"--tiles {text!r} should look like 3x2 (columns x rows), or 'auto'"
+        ) from None
+    if cols < 1 or rows < 1:
+        raise ValueError("--tiles needs at least one column and one row")
+    return cols, rows
+
+
+def _parse_sets(assignments: list[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for assignment in assignments:
+        name, separator, value = assignment.partition("=")
+        if not separator:
+            raise ValueError(f"--set {assignment!r} should look like NAME=VALUE")
+        values[name.strip()] = value.strip()
+    return values
 
 
 # ---------------------------------------------------------------------------

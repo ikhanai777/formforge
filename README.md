@@ -88,6 +88,8 @@ formforge templates                              # what is available
 formforge templates planter_halfmoon_wall        # parameters, ranges, print test
 formforge generate "a hex planter for a 4in pot"
 formforge build keychain_text_tag --set text=RIVER --set body_l_mm=70
+formforge patterns                               # the relief pattern catalogue
+formforge pattern dunes --size 900x600 --joint key   # a wall panel, in tiles that join
 formforge check model.stl --profile bambu_p1s_0.4 --category planter
 formforge render model.stl --out previews/
 formforge rules --profile prusa_mk4_0.4          # the DFM rules being applied
@@ -108,15 +110,59 @@ a print outcome recorded against a model is the only thing that can make one
 of them a measurement, and it lands next to what the validator measured at the
 time.
 
+### Pattern panels, bigger than the printer
+
+A second generator, for the request a template cannot answer: a relief surface
+at wall scale, cut into pieces that fit the plate.
+
+```
+$ formforge pattern dunes --size 900x600 --joint key --mount keyhole --base 5
+
+  [field]   Sand Dunes: calibrating over 900 x 600 mm
+  [plan]    3 x 5 = 15 tile(s), 180 x 200 mm each
+  [tile]    A1: building
+  ...
+  [parts]   key: print 44, 34 x 15 x 2.7 mm
+
+Built a Sand Dunes panel -- 900 x 600 mm, 15 tile(s) of 180 x 200 mm, 3353832 triangles.
+Also print 44 x key from parts/key.stl.
+bundle: out/pattern-dunes
+```
+
+Twenty-one patterns in four families — waves, ocean swell, pond ripples,
+interference fringes and sand ripples; dunes, rolling hills, mountain ridges,
+canyon strata, contour maps and marbled flow; gyroids and the other minimal
+surfaces, quasicrystals, Chladni figures, Julia sets, spirals and Sierpinski;
+Voronoi cells, Truchet tiles, hex fields and basket weave. `formforge patterns`
+lists them, `formforge patterns dunes` gives the parameters and the ranges in
+which each one *prints* well rather than the ranges in which the maths is
+defined.
+
+**The tiles line up because they are windows onto one function.** A pattern is
+`h = f(x, y)` over the whole wall; a tile samples its own rectangle of it. The
+crest of a dune that leaves tile B2 at x = 400 mm arrives at tile B3 at
+x = 400 mm because both tiles asked the same function about the same point.
+Nothing is matched up afterwards, so nothing can fail to match up afterwards.
+
+Every tile carries its grid reference and an up-arrow recessed into the back —
+mirrored, because the moment you need to read it is the moment the tiles are
+face down — and the bundle carries `ASSEMBLY.md`, the grid map, the count of
+keys to print and the exact command that rebuilds any single tile. The joints
+(`key`, `bar`, `dovetail`, `puzzle`, or plain `butt`) and the wall mounts
+(magnet pockets, or a keyhole that traps a screw head behind a printed lip) are
+in `docs/patterns.md`, along with why the default joint is a bowtie key on the
+back rather than the dovetail everyone reaches for first.
+
 ### From Claude, over MCP
 
 ```bash
 python -m formforge.mcp        # stdio server
 ```
 
-Then ask Claude for "a hex wall planter for a 4-inch pot". The tool results
-carry the preview images inline, so Claude can see what it made and correct
-itself in the same turn.
+Then ask Claude for "a hex wall planter for a 4-inch pot", or for "a two-metre
+wave panel for the hallway" -- `list_patterns` and `build_pattern_panel` cover
+the second one. The tool results carry the preview images inline, so Claude can
+see what it made and correct itself in the same turn.
 
 `report_print_result` is the tool worth knowing about: when the user comes back
 and says how a print came out, that sentence is the only empirical evidence this
@@ -223,6 +269,8 @@ than in a runbook.
 pytest                                             # the suite
 python -m formforge.eval.check_templates           # every template builds
 python -m formforge.eval.check_templates --extremes  # ...at every range extreme
+python -m formforge.eval.check_patterns            # every pattern builds a panel
+python -m formforge.eval.check_patterns --extremes   # ...at every range extreme
 python -m formforge.eval.benchmark                 # the metrics from the spec
 python -m formforge.eval.benchmark --baseline docs/benchmark-baseline.json
 ```
@@ -237,6 +285,11 @@ The template harness is not optional tooling. A schema that permits a 200 mm
 planter is a promise that a 200 mm planter builds, and the sweep is what holds
 the registry to it — it found the grazing-ray artifact, the annulus bridge false
 positive and the coplanar-union bug that no unit test would have.
+
+`check_patterns` makes the same claim about the pattern catalogue: a range that
+permits a 4 mm Voronoi cell is a promise that a 4 mm cell builds. Its 202-case
+extreme sweep is where a kernel divides by a zero radius or a footprint
+operation eats the tile, and none of that shows up at the defaults.
 
 Everything runs with no API key. The template path is fully functional offline:
 lexical matching picks a template, regexes pull dimensions and quoted text out
@@ -257,6 +310,7 @@ formforge/
   store.py        the tables that cannot be backfilled
   sandbox/        isolated execution and the in-sandbox runner
   validation/     the three tiers and the measurements behind them
+  patterns/       relief patterns, tiling, joinery, the panel builder
   render/         numpy rasteriser, PNG encoder, section cuts
   orchestrator/   intent, codegen, critique, the loop
   mcp/            the MCP server
@@ -267,4 +321,7 @@ formforge/
 
 `docs/architecture.md` covers the parts that need more than a paragraph:
 tessellation, the measurement approximations and where they are wrong, the
-repair ladder, and the deployment topology.
+repair ladder, and the deployment topology. `docs/patterns.md` does the same for
+the pattern panels: why they mesh directly instead of driving the kernel, where
+the normalisation is approximate and what that costs, and the joint that looks
+obvious and cannot be assembled.
