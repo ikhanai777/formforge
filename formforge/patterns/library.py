@@ -261,16 +261,14 @@ def _ocean(p: dict, bounds: Bounds, seed: int) -> HeightFn:
     # real sea is a spectrum, and the thing that makes it look like one rather
     # than like three sine waves is that the short waves are both steeper and
     # weaker than the long ones.
-    rng = np.random.default_rng(seed & 0xFFFFFFFF)
     components = []
     for i in range(trains):
         frac = i / max(trains - 1, 1)
         theta = heading + (frac - 0.5) * 2.0 * spread
         wl = base_wl * (1.0 - 0.62 * frac)
         amp = (1.0 - 0.55 * frac) ** 2
-        components.append(
-            (math.cos(theta), math.sin(theta), 2.0 * np.pi / wl, amp, rng.uniform(0, 2 * np.pi))
-        )
+        phase = noise.hash_unit(i, seed) * 2.0 * math.pi
+        components.append((math.cos(theta), math.sin(theta), 2.0 * np.pi / wl, amp, phase))
 
     def fn(x: np.ndarray, y: np.ndarray) -> np.ndarray:
         total = np.zeros_like(x, dtype=np.float64)
@@ -296,14 +294,15 @@ def _ripples(p: dict, bounds: Bounds, seed: int) -> HeightFn:
     sources = int(p["sources"])
     spread = p["spread_mm"]
 
-    rng = np.random.default_rng(seed & 0xFFFFFFFF)
     cx, cy = bounds.center
     points = [(cx, cy)]
-    for _ in range(sources - 1):
-        theta = rng.uniform(0, 2 * np.pi)
-        r = spread * math.sqrt(rng.uniform(0.15, 1.0))
+    for i in range(1, sources):
+        theta = noise.hash_unit(i * 3, seed) * 2.0 * math.pi
+        # sqrt of a uniform spreads the drops evenly over the disc rather than
+        # bunching them near the middle.
+        r = spread * math.sqrt(0.15 + 0.85 * noise.hash_unit(i * 3 + 1, seed))
         points.append((cx + r * math.cos(theta), cy + r * math.sin(theta)))
-    phases = rng.uniform(0, 2 * np.pi, size=sources)
+    phases = [noise.hash_unit(i * 3 + 2, seed) * 2.0 * math.pi for i in range(sources)]
 
     def fn(x: np.ndarray, y: np.ndarray) -> np.ndarray:
         total = np.zeros_like(x, dtype=np.float64)

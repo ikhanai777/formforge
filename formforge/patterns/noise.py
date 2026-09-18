@@ -31,6 +31,7 @@ __all__ = [
     "cell_hash",
     "fbm",
     "gradient_noise",
+    "hash_unit",
     "ridged_fbm",
     "value_noise",
     "warp",
@@ -66,6 +67,18 @@ def cell_hash(ix: np.ndarray, iy: np.ndarray, seed: int = 0) -> np.ndarray:
     whichever tile is asking.
     """
     return _hash2(np.asarray(ix), np.asarray(iy), seed)
+
+
+def hash_unit(index: int, seed: int = 0) -> float:
+    """One reproducible float in [0, 1) from an integer index.
+
+    For the handful of values a pattern needs *once per panel* rather than once
+    per sample: a wave train's phase, where a raindrop fell. A numpy Generator
+    would be just as reproducible, but this keeps the module's promise literal
+    -- every number in a pattern comes from the same hash -- so there is no
+    second source of randomness to keep in step with this one.
+    """
+    return float(_unit(_hash2(np.asarray(int(index)), np.asarray(0), seed)))
 
 
 def _unit(h: np.ndarray) -> np.ndarray:
