@@ -19,7 +19,7 @@ struct Renderer::FrameConstants {
 // Mirrors cbuffer MaterialCB.
 struct Renderer::MaterialConstants {
     float base[4], pbr[4], trans[4], transTint[4], layer[4], noise[4], pattern[4], patternColor[4], gradient[4],
-        gradientRange[4], wire[4];
+        gradientRange[4], wire[4], fileFlags[4];
 };
 
 struct BakeConstants {
@@ -68,6 +68,11 @@ static vec3 dirFromAzEl(float azDeg, float elDeg) {
 }
 
 Renderer::Renderer() : frame_(new FrameConstants()) {}
+
+float Renderer::framingRadius(const Scene& s) const {
+    if (parts_.size() < 2 || !(s.explode.animate || s.explode.manual > 0)) return sphereRadius_;
+    return explodedRadius(parts_, sphereCenter_, sphereRadius_, s.explode.distance);
+}
 Renderer::~Renderer() { shutdown(); }
 
 #define TRY(expr, what)                                  \
@@ -104,6 +109,7 @@ bool Renderer::init(ID3D11Device* device, ID3D11DeviceContext* context, size_t v
     TRY(makeCB(sizeof(FrameConstants), cbFrame_), "Frame constant buffer");
     TRY(makeCB(sizeof(MaterialConstants), cbMaterial_), "Material constant buffer");
     TRY(makeCB(sizeof(BakeConstants), cbBake_), "Bake constant buffer");
+    TRY(makeCB(16 * kMaxParts, cbParts_), "Part offset constant buffer");
 
     // Shadow map.
     {
@@ -163,7 +169,7 @@ void Renderer::shutdown() {
     rsNoCull_ = nullptr; rsShadow_ = nullptr; dsLessWrite_ = nullptr; dsLessEqualNoWrite_ = nullptr; dsNone_ = nullptr;
     bsPremul_ = nullptr; bsAdditive_ = nullptr;
     sShadow_ = nullptr; sLinearClamp_ = nullptr; sLinearWrap_ = nullptr; sPointClamp_ = nullptr; sEquirect_ = nullptr;
-    cbFrame_ = nullptr; cbMaterial_ = nullptr; cbBake_ = nullptr;
+    cbFrame_ = nullptr; cbMaterial_ = nullptr; cbBake_ = nullptr; cbParts_ = nullptr;
     vb_ = nullptr; ib_ = nullptr; indexCount_ = 0;
     equirectTex_ = nullptr; envCubeTex_ = nullptr; specCubeTex_ = nullptr; brdfTex_ = nullptr; shadowTex_ = nullptr;
     userTex_ = nullptr; whiteTex_ = nullptr;
@@ -187,8 +193,10 @@ bool Renderer::createShaders(std::string& error) {
             D3D11_INPUT_ELEMENT_DESC el[] = {
                 {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
                 {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                {"EXTRA", 0, DXGI_FORMAT_R32_UINT, 0, 28, D3D11_INPUT_PER_VERTEX_DATA, 0},
             };
-            if (FAILED(device_->CreateInputLayout(el, 2, code.data(), code.size(), layout->put()))) {
+            if (FAILED(device_->CreateInputLayout(el, 4, code.data(), code.size(), layout->put()))) {
                 error = "CreateInputLayout";
                 return false;
             }
@@ -327,6 +335,8 @@ bool Renderer::setMesh(const Mesh& mesh, std::string& error) {
     indexCount_ = (uint32_t)mesh.indices.size();
     sphereCenter_ = mesh.sphereCenter;
     sphereRadius_ = mesh.sphereRadius;
+    parts_.clear();
+    for (const MeshPart& p : mesh.parts) parts_.push_back({p.center, p.radius, p.minZ, p.order});
     meshMinZ_ = mesh.boundsMin.z;
     meshMaxZ_ = mesh.boundsMax.z;
     return true;
@@ -602,6 +612,7 @@ void Renderer::bindCommon() {
     ctx_->PSSetSamplers(0, 5, samplers);
     ID3D11Buffer* cbs[] = {cbFrame_.get(), cbMaterial_.get(), cbBake_.get()};
     ctx_->VSSetConstantBuffers(0, 3, cbs);
+    ctx_->VSSetConstantBuffers(3, 1, cbParts_.addressOf());
     ctx_->GSSetConstantBuffers(0, 3, cbs);
     ctx_->PSSetConstantBuffers(0, 3, cbs);
 }
@@ -632,6 +643,7 @@ void Renderer::fillMaterial(MaterialConstants& c, const Scene& s) {
     set4(c.gradient, srgbToLinear(m.gradientColor), m.gradient ? 1.0f : 0.0f);
     set4(c.gradientRange, meshMinZ_, meshMaxZ_, 0, 0);
     set4(c.wire, srgbToLinear(m.wireColor), m.wireframe ? std::max(0.5f, m.wireWidth) : 0.0f);
+    set4(c.fileFlags, m.useFileColors ? 1.0f : 0.0f, m.useFileFinish ? 1.0f : 0.0f, 0, 0);
 }
 
 void Renderer::fillFrame(FrameConstants& f, const RenderTargets& rt, const Scene& s, const SampleInput& in,
@@ -671,11 +683,11 @@ void Renderer::fillFrame(FrameConstants& f, const RenderTargets& rt, const Scene
     set4(f.bgColor2, srgbToLinear(e.backgroundColor2), 0);
     set4(f.ground, (float)(int)e.ground, clampf(e.floorRoughness, 0, 1), clampf(e.reflection, 0, 1),
          clampf(e.shadowStrength, 0, 1));
-    set4(f.floorColor, srgbToLinear(e.floorColor), sphereRadius_ * 10.0f);
+    set4(f.floorColor, srgbToLinear(e.floorColor), curRadius_ * 10.0f);
     bool ao = in.fullQuality && e.aoStrength > 0;
     set4(f.ao, clampf(e.aoStrength, 0, 1), std::max(1e-4f, e.aoRadius) * sphereRadius_, ao ? 1.0f : 0.0f,
          (float)in.sampleIndex);
-    float texelWorld = 2.04f * sphereRadius_ / (float)shadowSize_;
+    float texelWorld = 2.04f * curRadius_ / (float)shadowSize_;
     float pcf = in.sampleIndex > 0 && in.fullQuality ? 1.0f : 1.5f + e.shadowSoftness * 0.35f;
     set4(f.shadow, 1.0f / (float)shadowSize_, texelWorld * 1.5f, pcf, indexCount_ ? 1.0f : 0.0f);
     set4(f.tone, std::pow(2.0f, e.exposure), (float)(int)e.tonemap, 1.0f, 0.0f);
@@ -688,6 +700,26 @@ void Renderer::renderSample(RenderTargets& rt, const Scene& s, const SampleInput
     const bool mesh = indexCount_ > 0;
     const bool ground = e.ground != Ground::None;
     const mat4 world = mat4::rotationZ(in.objectAngle);
+
+    // ---- explode: per-part offsets in the model's own frame ----
+    curRadius_ = sphereRadius_;
+    {
+        std::vector<vec3> offsets;
+        if (mesh && parts_.size() > 1 && in.explode > 0) {
+            std::vector<float> amounts(parts_.size());
+            for (size_t i = 0; i < parts_.size(); ++i)
+                amounts[i] = partExplodeAmount(in.explode, parts_[i].order, s.explode.stagger);
+            explodeOffsets(parts_, sphereCenter_, sphereRadius_, s.explode.distance, amounts, offsets);
+            curRadius_ = framingRadius(s);
+        }
+        D3D11_MAPPED_SUBRESOURCE m;
+        if (SUCCEEDED(ctx_->Map(cbParts_.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+            float* dst = (float*)m.pData;
+            std::memset(dst, 0, 16 * kMaxParts);
+            for (size_t i = 0; i < offsets.size() && i < kMaxParts; ++i) set4(dst + i * 4, offsets[i], 0);
+            ctx_->Unmap(cbParts_.get(), 0);
+        }
+    }
 
     // ---- key light (casts the shadow map) ----
     vec3 keyDir;
@@ -714,7 +746,7 @@ void Renderer::renderSample(RenderTargets& rt, const Scene& s, const SampleInput
         keyDir = normalize(keyDir + b1 * (rr * std::cos(phi)) + b2 * (rr * std::sin(phi)));
     }
     const vec3 c = sphereCenter_;
-    const float R = sphereRadius_;
+    const float R = curRadius_;
     mat4 lightView = mat4::lookAt(c + keyDir * (4.0f * R), c, vec3(0, 0, 1));
     mat4 lightProj = mat4::orthographic(R * 1.02f, R * 1.02f, R * 0.5f, R * 40.0f);
     mat4 lightViewProj = lightProj * lightView;

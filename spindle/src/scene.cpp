@@ -34,6 +34,8 @@ const char* formatExtension(Format f) { return kFormatExt[(int)f]; }
 bool formatNeedsFfmpeg(Format f) { return f == Format::WebM || f == Format::ProRes || f == Format::HEVC; }
 bool formatSupportsAlpha(Format f) { return f == Format::PNG || f == Format::GIF || f == Format::WebM || f == Format::ProRes; }
 const char* qualityName(Quality q) { return kQualityNames[(int)q]; }
+static const char* kExplodeTimingNames[] = {"Explode, then reassemble", "Explode and hold", "Assemble from parts"};
+const char* explodeTimingName(ExplodeTiming t) { return kExplodeTimingNames[(int)t]; }
 int qualitySamples(Quality q) { return kQualitySamples[(int)q]; }
 
 // Stable identifiers for the JSON files (independent of the display names).
@@ -45,6 +47,7 @@ static const char* kModeIds[] = {"rotate_object", "orbit_camera"};
 static const char* kEasingIds[] = {"linear", "ease_in_out", "hold"};
 static const char* kFormatIds[] = {"mp4", "png", "gif", "webm", "prores", "hevc"};
 static const char* kQualityIds[] = {"draft", "standard", "high", "ultra"};
+static const char* kExplodeTimingIds[] = {"explode_return", "explode_hold", "assemble"};
 
 template <class E, size_t N>
 static void readEnum(const json& j, const char* key, E& out, const char* (&ids)[N]) {
@@ -208,9 +211,11 @@ const std::vector<std::string>& materialPresetNames() {
 bool applyMaterialPreset(const std::string& name, MaterialSettings& m) {
     for (auto& p : presets())
         if (toLower(name) == toLower(p.name)) {
-            bool wire = m.wireframe;
+            bool wire = m.wireframe, fileColors = m.useFileColors, fileFinish = m.useFileFinish;
             p.apply(m);
             m.wireframe = wire;  // an overlay, not part of the look
+            m.useFileColors = fileColors;
+            m.useFileFinish = fileFinish;
             return true;
         }
     return false;
@@ -279,6 +284,8 @@ std::string sceneToJson(const Scene& s) {
                   {"creaseAngle", mo.creaseAngle}};
     const auto& m = s.material;
     j["material"] = {{"preset", m.preset},
+                     {"useFileColors", m.useFileColors},
+                     {"useFileFinish", m.useFileFinish},
                      {"baseColor", v3(m.baseColor)},
                      {"roughness", m.roughness},
                      {"metalness", m.metalness},
@@ -333,6 +340,10 @@ std::string sceneToJson(const Scene& s) {
                       {"easing", kEasingIds[(int)t.easing]}, {"holdSeconds", t.holdSeconds},
                       {"startFromViewport", t.startFromViewport}, {"startAngle", t.startAngle},
                       {"bob", t.bob}, {"shutter", t.shutter}};
+    const auto& x = s.explode;
+    j["explode"] = {{"animate", x.animate}, {"distance", x.distance}, {"stagger", x.stagger},
+                    {"timing", kExplodeTimingIds[(int)x.timing]}, {"start", x.start}, {"end", x.end},
+                    {"manual", x.manual}};
     const auto& o = s.output;
     j["output"] = {{"format", kFormatIds[(int)o.format]}, {"width", o.width}, {"height", o.height},
                    {"quality", kQualityIds[(int)o.quality]}, {"bitrateMbps", o.bitrateMbps}};
@@ -363,6 +374,8 @@ bool sceneFromJson(const std::string& text, Scene& s, std::string& error) {
         std::string preset;
         read(m, "preset", preset);
         if (!preset.empty() && !applyMaterialPreset(preset, d)) d.preset = preset;
+        read(m, "useFileColors", d.useFileColors);
+        read(m, "useFileFinish", d.useFileFinish);
         read(m, "baseColor", d.baseColor);
         read(m, "roughness", d.roughness);
         read(m, "metalness", d.metalness);
@@ -453,6 +466,17 @@ bool sceneFromJson(const std::string& text, Scene& s, std::string& error) {
         read(t, "shutter", d.shutter);
     }
     {
+        const json& x = sub(j, "explode");
+        auto& d = s.explode;
+        read(x, "animate", d.animate);
+        read(x, "distance", d.distance);
+        read(x, "stagger", d.stagger);
+        readEnum(x, "timing", d.timing, kExplodeTimingIds);
+        read(x, "start", d.start);
+        read(x, "end", d.end);
+        read(x, "manual", d.manual);
+    }
+    {
         const json& o = sub(j, "output");
         auto& d = s.output;
         readEnum(o, "format", d.format, kFormatIds);
@@ -468,6 +492,11 @@ bool sceneFromJson(const std::string& text, Scene& s, std::string& error) {
     s.output.width = std::max(16, std::min(s.output.width, 8192));
     s.output.height = std::max(16, std::min(s.output.height, 8192));
     s.camera.fill = clampf(s.camera.fill, 0.05f, 1.0f);
+    s.explode.distance = clampf(s.explode.distance, 0.0f, 10.0f);
+    s.explode.stagger = clampf(s.explode.stagger, 0.0f, 1.0f);
+    s.explode.start = clampf(s.explode.start, 0.0f, 1.0f);
+    s.explode.end = clampf(s.explode.end, s.explode.start, 1.0f);
+    s.explode.manual = clampf(s.explode.manual, 0.0f, 1.0f);
     s.camera.focalLength = clampf(s.camera.focalLength, 8.0f, 600.0f);
     s.camera.fStop = clampf(s.camera.fStop, 0.7f, 64.0f);
     s.model.creaseAngle = clampf(s.model.creaseAngle, 0.0f, 180.0f);

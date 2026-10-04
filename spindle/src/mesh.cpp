@@ -144,9 +144,14 @@ static bool finite3(const vec3& v) { return std::isfinite(v.x) && std::isfinite(
 // Drops triangles with NaN/Inf coordinates or exactly zero area, in place.
 static void dropInvalid(LoadResult& r) {
     auto& p = r.soup.positions;
+    auto& st = r.soup.triStyle;
+    auto& pt = r.soup.triPart;
+    const size_t tris = p.size() / 3;
+    if (st.size() != tris) st.clear();
+    if (pt.size() != tris) pt.clear();
     size_t out = 0;
-    for (size_t t = 0; t + 2 < p.size(); t += 3) {
-        const vec3 &a = p[t], &b = p[t + 1], &c = p[t + 2];
+    for (size_t t = 0; t < tris; ++t) {
+        const vec3 a = p[t * 3], b = p[t * 3 + 1], c = p[t * 3 + 2];
         if (!finite3(a) || !finite3(b) || !finite3(c)) {
             ++r.droppedNonFinite;
             continue;
@@ -156,11 +161,16 @@ static void dropInvalid(LoadResult& r) {
             ++r.droppedDegenerate;
             continue;
         }
-        p[out++] = a;
-        p[out++] = b;
-        p[out++] = c;
+        p[out * 3] = a;
+        p[out * 3 + 1] = b;
+        p[out * 3 + 2] = c;
+        if (!st.empty()) st[out] = st[t];
+        if (!pt.empty()) pt[out] = pt[t];
+        ++out;
     }
-    p.resize(out);
+    p.resize(out * 3);
+    if (!st.empty()) st.resize(out);
+    if (!pt.empty()) pt.resize(out);
 }
 
 static bool parseBinary(const uint8_t* data, size_t size, LoadResult& r, Progress* progress) {
@@ -416,8 +426,7 @@ Mesh processMesh(const TriangleSoup& soup, const MeshOptions& options, Progress*
     });
     if (progress) progress->value = 0.6f;
 
-    // 4. Within each welded position, cluster corners whose faces lie within the
-    //    crease angle of a cluster's seed face; each cluster becomes one vertex.
+    // 4. Runs of corners that share a welded position.
     std::vector<size_t> runStart;
     runStart.reserve(corners / 4);
     for (size_t i = 0; i < corners; ++i)
@@ -425,56 +434,141 @@ Mesh processMesh(const TriangleSoup& soup, const MeshOptions& options, Progress*
     runStart.push_back(corners);
     const size_t runs = runStart.size() - 1;
 
+    // 5. Parts: from the file when it defines several, otherwise the connected
+    //    pieces of the mesh (union-find over triangles that share a position).
+    std::vector<uint32_t> triPart(tris, 0);
+    std::vector<std::string> partNames;
+    if (soup.triPart.size() == tris && soup.partNames.size() > 1) {
+        triPart = soup.triPart;
+        partNames = soup.partNames;
+    } else if (options.splitConnectedPieces) {
+        std::vector<uint32_t> parent(tris);
+        for (size_t t = 0; t < tris; ++t) parent[t] = (uint32_t)t;
+        auto find = [&](uint32_t x) {
+            while (parent[x] != x) x = parent[x] = parent[parent[x]];
+            return x;
+        };
+        for (size_t r = 0; r < runs; ++r) {
+            uint32_t first = find(keys[runStart[r]].corner / 3);
+            for (size_t i = runStart[r] + 1; i < runStart[r + 1]; ++i) {
+                uint32_t o = find(keys[i].corner / 3);
+                if (o != first) parent[o] = first;
+            }
+        }
+        std::vector<uint32_t> label(tris, UINT32_MAX);
+        uint32_t next = 0;
+        for (size_t t = 0; t < tris; ++t) {
+            uint32_t root = find((uint32_t)t);
+            if (label[root] == UINT32_MAX) label[root] = next++;
+            triPart[t] = label[root];
+        }
+        for (uint32_t i = 0; i < next; ++i) partNames.push_back("Piece " + std::to_string(i + 1));
+    }
+    if (partNames.empty()) partNames.push_back("Model");
+    // Keep the kMaxParts - 1 largest parts separate; the rest move together.
+    if (partNames.size() > kMaxParts) {
+        std::vector<size_t> count(partNames.size(), 0);
+        for (uint32_t p : triPart) ++count[p];
+        std::vector<uint32_t> byCount(partNames.size());
+        for (size_t i = 0; i < byCount.size(); ++i) byCount[i] = (uint32_t)i;
+        std::sort(byCount.begin(), byCount.end(), [&](uint32_t a, uint32_t b) { return count[a] > count[b]; });
+        std::vector<uint32_t> remap(partNames.size(), kMaxParts - 1);
+        std::vector<std::string> names;
+        for (uint32_t i = 0; i < kMaxParts - 1; ++i) {
+            remap[byCount[i]] = i;
+            names.push_back(partNames[byCount[i]]);
+        }
+        names.push_back("Other pieces (" + std::to_string(partNames.size() - (kMaxParts - 1)) + ")");
+        for (auto& p : triPart) p = remap[p];
+        partNames.swap(names);
+    }
+
+    // 6. Within each run, cluster corners of the same part whose faces lie within
+    //    the crease angle of a cluster's seed face (one smooth normal each), then
+    //    split clusters by file style so colours stay sharp at their boundaries.
     const float cosCrease = std::cos(radians(clampf(options.creaseAngleDeg, 0.0f, 180.0f))) - 1e-4f;
-    // A run of k corners has at most k clusters, so cluster s of run r is stored
-    // at slot runStart[r] + s of clusterNormal.
-    std::vector<uint32_t> cornerCluster(corners);  // cluster index within its run
-    std::vector<uint32_t> runClusterCount(runs);
-    std::vector<vec3> clusterNormal(corners);
+    const bool styled = soup.triStyle.size() == tris;
+    // A run of k corners has at most k clusters/vertices, so entry j of run r is
+    // stored at slot runStart[r] + j of the per-corner arrays below.
+    std::vector<uint32_t> cornerVertex(corners);  // vertex index within its run
+    std::vector<uint32_t> runVertexCount(runs);
+    std::vector<vec3> slotNormal(corners);
+    std::vector<uint32_t> slotStyle(corners), slotPart(corners);
     parallelFor(runs, [&](size_t b, size_t e) {
         std::vector<vec3> seedFace, sum;
+        std::vector<uint32_t> seedPart, cornerCluster;
+        std::vector<std::pair<uint32_t, uint32_t>> verts;  // (cluster, style)
         for (size_t r = b; r < e; ++r) {
             seedFace.clear();
             sum.clear();
+            seedPart.clear();
+            cornerCluster.clear();
+            verts.clear();
             for (size_t i = runStart[r]; i < runStart[r + 1]; ++i) {
                 uint32_t c = keys[i].corner;
                 const vec3& fn = faceN[c / 3];
+                uint32_t part = triPart[c / 3];
                 size_t found = seedFace.size();
                 for (size_t s = 0; s < seedFace.size(); ++s)
-                    if (dot(seedFace[s], fn) >= cosCrease) {
+                    if (seedPart[s] == part && dot(seedFace[s], fn) >= cosCrease) {
                         found = s;
                         break;
                     }
                 if (found == seedFace.size()) {
                     seedFace.push_back(fn);
+                    seedPart.push_back(part);
                     sum.push_back(vec3(0, 0, 0));
                 }
                 sum[found] += fn * cornerAngle[c];
-                cornerCluster[i] = (uint32_t)found;
+                cornerCluster.push_back((uint32_t)found);
             }
-            runClusterCount[r] = (uint32_t)sum.size();
-            for (size_t s = 0; s < sum.size(); ++s)
-                clusterNormal[runStart[r] + s] = length(sum[s]) > 0 ? normalize(sum[s]) : seedFace[s];
+            for (size_t i = runStart[r]; i < runStart[r + 1]; ++i) {
+                uint32_t c = keys[i].corner;
+                std::pair<uint32_t, uint32_t> key(cornerCluster[i - runStart[r]], styled ? soup.triStyle[c / 3] : 0u);
+                size_t v = 0;
+                while (v < verts.size() && verts[v] != key) ++v;
+                if (v == verts.size()) verts.push_back(key);
+                cornerVertex[i] = (uint32_t)v;
+            }
+            runVertexCount[r] = (uint32_t)verts.size();
+            for (size_t v = 0; v < verts.size(); ++v) {
+                uint32_t cl = verts[v].first;
+                slotNormal[runStart[r] + v] = length(sum[cl]) > 0 ? normalize(sum[cl]) : seedFace[cl];
+                slotStyle[runStart[r] + v] = verts[v].second;
+                slotPart[runStart[r] + v] = seedPart[cl];
+            }
         }
     });
     if (progress) progress->value = 0.8f;
 
-    // 5. Assign global vertex ids (prefix sum of cluster counts) and emit.
+    // 7. Assign global vertex ids (prefix sum) and emit.
     std::vector<uint32_t> runBase(runs + 1, 0);
-    for (size_t r = 0; r < runs; ++r) runBase[r + 1] = runBase[r] + runClusterCount[r];
+    for (size_t r = 0; r < runs; ++r) runBase[r + 1] = runBase[r] + runVertexCount[r];
     mesh.vertices.resize(runBase[runs]);
     mesh.indices.resize(corners);
     parallelFor(runs, [&](size_t b, size_t e) {
         for (size_t r = b; r < e; ++r) {
-            for (uint32_t s = 0; s < runClusterCount[r]; ++s) {
-                const vec3& p = pos[keys[runStart[r]].corner];
-                const vec3& n = clusterNormal[runStart[r] + s];
-                mesh.vertices[runBase[r] + s] = {p.x, p.y, p.z, n.x, n.y, n.z};
+            const vec3& p = pos[keys[runStart[r]].corner];
+            for (uint32_t v = 0; v < runVertexCount[r]; ++v) {
+                const size_t slot = runStart[r] + v;
+                const vec3& n = slotNormal[slot];
+                Vertex& out = mesh.vertices[runBase[r] + v];
+                out = {p.x, p.y, p.z, n.x, n.y, n.z, 0u, slotPart[slot] & 0xFFFu};
+                if (styled) {
+                    const FaceStyle& fs = soup.styles[slotStyle[slot]];
+                    out.color = fs.rgba;
+                    if (fs.hasPbr) out.extra |= (1u << 12) | ((uint32_t)fs.metalness << 16) | ((uint32_t)fs.roughness << 24);
+                }
             }
             for (size_t i = runStart[r]; i < runStart[r + 1]; ++i)
-                mesh.indices[keys[i].corner] = runBase[r] + cornerCluster[i];
+                mesh.indices[keys[i].corner] = runBase[r] + cornerVertex[i];
         }
     });
+    if (styled)
+        for (const FaceStyle& fs : soup.styles) {
+            if ((fs.rgba >> 24) != 0) mesh.hasFileColors = true;
+            if (fs.hasPbr) mesh.hasFilePbr = true;
+        }
 
     // 6. Bounding sphere about the turntable axis, so no rotation can clip it.
     mesh.sphereCenter = {0, 0, (lo.z + hi.z) * 0.5f};
@@ -484,6 +578,36 @@ Mesh processMesh(const TriangleSoup& soup, const MeshOptions& options, Progress*
         r2 = std::max(r2, dot(d, d));
     }
     mesh.sphereRadius = std::max(std::sqrt(r2), 1e-6f);
+
+    // 8. Per-part bounds, and the order parts leave in when exploding (outermost first).
+    mesh.parts.resize(partNames.size());
+    std::vector<vec3> plo(partNames.size(), vec3(1e30f, 1e30f, 1e30f)), phi(partNames.size(), vec3(-1e30f, -1e30f, -1e30f));
+    for (size_t t = 0; t < tris; ++t) {
+        uint32_t p = triPart[t];
+        ++mesh.parts[p].triangles;
+        for (int k = 0; k < 3; ++k) {
+            plo[p] = vmin(plo[p], pos[t * 3 + k]);
+            phi[p] = vmax(phi[p], pos[t * 3 + k]);
+        }
+    }
+    for (size_t p = 0; p < mesh.parts.size(); ++p) {
+        MeshPart& mp = mesh.parts[p];
+        mp.name = partNames[p];
+        if (!mp.triangles) {
+            mp.center = mesh.sphereCenter;
+            continue;
+        }
+        mp.center = (plo[p] + phi[p]) * 0.5f;
+        mp.radius = length(phi[p] - plo[p]) * 0.5f;
+        mp.minZ = plo[p].z;
+    }
+    std::vector<uint32_t> rank(mesh.parts.size());
+    for (size_t i = 0; i < rank.size(); ++i) rank[i] = (uint32_t)i;
+    std::sort(rank.begin(), rank.end(), [&](uint32_t a, uint32_t b) {
+        return length(mesh.parts[a].center - mesh.sphereCenter) > length(mesh.parts[b].center - mesh.sphereCenter);
+    });
+    for (size_t i = 0; i < rank.size(); ++i)
+        mesh.parts[rank[i]].order = rank.size() > 1 ? (float)i / (float)(rank.size() - 1) : 0.0f;
     if (progress) progress->value = 1.0f;
     return mesh;
 }

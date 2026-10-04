@@ -61,6 +61,7 @@ SampleInput makeTurntableSample(const Scene& s, const vec3& center, float radius
     in.sampleIndex = sampleIndex;
     in.fullQuality = true;
     in.lightReferenceAzimuth = startAzimuthDeg;
+    in.explode = explodeAmountAt(s, t);
     return in;
 }
 
@@ -86,6 +87,7 @@ SampleInput makeOrbitSample(const Scene& s, const OrbitCamera& cam, float radius
     in.view = buildView(r);
     in.sampleIndex = sampleIndex;
     in.lightReferenceAzimuth = cam.azimuth;
+    in.explode = clampf(s.explode.manual, 0, 1);
     return in;
 }
 
@@ -130,7 +132,7 @@ bool Exporter::start(Renderer& renderer, const ExportJob& job, std::string& erro
     if (job_.frameLimit > 0) total_ = std::min(total_, job_.frameLimit);
     samples_ = qualitySamples(o.quality);
     center_ = renderer.sphereCenter();
-    radius_ = renderer.sphereRadius();
+    radius_ = renderer.framingRadius(s);
     const bool transparent = s.environment.background == Background::Transparent;
     // Formats without alpha get the transparent background composited over black.
     overBlack_ = !(transparent && formatSupportsAlpha(o.format));

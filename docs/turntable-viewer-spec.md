@@ -471,8 +471,8 @@ Unknown keys are ignored, missing keys get default values, and `version` control
 
 - Should the app ship a small *sample library* of STLs so it opens with
   something to show? (Proposal: one FormForge-generated part.)
-- 3MF loading is implemented (§16). Should a later version also use 3MF colour
-  and material data, instead of one material for the whole model?
+- 3MF loading, including colours and materials, is implemented (§16). Should a
+  later version support texture-mapped 3MF colours, or keyframed explode paths?
 - Is a watermark or text overlay (part name and dimensions) wanted on exported
   videos? It is trivial to add in the tonemap pass.
 
@@ -497,7 +497,8 @@ was a deliberate trade-off, not an omission found later.
 | `Spindle.exe render …` from a console (§9) | `Spindle.com` (console build) sits next to `Spindle.exe`, so `Spindle render …` in cmd/PowerShell resolves to it and the shell waits for it | A GUI-subsystem exe returns to the prompt immediately |
 | Opt-in file association (§3) | Not implemented | "Open with" and drag-and-drop cover it |
 | Environment cubemap mips via `GenerateMips` | Each cube mip is rendered straight from the matching equirect mip | Some drivers leave generated cube mips empty |
-| STL only (§2) | STL and 3MF. 3MF covers the core spec (meshes, components, build-item transforms, units) and the Production extension's `p:path`, which Bambu Studio, OrcaSlicer and PrusaSlicer use. Colours and materials are ignored, and all build items render together at their plate positions | 3MF is FormForge's own export format and the default for modern slicers |
+| STL only (§2) | STL and 3MF. 3MF covers the core spec (meshes, components, build-item transforms, units, base materials) and the Production extension's `p:path`, which Bambu Studio, OrcaSlicer and PrusaSlicer use. From the Materials extension it reads colour groups, composites, multi-properties and PBR display properties, but not textures. It also reads slicer filament colours per object or part, and painting. All build items render together at their plate positions | 3MF is FormForge's own export format and the default for modern slicers |
+| Single-part model (§2) | Assemblies explode: each 3MF object or part, or each separate STL piece, is a part. Parts move radially from the assembly centre, staggered outermost-first, as a viewport/still slider or animated during the turntable (out and back, out and hold, or assemble). Parts are offset per vertex on the GPU (up to 1024 parts) | Shows how an assembly fits together without a CAD package |
 | Light rig angles | Relative to the camera's start azimuth | The rig frames the subject the same way whatever the start angle; in orbit-camera mode it stays fixed to the model |
 
 **What has been verified, and how**

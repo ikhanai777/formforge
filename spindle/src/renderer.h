@@ -31,6 +31,7 @@ struct SampleInput {
     // camera azimuth, an export passes the fixed start azimuth, so in orbit-camera
     // mode the lights stay put relative to the model.
     float lightReferenceAzimuth = 0;
+    float explode = 0;  // global explode amount 0..1 (see explodeAmountAt)
 };
 
 class Renderer {
@@ -48,6 +49,10 @@ public:
     bool hasMesh() const { return indexCount_ > 0; }
     vec3 sphereCenter() const { return sphereCenter_; }
     float sphereRadius() const { return sphereRadius_; }
+    // Radius to frame the camera on: grows to cover the exploded assembly when
+    // the scene explodes, so parts never leave the frame mid-animation.
+    float framingRadius(const Scene& scene) const;
+    size_t partCount() const { return parts_.size(); }
 
     bool setEnvironment(const EnvironmentImage& env, std::string& error);
     bool setUserTexture(const Image8* image, std::string& error);  // nullptr clears
@@ -91,7 +96,9 @@ private:
     ComPtr<ID3D11DepthStencilState> dsLessWrite_, dsLessEqualNoWrite_, dsNone_;
     ComPtr<ID3D11BlendState> bsPremul_, bsAdditive_;
     ComPtr<ID3D11SamplerState> sShadow_, sLinearClamp_, sLinearWrap_, sPointClamp_, sEquirect_;
-    ComPtr<ID3D11Buffer> cbFrame_, cbMaterial_, cbBake_;
+    ComPtr<ID3D11Buffer> cbFrame_, cbMaterial_, cbBake_, cbParts_;
+    std::vector<ExplodePart> parts_;
+    float curRadius_ = 1;  // scene radius for the sample being rendered (shadows, floor)
 
     ComPtr<ID3D11Buffer> vb_, ib_;
     uint32_t indexCount_ = 0;

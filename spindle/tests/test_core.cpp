@@ -370,6 +370,178 @@ static void test3mf() {
     CHECK(!r.ok);
 }
 
+static uint32_t rgbaOf(const LoadResult& r, size_t tri) {
+    return r.soup.triStyle.empty() ? 0 : r.soup.styles[r.soup.triStyle[tri]].rgba;
+}
+
+static void test3mfColors() {
+    const char* ns = "xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\" "
+                     "xmlns:m=\"http://schemas.microsoft.com/3dmanufacturing/material/2015/02\"";
+    // basematerials with PBR display properties; object default pid; one triangle overridden by a colorgroup.
+    std::string tri3 = "<vertices><vertex x=\"0\" y=\"0\" z=\"0\"/><vertex x=\"1\" y=\"0\" z=\"0\"/>"
+                       "<vertex x=\"0\" y=\"1\" z=\"0\"/><vertex x=\"0\" y=\"0\" z=\"1\"/></vertices>";
+    std::string model = std::string("<model ") + ns + "><resources>"
+        "<m:pbmetallicdisplayproperties id=\"9\"><m:pbmetallic name=\"steel\" metallicness=\"1\" roughness=\"0.2\"/>"
+        "<m:pbmetallic name=\"red\" metallicness=\"0\" roughness=\"0.8\"/></m:pbmetallicdisplayproperties>"
+        "<basematerials id=\"1\" displaypropertiesid=\"9\"><base name=\"steel\" displaycolor=\"#C0C0C0\"/>"
+        "<base name=\"red\" displaycolor=\"#FF0000FF\"/></basematerials>"
+        "<m:colorgroup id=\"2\"><m:color color=\"#00FF00\"/><m:color color=\"#0000FF\"/></m:colorgroup>"
+        "<object id=\"3\" name=\"bracket\" pid=\"1\" pindex=\"1\"><mesh>" + tri3 +
+        "<triangles><triangle v1=\"0\" v2=\"1\" v3=\"2\"/>"                       // object default: red
+        "<triangle v1=\"0\" v2=\"1\" v3=\"3\" pid=\"1\" p1=\"0\"/>"              // steel
+        "<triangle v1=\"0\" v2=\"2\" v3=\"3\" pid=\"2\" p1=\"0\"/>"              // green
+        "<triangle v1=\"1\" v2=\"2\" v3=\"3\" pid=\"2\" p1=\"0\" p2=\"1\" p3=\"1\"/>"  // per-vertex: averaged
+        "</triangles></mesh></object></resources><build><item objectid=\"3\"/></build></model>";
+    auto zip = makeZip({{"3D/3dmodel.model", model}});
+    LoadResult r = parse3mf(zip.data(), zip.size());
+    CHECK(r.ok && r.soup.triangleCount() == 4 && r.soup.triStyle.size() == 4);
+    CHECK(rgbaOf(r, 0) == 0xFF0000FFu);  // red, R in the low byte
+    CHECK(rgbaOf(r, 1) == 0xFFC0C0C0u);
+    CHECK(rgbaOf(r, 2) == 0xFF00FF00u);
+    uint32_t mixed = rgbaOf(r, 3);
+    CHECK(((mixed >> 8) & 255) == 85 && ((mixed >> 16) & 255) == 170);  // 1/3 green + 2/3 blue
+    const FaceStyle& steel = r.soup.styles[r.soup.triStyle[1]];
+    CHECK(steel.hasPbr && steel.metalness == 255 && steel.roughness == 51);
+    const FaceStyle& red = r.soup.styles[r.soup.triStyle[0]];
+    CHECK(red.hasPbr && red.metalness == 0 && red.roughness == 204);
+
+    // Colours survive welding: shared corners split, and the processed mesh reports them.
+    Mesh m = processMesh(r.soup, MeshOptions());
+    CHECK(m.hasFileColors && m.hasFilePbr);
+    for (uint32_t i = 0; i < 3; ++i) CHECK(m.vertices[m.indices[i]].color == 0xFF0000FFu);
+    CHECK((m.vertices[m.indices[3]].extra >> 12 & 1) == 1);
+
+    // Bambu Studio layout: filament colours in project_settings.config, an object
+    // on filament 2, one part on filament 3, one modifier part, and a painted triangle.
+    std::string part = std::string("<model ") + ns + "><resources>" + cubeObject(1) + cubeObject(5) +
+                       "<object id=\"4\" type=\"model\"><mesh>" + tri3 +
+                       "<triangles><triangle v1=\"0\" v2=\"1\" v3=\"2\" paint_color=\"4\"/>"
+                       "<triangle v1=\"0\" v2=\"1\" v3=\"3\"/></triangles></mesh></object>"
+                       "</resources><build/></model>";
+    std::string root =
+        "<model unit=\"millimeter\" xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\" "
+        "xmlns:p=\"http://schemas.microsoft.com/3dmanufacturing/production/2015/06\"><resources>"
+        "<object id=\"10\" type=\"model\"><components>"
+        "<component p:path=\"/3D/Objects/object_1.model\" objectid=\"1\"/>"
+        "<component p:path=\"/3D/Objects/object_1.model\" objectid=\"4\" transform=\"1 0 0 0 1 0 0 0 1 5 0 0\"/>"
+        "<component p:path=\"/3D/Objects/object_1.model\" objectid=\"5\" transform=\"1 0 0 0 1 0 0 0 1 9 0 0\"/>"
+        "</components></object></resources><build><item objectid=\"10\"/></build></model>";
+    std::string settings =
+        "<?xml version=\"1.0\"?><config><object id=\"10\"><metadata key=\"name\" value=\"Robot\"/>"
+        "<metadata key=\"extruder\" value=\"2\"/>"
+        "<part id=\"1\" subtype=\"normal_part\"><metadata key=\"name\" value=\"Body\"/></part>"
+        "<part id=\"4\" subtype=\"normal_part\"><metadata key=\"name\" value=\"Arm\"/><metadata key=\"extruder\" value=\"3\"/></part>"
+        "</object></config>";
+    // The third component (object 5) is a modifier volume: slicer settings, not geometry.
+    settings.insert(settings.find("</object>"), "<part id=\"5\" subtype=\"modifier_part\"/>");
+    std::string project = "{\n  \"filament_colour\": [\n    \"#FFFFFF\",\n    \"#112233\",\n    \"#AABBCC\"\n  ],\n  \"x\": 1\n}";
+    zip = makeZip({{"_rels/.rels", kRels}, {"3D/3dmodel.model", root}, {"3D/Objects/object_1.model", part},
+                   {"Metadata/model_settings.config", settings}, {"Metadata/project_settings.config", project}});
+    r = parse3mf(zip.data(), zip.size());
+    CHECK(r.ok && r.soup.triangleCount() == 14);  // cube (12) + arm (2); the modifier is skipped
+    CHECK(r.soup.partNames.size() == 2 && r.soup.partNames[0] == "Body" && r.soup.partNames[1] == "Arm");
+    CHECK(rgbaOf(r, 0) == 0xFF332211u);   // Body: object filament 2 (#112233)
+    CHECK(rgbaOf(r, 12) == 0xFFFFFFFFu);  // Arm, painted filament 1 (#FFFFFF)
+    CHECK(rgbaOf(r, 13) == 0xFFCCBBAAu);  // Arm, part filament 3 (#AABBCC)
+    CHECK(r.soup.triPart[0] == 0 && r.soup.triPart[13] == 1);
+    m = processMesh(r.soup, MeshOptions());
+    CHECK(m.parts.size() == 2 && m.parts[0].name == "Body" && m.parts[0].triangles == 12);
+
+    // PrusaSlicer: volumes are triangle ranges of one object; a modifier volume is skipped.
+    std::string prusa = std::string("<model ") + ns + "><resources>" + cubeObject(1) +
+                        "</resources><build><item objectid=\"1\"/></build></model>";
+    std::string prusaModel =
+        "<config><object id=\"1\" instances_count=\"1\"><metadata type=\"object\" key=\"name\" value=\"Cube\"/>"
+        "<volume firstid=\"0\" lastid=\"3\"><metadata type=\"volume\" key=\"name\" value=\"Bottom+Top\"/>"
+        "<metadata type=\"volume\" key=\"extruder\" value=\"2\"/></volume>"
+        "<volume firstid=\"4\" lastid=\"9\"><metadata type=\"volume\" key=\"name\" value=\"Sides\"/></volume>"
+        "<volume firstid=\"10\" lastid=\"11\"><metadata type=\"volume\" key=\"volume_type\" value=\"ParameterModifier\"/>"
+        "</volume></object></config>";
+    std::string prusaIni = "; extruder_colour = \"\"\n; filament_colour = #FF8000;#0080FF\n";
+    zip = makeZip({{"3D/3dmodel.model", prusa}, {"Metadata/Slic3r_PE_model.config", prusaModel},
+                   {"Metadata/Slic3r_PE.config", prusaIni}});
+    r = parse3mf(zip.data(), zip.size());
+    CHECK(r.ok && r.soup.triangleCount() == 10);
+    CHECK(r.soup.partNames.size() == 2 && r.soup.partNames[1] == "Sides");
+    CHECK(rgbaOf(r, 0) == 0xFFFF8000u);  // filament 2 = #0080FF -> R=00 G=80 B=FF
+    CHECK(rgbaOf(r, 5) == 0xFF0080FFu);  // default filament 1 = #FF8000
+}
+
+static void testPaintDecode() {
+    // decodePaint is internal; exercise it through a single painted triangle.
+    auto paintedState = [](const char* code) {
+        std::string m = "<model><resources><m:colorgroup id=\"1\"/><object id=\"1\"><mesh><vertices>"
+                        "<vertex x=\"0\" y=\"0\" z=\"0\"/><vertex x=\"1\" y=\"0\" z=\"0\"/><vertex x=\"0\" y=\"1\" z=\"0\"/>"
+                        "</vertices><triangles><triangle v1=\"0\" v2=\"1\" v3=\"2\" paint_color=\"" + std::string(code) +
+                        "\"/></triangles></mesh></object></resources><build><item objectid=\"1\"/></build></model>";
+        std::string proj = "{\"filament_colour\": [\"#010101\", \"#020202\", \"#030303\", \"#040404\", \"#050505\"]}";
+        auto z = makeZip({{"3D/3dmodel.model", m}, {"Metadata/project_settings.config", proj}});
+        LoadResult r = parse3mf(z.data(), z.size());
+        return r.ok && !r.soup.triStyle.empty() ? (int)(r.soup.styles[r.soup.triStyle[0]].rgba & 255) : -1;
+    };
+    CHECK(paintedState("4") == 1);   // leaf, state 1
+    CHECK(paintedState("8") == 2);   // leaf, state 2
+    CHECK(paintedState("0C") == 3);  // state 3 is escaped: 0b1100 then (3 - 3)
+    CHECK(paintedState("1C") == 4);
+    // Split into 2 children (code 1): child A state 2 (8), child B state 1 (4); read from the end,
+    // a tie goes to the lower state, so make A win by splitting B further into two state-1 halves... simpler:
+    // children 3 (split sides 2 -> code 2): two children state 2, one child state 1.
+    CHECK(paintedState("8482") == 2);
+}
+
+static void testExplode() {
+    // Two separate cubes in one STL soup become two parts ("connected pieces").
+    TriangleSoup soup;
+    for (int c = 0; c < 2; ++c)
+        for (auto& t : kCube)
+            for (int v = 0; v < 3; ++v) soup.positions.push_back({t[v * 3] * 10 + c * 30.0f, t[v * 3 + 1] * 10, t[v * 3 + 2] * 10});
+    Mesh m = processMesh(soup, MeshOptions());
+    CHECK(m.parts.size() == 2 && m.parts[0].triangles == 12 && m.parts[1].triangles == 12);
+    CHECK(std::fabs(m.parts[0].center.x + m.parts[1].center.x) < 1e-4f);  // centred in XY
+    for (auto& v : m.vertices) CHECK((v.extra & 0xFFF) < 2);
+    MeshOptions one;
+    one.splitConnectedPieces = false;
+    CHECK(processMesh(soup, one).parts.size() == 1);
+
+    // Offsets push parts away from the centre and never below the floor.
+    std::vector<ExplodePart> parts = {{{-20, 0, 5}, 8, 0, 0}, {{20, 0, 5}, 8, 0, 0.5f}, {{0, 0, 30}, 5, 25, 1}, {{0, 0, 1}, 5, 0, 1}};
+    vec3 c(0, 0, 15);
+    std::vector<vec3> off;
+    explodeOffsets(parts, c, 30, 1.0f, std::vector<float>(4, 1.0f), off);
+    CHECK(off[0].x < 0 && off[1].x > 0 && off[2].z > 0);
+    for (size_t i = 0; i < parts.size(); ++i) CHECK(parts[i].minZ + off[i].z >= -1e-4f);
+    explodeOffsets(parts, c, 30, 1.0f, std::vector<float>(4, 0.0f), off);
+    for (auto& o : off) CHECK(length(o) < 1e-6f);  // amount 0 = assembled
+    CHECK(explodedRadius(parts, c, 30, 1.0f) > 30);
+
+    // Stagger: the first part leaves before the last; both arrive at 1.
+    CHECK(partExplodeAmount(0.3f, 0.0f, 0.8f) > partExplodeAmount(0.3f, 1.0f, 0.8f));
+    CHECK(partExplodeAmount(1.0f, 1.0f, 0.8f) == 1.0f && partExplodeAmount(0.0f, 0.0f, 0.8f) == 0.0f);
+
+    // Timing over the loop: out and back is 0 at both ends (seamless) and 1 mid-way.
+    Scene s;
+    s.turntable.seconds = 4;
+    s.turntable.fps = 25;  // 100 frames
+    s.explode.animate = true;
+    s.explode.start = 0.1f;
+    s.explode.end = 0.9f;
+    CHECK(explodeAmountAt(s, 0) == 0.0f && explodeAmountAt(s, 99.9) == 0.0f);
+    CHECK(std::fabs(explodeAmountAt(s, 50) - 1.0f) < 1e-4f);
+    s.explode.timing = ExplodeTiming::Assemble;
+    CHECK(explodeAmountAt(s, 0) == 1.0f && explodeAmountAt(s, 95) == 0.0f);
+    s.explode.animate = false;
+    s.explode.manual = 0.4f;
+    CHECK(explodeAmountAt(s, 50) == 0.4f);
+
+    // JSON round trip of the new settings.
+    s.explode.timing = ExplodeTiming::ExplodeAndHold;
+    s.material.useFileColors = false;
+    Scene t;
+    std::string err;
+    CHECK(sceneFromJson(sceneToJson(s), t, err));
+    CHECK(t.explode.timing == ExplodeTiming::ExplodeAndHold && t.explode.manual == 0.4f && !t.material.useFileColors);
+}
+
 int main() {
     testParsing();
     testProcessing();
@@ -377,6 +549,9 @@ int main() {
     testTurntable();
     testEnvironment();
     test3mf();
+    test3mfColors();
+    testPaintDecode();
+    testExplode();
     if (g_failures) {
         std::printf("%d check(s) failed\n", g_failures);
         return 1;

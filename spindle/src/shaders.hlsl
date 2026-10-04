@@ -56,6 +56,12 @@ cbuffer MaterialCB : register(b1)
     float4 gGradient;      // rgb linear, w enabled
     float4 gGradientRange; // x min z, y max z
     float4 gWire;          // rgb, w width in pixels
+    float4 gFileFlags;     // x use file colours, y use file metal/roughness
+};
+
+cbuffer PartsCB : register(b3)
+{
+    float4 gPartOffset[1024];  // explode offset per part (object space)
 };
 
 cbuffer BakeCB : register(b2)
@@ -269,9 +275,21 @@ float carbon2(float2 uv)
 
 struct MeshIn
 {
-    float3 pos : POSITION;
-    float3 nrm : NORMAL;
+    float3 pos   : POSITION;
+    float3 nrm   : NORMAL;
+    float4 color : COLOR;   // sRGB file colour, alpha 0 = none
+    uint   extra : EXTRA;   // part (0-11), has-PBR (12), metalness (16-23), roughness (24-31)
 };
+
+float3 srgbToLinear(float3 c)
+{
+    return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+}
+
+float3 explodedPosition(MeshIn i)
+{
+    return i.pos + gPartOffset[i.extra & 0xFFF].xyz;
+}
 
 struct MeshV
 {
@@ -280,6 +298,8 @@ struct MeshV
     float3 wnrm : WNRM;
     float3 opos : OPOS;
     float3 onrm : ONRM;
+    nointerpolation float4 color : FCOLOR;  // linear file colour, a = has colour
+    nointerpolation float3 pbr : FPBR;      // metalness, roughness, has PBR
 };
 
 struct MeshVW
@@ -289,24 +309,28 @@ struct MeshVW
     float3 wnrm : WNRM;
     float3 opos : OPOS;
     float3 onrm : ONRM;
+    nointerpolation float4 color : FCOLOR;  // linear file colour, a = has colour
+    nointerpolation float3 pbr : FPBR;      // metalness, roughness, has PBR
     float3 bary : BARY;
 };
 
 MeshV VS_Mesh(MeshIn i)
 {
     MeshV o;
-    float4 w = mul(gWorld, float4(i.pos, 1.0));
+    float4 w = mul(gWorld, float4(explodedPosition(i), 1.0));
     o.pos = mul(gViewProj, mul(gMirror, w));
     o.wpos = w.xyz;
     o.wnrm = mul((float3x3)gWorld, i.nrm);
-    o.opos = i.pos;
+    o.opos = i.pos;  // unexploded: textures and layer lines travel with the part
     o.onrm = i.nrm;
+    o.color = float4(srgbToLinear(i.color.rgb), i.color.a);
+    o.pbr = float3(((i.extra >> 16) & 255) / 255.0, ((i.extra >> 24) & 255) / 255.0, (i.extra >> 12) & 1);
     return o;
 }
 
 float4 VS_Shadow(MeshIn i) : SV_Position
 {
-    return mul(gLightViewProj, mul(gWorld, float4(i.pos, 1.0)));
+    return mul(gLightViewProj, mul(gWorld, float4(explodedPosition(i), 1.0)));
 }
 
 [maxvertexcount(3)]
@@ -320,6 +344,8 @@ void GS_Wire(triangle MeshV v[3], inout TriangleStream<MeshVW> stream)
         o.wnrm = v[k].wnrm;
         o.opos = v[k].opos;
         o.onrm = v[k].onrm;
+        o.color = v[k].color;
+        o.pbr = v[k].pbr;
         o.bary = float3(k == 0, k == 1, k == 2);
         stream.Append(o);
     }
@@ -353,6 +379,12 @@ float4 PS_Model(MODEL_IN i) : SV_Target
     float3 albedo = gBase.rgb;
     float roughness = gBase.w;
     float metal = gPbr.x;
+    if (gFileFlags.x > 0.5 && i.color.a > 0.5) albedo = i.color.rgb;
+    if (gFileFlags.y > 0.5 && i.pbr.z > 0.5)
+    {
+        metal = i.pbr.x;
+        roughness = i.pbr.y;
+    }
 
     if (gGradient.w > 0.5)
     {

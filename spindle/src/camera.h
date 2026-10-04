@@ -4,6 +4,8 @@
 #include "common.h"
 #include "scene.h"
 
+#include <vector>
+
 namespace spindle {
 
 // Low-discrepancy sequence used for every per-sample jitter.
@@ -66,6 +68,22 @@ TurntablePose turntablePose(const Scene& scene, const vec3& sphereCenter, float 
 
 // The angle (degrees) the turntable has advanced at fractional frame `frame`.
 float turntableAngleDeg(const TurntableSettings& t, double frame);
+
+// Global explode amount (0 = assembled, 1 = fully exploded) at fractional frame
+// `frame`; the manual amount when the animation is off.
+float explodeAmountAt(const Scene& scene, double frame);
+// Per-part amount: parts leave in `order` (0 first .. 1 last), spread by `stagger`.
+float partExplodeAmount(float global, float order, float stagger);
+// Offsets that move each part (at full explode) away from `center`, and the lift
+// that keeps every part above the ground at the given per-part amounts.
+struct ExplodePart {
+    vec3 center;
+    float radius = 0, minZ = 0, order = 0;
+};
+void explodeOffsets(const std::vector<ExplodePart>& parts, const vec3& center, float sceneRadius, float distance,
+                    const std::vector<float>& amounts, std::vector<vec3>& out);
+// Bounding radius about `center` of the assembly fully exploded (for framing).
+float explodedRadius(const std::vector<ExplodePart>& parts, const vec3& center, float sceneRadius, float distance);
 
 // Distance at which a sphere of `radius` fills `fill` of the short frame side.
 float framingDistance(float radius, float fovY, float aspect, float fill);

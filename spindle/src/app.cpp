@@ -175,6 +175,7 @@ private:
     void sectionEnvironment();
     void sectionCamera();
     void sectionTurntable();
+    void sectionExplode();
     void sectionOutput();
     void sectionSettings();
 
@@ -662,7 +663,7 @@ void App::handleDroppedFile(const std::string& path) {
 void App::frameModel() {
     float aspect = (float)std::max(1, viewRT_.width) / (float)std::max(1, viewRT_.height);
     if (viewRT_.width == 0) aspect = 1.5f;
-    cam_.frame(renderer_.sphereCenter(), renderer_.sphereRadius(), fovYForFocalLength(scene_.camera.focalLength, aspect),
+    cam_.frame(renderer_.sphereCenter(), renderer_.framingRadius(scene_), fovYForFocalLength(scene_.camera.focalLength, aspect),
                aspect, scene_.camera.fill);
 }
 
@@ -875,10 +876,10 @@ void App::renderViewport(int x, int y, int w, int h) {
     while (sampleIndex_ < maxSamples) {
         SampleInput in;
         if (preview_)
-            in = makeTurntableSample(scene_, renderer_.sphereCenter(), renderer_.sphereRadius(), rw, rh, previewFrame_, 0, 1,
+            in = makeTurntableSample(scene_, renderer_.sphereCenter(), renderer_.framingRadius(scene_), rw, rh, previewFrame_, 0, 1,
                                      startAzimuth());
         else
-            in = makeOrbitSample(scene_, cam_, renderer_.sphereRadius(), rw, rh, sampleIndex_);
+            in = makeOrbitSample(scene_, cam_, renderer_.framingRadius(scene_), rw, rh, sampleIndex_);
         in.fullQuality = full;
         auto t0 = Clock::now();
         renderer_.renderSample(viewRT_, scene_, in);
@@ -1044,6 +1045,7 @@ void App::drawPanel(float x, float y, float w, float h) {
     sectionEnvironment();
     sectionCamera();
     sectionTurntable();
+    sectionExplode();
     sectionOutput();
     sectionSettings();
 
@@ -1089,7 +1091,22 @@ void App::sectionModel() {
     if (ImGui::IsItemDeactivatedAfterEdit()) changed = true;
     helpMarker("Edges sharper than this stay crisp; softer ones are smoothed. 0 = faceted, 180 = fully smooth.");
     if (changed) reprocessModel();
+    if (mesh_.parts.size() > 1 && ImGui::TreeNode("##parts", "%d parts", (int)mesh_.parts.size())) {
+        int shown = 0;
+        for (const MeshPart& p : mesh_.parts) {
+            if (++shown > 200) {
+                ImGui::TextDisabled("... and %d more", (int)mesh_.parts.size() - 200);
+                break;
+            }
+            ImGui::BulletText("%s", p.name.c_str());
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s tris", withThousands(p.triangles).c_str());
+        }
+        ImGui::TreePop();
+    }
+    ImGui::PushTextWrapPos(0.0f);
     for (auto& w : modelWarnings_) ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "! %s", w.c_str());
+    ImGui::PopTextWrapPos();
     ImGui::Spacing();
 }
 
@@ -1101,7 +1118,13 @@ void App::sectionMaterial() {
             if (ImGui::Selectable(name.c_str(), name == m.preset)) applyMaterialPreset(name, m);
         ImGui::EndCombo();
     }
-    colorEdit("Colour", m.baseColor);
+    if (mesh_.hasFileColors) {
+        ImGui::Checkbox("Colours from file", &m.useFileColors);
+        helpMarker("Use the colours stored in the 3MF (materials, colour groups, slicer filaments and painting). "
+                   "Parts without a colour use the colour below.");
+    }
+    if (mesh_.hasFilePbr) ImGui::Checkbox("Metal / roughness from file", &m.useFileFinish);
+    colorEdit(mesh_.hasFileColors && m.useFileColors ? "Colour (unpainted parts)" : "Colour", m.baseColor);
     ImGui::SliderFloat("Roughness", &m.roughness, 0.0f, 1.0f);
     ImGui::SliderFloat("Metalness", &m.metalness, 0.0f, 1.0f);
     ImGui::SliderFloat("Clearcoat", &m.clearcoat, 0.0f, 1.0f);
@@ -1282,6 +1305,33 @@ void App::sectionTurntable() {
     if (ImGui::Button(preview_ ? "Stop preview (Space)" : "Preview (Space)", ImVec2(-1, 0))) {
         preview_ = !preview_;
         previewFrame_ = 0;
+    }
+    ImGui::Spacing();
+}
+
+void App::sectionExplode() {
+    if (!ImGui::CollapsingHeader("Exploded view", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    auto& x = scene_.explode;
+    if (mesh_.parts.size() < 2) {
+        ImGui::TextDisabled("This model is one piece: nothing to explode.");
+        ImGui::Spacing();
+        return;
+    }
+    ImGui::TextDisabled("%d parts, outermost leave first", (int)mesh_.parts.size());
+    ImGui::SliderFloat("Explode (view)", &x.manual, 0.0f, 1.0f);
+    helpMarker("Pulls the parts apart in the viewport and in stills. The turntable animation below is separate.");
+    ImGui::SliderFloat("Distance", &x.distance, 0.1f, 4.0f, "%.2fx");
+    ImGui::SliderFloat("Stagger", &x.stagger, 0.0f, 1.0f);
+    helpMarker("0: all parts move together. 1: parts move one after another, so the assembly opens up slowly.");
+    ImGui::Checkbox("Animate during the turntable", &x.animate);
+    if (x.animate) {
+        enumCombo("Timing", x.timing, (int)ExplodeTiming::Count, explodeTimingName);
+        float a = x.start * 100.0f, b = x.end * 100.0f;
+        if (ImGui::DragFloatRange2("Between", &a, &b, 0.5f, 0.0f, 100.0f, "%.0f%%", "%.0f%% of the spin")) {
+            x.start = clampf(a / 100.0f, 0, 1);
+            x.end = clampf(std::max(b, a + 1.0f) / 100.0f, 0, 1);
+        }
+        ImGui::TextDisabled("Press Space to preview.");
     }
     ImGui::Spacing();
 }

@@ -58,6 +58,25 @@ default), so the still view matches the final render.
   printable build item with its transforms and units (converted to mm). That
   includes files from Bambu Studio, OrcaSlicer and PrusaSlicer that keep each
   object in its own part.
+- **3MF colours and materials, as stored in the file:**
+  - base materials with display colours;
+  - colour groups, including per-triangle and per-corner colours;
+  - composite materials and multi-properties;
+  - metallic/roughness display properties (specular/glossiness is converted);
+  - slicer filament colours by object and by part (Bambu Studio, OrcaSlicer, PrusaSlicer);
+  - multi-colour painting (`paint_color` / `mmu_segmentation`).
+
+  Modifier, negative and support-blocker volumes are left out, because they are
+  slicer settings, not geometry. Your chosen material still supplies everything
+  else (clearcoat, layer lines, sheen…). It also colours unpainted parts, and you
+  can switch the file's colours or finish off.
+- **Exploded view:** each 3MF object or part, or each separate piece of an STL,
+  moves away from the centre of the assembly. The outermost parts leave first, so
+  the assembly opens up gradually. Use the *Explode* slider for the viewport and
+  stills, or animate it during the turntable: explode and reassemble (loops
+  seamlessly), explode and hold, or assemble from parts. Distance, stagger and
+  the part of the spin it happens in are adjustable, and the camera framing
+  allows for the exploded size.
 - **Materials:** 16 presets, including Matte PLA, Glossy PETG, Silk PLA, grey
   resin, clay, glazed ceramic, brushed aluminium, chrome, gold, rubber, clear and
   frosted resin, walnut, marble, carbon fibre and granite. Every parameter is
@@ -91,6 +110,9 @@ output.
 ```bat
 Spindle render part.stl -o part.mp4 --preset presets\studio-product.json
 Spindle render plate.3mf -o plate.mp4 --material "Glossy PETG"
+Spindle render gearbox.3mf -o explode.mp4 --explode --explode-timing return
+Spindle still  gearbox.3mf -o exploded.png --explode-amount 1
+Spindle render plate.3mf -o mono.mp4 --no-file-colors --material "Grey resin (SLA)"
 Spindle render part.stl -o spin.gif --material "Silk PLA" --res 600x600 --seconds 4 --transparent
 Spindle render part.stl -o frames\part.png --quality high          (PNG sequence)
 Spindle still  part.stl -o hero.png --material Gold --env Sunset --background environment
@@ -117,7 +139,7 @@ Exit codes: 0 ok, 1 usage, 2 load error, 3 GPU error, 4 encode error.
 | | |
 |---|---|
 | `src/mesh.*` | STL parsing (binary/ASCII detection by size, parallel parse), welding, crease-aware normals |
-| `src/model3mf.cpp` | 3MF: ZIP reader (inflate from stb_image), OPC relationships, units, components, `p:path` parts |
+| `src/model3mf.cpp` | 3MF: ZIP reader (inflate from stb_image), OPC relationships, units, components, `p:path` parts, materials/colours, slicer filament metadata and painting |
 | `src/environment.*` | Procedural environments, `.hdr` loading, SH irradiance and dominant-light extraction |
 | `src/scene.*` | Scene settings, material presets, JSON presets |
 | `src/camera.*` | Orbit camera, turntable path, seamless-loop timing, jitter |
@@ -143,10 +165,16 @@ Media Foundation MP4 and a GUI screenshot.
 - Glass and clear resin are approximate: they refract the environment only, with
   no caustics and no view of the floor through the object.
 - OpenEXR environments are not supported; convert them to `.hdr`.
-- Triplanar textures drive colour only (no normal maps). STL vertex colours and
-  3MF colours/materials are ignored: one material is applied to the whole model.
+- Triplanar textures drive colour only (no normal maps). STL vertex colours are ignored.
+- 3MF texture-mapped colours (`texture2dgroup`) are not supported; those triangles
+  use your chosen material. Painted triangles take the filament that covers most of
+  their area, so a painted edge follows the model's triangles, not the exact brush
+  outline. Translucent 3MF colours render opaque.
 - A 3MF with several build items (or several plates) is shown as one scene, with
   every item at its position on the plate. 3MF files over 4 GB (ZIP64) are not supported.
+- Exploded parts move in straight lines away from the assembly centre. There are
+  no per-part paths or keyframes. Up to 1024 parts move independently; beyond
+  that, the smallest pieces move together as one group.
 - MP4 output is limited to 4096 px per side (an H.264 limit); use PNG for larger frames.
 - The app has not yet been run on the target K5100M laptop. The performance
   targets in the spec are estimates until it has.

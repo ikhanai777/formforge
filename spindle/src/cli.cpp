@@ -78,6 +78,11 @@ static void usage() {
         "  --format FMT         mp4|png|gif|webm|prores|hevc (default: from -o extension)\n"
         "  --elevation DEG      camera elevation    --angle DEG  camera azimuth of frame 0\n"
         "  --up z|y             model up axis       --lights     enable the three-point rig\n"
+        "  --no-file-colors     ignore 3MF colours/materials and use --material for everything\n"
+        "  --explode            animate an exploded view of the parts during the turntable\n"
+        "  --explode-timing T   return (out and back) | hold (stay apart) | assemble (come together)\n"
+        "  --explode-distance F --explode-stagger F (0..1)\n"
+        "  --explode-amount A   fixed explode 0..1 (for stills)\n"
         "  --frames N           render only the first N frames (testing)\n"
         "  --gpu auto|N|NAME|warp\n"
         "  --ffmpeg PATH        ffmpeg.exe for webm/prores/hevc\n"
@@ -136,7 +141,8 @@ static int prepare(CliContext& c, const std::string& stlPath, const std::string&
     for (int i = 0; i < 3; ++i) mo.quarterTurns[i] = c.scene.model.quarterTurns[i];
     Mesh mesh = processMesh(lr.soup, mo);
     vec3 sz = mesh.size();
-    std::printf("Model: %llu triangles, %.1f x %.1f x %.1f mm\n", (unsigned long long)mesh.triangleCount(), sz.x, sz.y, sz.z);
+    std::printf("Model: %llu triangles, %.1f x %.1f x %.1f mm, %llu part(s)%s\n", (unsigned long long)mesh.triangleCount(), sz.x,
+                sz.y, sz.z, (unsigned long long)mesh.parts.size(), mesh.hasFileColors ? ", colours from file" : "");
     if (!c.renderer.setMesh(mesh, err)) {
         std::fprintf(stderr, "error: %s\n", err.c_str());
         return 3;
@@ -209,7 +215,7 @@ int runCli(const std::vector<std::string>& args) {
             if (!next(gpuPref)) return 1;
         } else if (a == "--ffmpeg") {
             if (!next(ffmpeg)) return 1;
-        } else if (a == "--transparent" || a == "--lights") {
+        } else if (a == "--transparent" || a == "--lights" || a == "--explode" || a == "--no-file-colors") {
             overrides.push_back({a, ""});
         } else if (a.size() > 2 && a[0] == '-' && a[1] == '-') {
             if (!next(v)) return 1;
@@ -239,6 +245,19 @@ int runCli(const std::vector<std::string>& args) {
         else if (k == "--env") s.environment.source = v;
         else if (k == "--transparent") s.environment.background = Background::Transparent;
         else if (k == "--lights") s.environment.lights.enabled = true;
+        else if (k == "--explode") s.explode.animate = true;
+        else if (k == "--no-file-colors") s.material.useFileColors = s.material.useFileFinish = false;
+        else if (k == "--explode-amount") {
+            s.explode.manual = (float)std::atof(v.c_str());
+            s.explode.animate = false;
+        } else if (k == "--explode-distance") s.explode.distance = (float)std::atof(v.c_str());
+        else if (k == "--explode-stagger") s.explode.stagger = (float)std::atof(v.c_str());
+        else if (k == "--explode-timing") {
+            const char* ids[] = {"return", "hold", "assemble"};
+            ok = false;
+            for (int t = 0; t < 3; ++t)
+                if (v == ids[t]) { s.explode.timing = (ExplodeTiming)t; ok = true; }
+        }
         else if (k == "--background") {
             const char* ids[] = {"environment", "solid", "gradient", "radial", "transparent"};
             ok = false;
@@ -298,7 +317,7 @@ int runCli(const std::vector<std::string>& args) {
         }
         int samples = qualitySamples(s.output.quality);
         for (int i = 0; i < samples; ++i) {
-            SampleInput in = makeTurntableSample(s, r.sphereCenter(), r.sphereRadius(), rt.width, rt.height, 0, i, samples, angle);
+            SampleInput in = makeTurntableSample(s, r.sphereCenter(), r.framingRadius(s), rt.width, rt.height, 0, i, samples, angle);
             r.renderSample(rt, s, in);
             r.context()->Flush();
         }

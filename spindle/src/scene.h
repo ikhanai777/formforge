@@ -17,6 +17,7 @@ enum class TurntableMode { RotateObject = 0, OrbitCamera, Count };
 enum class Easing { Linear = 0, EaseInOut, HoldThenSpin, Count };
 enum class Format { MP4 = 0, PNG, GIF, WebM, ProRes, HEVC, Count };
 enum class Quality { Draft = 0, Standard, High, Ultra, Count };
+enum class ExplodeTiming { ExplodeAndReturn = 0, ExplodeAndHold, Assemble, Count };
 
 const char* patternName(Pattern p);
 const char* backgroundName(Background b);
@@ -29,6 +30,7 @@ const char* formatExtension(Format f);
 bool formatNeedsFfmpeg(Format f);
 bool formatSupportsAlpha(Format f);
 const char* qualityName(Quality q);
+const char* explodeTimingName(ExplodeTiming t);
 int qualitySamples(Quality q);
 
 struct ModelSettings {
@@ -39,6 +41,10 @@ struct ModelSettings {
 
 struct MaterialSettings {
     std::string preset = "Matte PLA";
+    // 3MF files can carry colours and metal/roughness per triangle. When on, they
+    // replace the colour / finish below wherever the file defines them.
+    bool useFileColors = true;
+    bool useFileFinish = true;
     vec3 baseColor = {0.85f, 0.32f, 0.12f};
     float roughness = 0.65f;
     float metalness = 0.0f;
@@ -141,12 +147,24 @@ struct OutputSettings {
     float bitrateMbps = 0.0f;  // 0 = automatic
 };
 
+// Exploded view: parts move away from the assembly centre along the line from the
+// centre to each part, and come back. `start`/`end` are fractions of the turntable loop.
+struct ExplodeSettings {
+    bool animate = false;     // explode during the turntable
+    float distance = 1.0f;    // travel, relative to each part's distance from the centre (+ a margin)
+    float stagger = 0.6f;     // 0 = all parts move together, 1 = one after another (outermost first)
+    ExplodeTiming timing = ExplodeTiming::ExplodeAndReturn;
+    float start = 0.1f, end = 0.9f;
+    float manual = 0.0f;      // viewport / still amount when not animating (0..1)
+};
+
 struct Scene {
     ModelSettings model;
     MaterialSettings material;
     EnvironmentSettings environment;
     CameraSettings camera;
     TurntableSettings turntable;
+    ExplodeSettings explode;
     OutputSettings output;
 };
 

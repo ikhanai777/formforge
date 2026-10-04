@@ -115,6 +115,59 @@ float turntableAngleDeg(const TurntableSettings& t, double frame) {
     return t.clockwise ? -a : a;
 }
 
+float explodeAmountAt(const Scene& s, double frame) {
+    const ExplodeSettings& x = s.explode;
+    if (!x.animate) return clampf(x.manual, 0, 1);
+    float t = (float)std::fmod(frame / std::max(1, s.turntable.frameCount()), 1.0);
+    float span = std::max(1e-4f, x.end - x.start);
+    float u = clampf((t - x.start) / span, 0, 1);
+    switch (x.timing) {
+        case ExplodeTiming::ExplodeAndReturn:
+            // Out and back in within [start, end]; 0 outside it, so the loop is seamless.
+            return t < x.start || t > x.end ? 0.0f : 0.5f - 0.5f * std::cos(2.0f * kPi * u);
+        case ExplodeTiming::ExplodeAndHold:
+            return smoothstep01(u);
+        case ExplodeTiming::Assemble:
+            return 1.0f - smoothstep01(u);
+        default:
+            return 0.0f;
+    }
+}
+
+float partExplodeAmount(float global, float order, float stagger) {
+    float a = clampf(global * (1.0f + stagger) - order * stagger, 0.0f, 1.0f);
+    return smoothstep01(a);
+}
+
+void explodeOffsets(const std::vector<ExplodePart>& parts, const vec3& center, float sceneRadius, float distance,
+                    const std::vector<float>& amounts, std::vector<vec3>& out) {
+    out.assign(parts.size(), vec3(0, 0, 0));
+    if (parts.size() < 2) return;
+    float lowest = 0;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        vec3 d = parts[i].center - center;
+        float len = length(d);
+        // A part at the centre (a core or a shaft) rises instead of staying put.
+        vec3 dir = len > sceneRadius * 0.02f ? d / len : vec3(0, 0, 1);
+        // Travel grows with the part's distance from the centre, plus a margin so
+        // parts near the middle still separate. distance = 1 opens a typical
+        // assembly to roughly twice its size.
+        out[i] = dir * (distance * 0.6f * (len + 0.25f * sceneRadius) * amounts[i]);
+        lowest = std::min(lowest, parts[i].minZ + out[i].z);
+    }
+    // Lift the whole assembly so nothing sinks through the floor.
+    for (auto& o : out) o.z -= lowest;
+}
+
+float explodedRadius(const std::vector<ExplodePart>& parts, const vec3& center, float sceneRadius, float distance) {
+    std::vector<float> ones(parts.size(), 1.0f);
+    std::vector<vec3> off;
+    explodeOffsets(parts, center, sceneRadius, distance, ones, off);
+    float r = sceneRadius;
+    for (size_t i = 0; i < parts.size(); ++i) r = std::max(r, length(parts[i].center + off[i] - center) + parts[i].radius);
+    return r;
+}
+
 TurntablePose turntablePose(const Scene& s, const vec3& center, float radius, float aspect, double frame,
                             float startAzimuthDeg) {
     TurntablePose p;
