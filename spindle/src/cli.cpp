@@ -317,6 +317,12 @@ int runCli(const std::vector<std::string>& args) {
         for (int y = 0; y < rt.height; ++y)
             std::memcpy(&px[(size_t)y * rt.width * 4], (uint8_t*)m.pData + (size_t)y * m.RowPitch, (size_t)rt.width * 4);
         r.context()->Unmap(staging.get(), 0);
+        size_t slash = out.find_last_of("\\/");
+        if (slash != std::string::npos) {
+            wchar_t full[MAX_PATH * 4];
+            if (GetFullPathNameW(widen(out.substr(0, slash)).c_str(), MAX_PATH * 4, full, nullptr))
+                SHCreateDirectoryExW(nullptr, full, nullptr);
+        }
         if (!stbi_write_png(out.c_str(), rt.width, rt.height, 4, px.data(), rt.width * 4)) {
             std::fprintf(stderr, "error: could not write %s\n", out.c_str());
             return 4;

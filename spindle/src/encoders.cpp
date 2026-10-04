@@ -12,6 +12,7 @@
 #include <mferror.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
+#include <shlobj.h>
 
 #include <atomic>
 #include <cstdio>
@@ -47,6 +48,23 @@ static std::string tempPathFor(const std::string& path) {
     std::string ext = extensionOf(path);
     std::string stem = path.substr(0, path.size() - ext.size());
     return stem + ".partial" + ext;
+}
+
+// Creates the folder that will hold `path` (and any missing parents).
+static bool ensureParentDir(const std::string& path, std::string& error) {
+    size_t slash = path.find_last_of("\\/");
+    if (slash == std::string::npos) return true;
+    std::wstring dir = widen(path.substr(0, slash));
+    for (auto& c : dir)
+        if (c == L'/') c = L'\\';
+    wchar_t full[MAX_PATH * 4];
+    if (!GetFullPathNameW(dir.c_str(), MAX_PATH * 4, full, nullptr)) return true;
+    int rc = SHCreateDirectoryExW(nullptr, full, nullptr);
+    if (rc != ERROR_SUCCESS && rc != ERROR_ALREADY_EXISTS && rc != ERROR_FILE_EXISTS) {
+        error = "Could not create the folder " + narrow(full);
+        return false;
+    }
+    return true;
 }
 
 static bool moveIntoPlace(const std::string& from, const std::string& to, std::string& error) {
@@ -419,6 +437,8 @@ private:
     FILE* pipe_ = nullptr;
 };
 
+// ---------------------------------------------------------------------------
+
 std::unique_ptr<FrameSink> createSink(Format format) {
     switch (format) {
         case Format::MP4: return std::unique_ptr<FrameSink>(new Mp4Sink());
@@ -446,6 +466,10 @@ static void runInMTA(F fn) {
 EncoderQueue::EncoderQueue(std::unique_ptr<FrameSink> sink, size_t capacity) : sink_(std::move(sink)), capacity_(capacity) {}
 
 bool EncoderQueue::begin(const SinkConfig& cfg, std::string& error) {
+    if (!ensureParentDir(cfg.path, error)) {
+        closing_ = true;
+        return false;
+    }
     bool ok = false;
     runInMTA([&] { ok = sink_->begin(cfg, error); });
     if (!ok) {
