@@ -81,7 +81,7 @@ more than about 4M triangles; split larger index buffers into chunks.
 
 ### Out of scope (v1)
 - Mesh editing, repair, boolean operations or slicing.
-- Multiple objects or assemblies. (OBJ/3MF/PLY import is a v2 candidate; the loader interface allows for it.)
+- Multiple objects or assemblies as separate, independently posed parts. (3MF import was added after v0.1, see §16; OBJ/PLY remain v2 candidates.)
 - True refraction or caustics. Glass is approximated (§5.4).
 - Path tracing, keyframe animation beyond the turntable, audio.
 - macOS and Linux. Windows 7 and 8 are not tested.
@@ -471,8 +471,8 @@ Unknown keys are ignored, missing keys get default values, and `version` control
 
 - Should the app ship a small *sample library* of STLs so it opens with
   something to show? (Proposal: one FormForge-generated part.)
-- Should v2 accept 3MF and use its colour and material data? 3MF is the format
-  FormForge already exports, so this is cheap to add and is the most likely request.
+- 3MF loading is implemented (§16). Should a later version also use 3MF colour
+  and material data, instead of one material for the whole model?
 - Is a watermark or text overlay (part name and dimensions) wanted on exported
   videos? It is trivial to add in the tonemap pass.
 
@@ -497,6 +497,7 @@ was a deliberate trade-off, not an omission found later.
 | `Spindle.exe render …` from a console (§9) | `Spindle.com` (console build) sits next to `Spindle.exe`, so `Spindle render …` in cmd/PowerShell resolves to it and the shell waits for it | A GUI-subsystem exe returns to the prompt immediately |
 | Opt-in file association (§3) | Not implemented | "Open with" and drag-and-drop cover it |
 | Environment cubemap mips via `GenerateMips` | Each cube mip is rendered straight from the matching equirect mip | Some drivers leave generated cube mips empty |
+| STL only (§2) | STL and 3MF. 3MF covers the core spec (meshes, components, build-item transforms, units) and the Production extension's `p:path`, which Bambu Studio, OrcaSlicer and PrusaSlicer use. Colours and materials are ignored, and all build items render together at their plate positions | 3MF is FormForge's own export format and the default for modern slicers |
 | Light rig angles | Relative to the camera's start azimuth | The rig frames the subject the same way whatever the start angle; in orbit-camera mode it stays fixed to the model |
 
 **What has been verified, and how**

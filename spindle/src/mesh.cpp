@@ -78,7 +78,7 @@ static void parallelSort(std::vector<T>& v, Less less) {
 // Loading
 // ---------------------------------------------------------------------------
 
-static bool readWholeFile(const std::string& path, std::vector<uint8_t>& out, std::string& error) {
+bool readWholeFile(const std::string& path, std::vector<uint8_t>& out, std::string& error) {
 #ifdef _WIN32
     FILE* f = _wfopen(widen(path).c_str(), L"rb");
 #else
@@ -122,6 +122,20 @@ LoadResult loadStlFile(const std::string& path, Progress* progress) {
     std::vector<uint8_t> bytes;
     LoadResult r;
     if (!readWholeFile(path, bytes, r.error)) return r;
+    return parseStl(bytes.data(), bytes.size(), progress);
+}
+
+bool isSupportedModelExtension(const std::string& path) {
+    std::string e = extensionOf(path);
+    return e == ".stl" || e == ".3mf";
+}
+
+LoadResult loadModelFile(const std::string& path, Progress* progress) {
+    std::vector<uint8_t> bytes;
+    LoadResult r;
+    if (!readWholeFile(path, bytes, r.error)) return r;
+    if (bytes.size() >= 4 && bytes[0] == 'P' && bytes[1] == 'K' && bytes[2] == 3 && bytes[3] == 4)
+        return parse3mf(bytes.data(), bytes.size(), progress);
     return parseStl(bytes.data(), bytes.size(), progress);
 }
 
@@ -306,6 +320,11 @@ LoadResult parseStl(const uint8_t* data, size_t size, Progress* progress) {
         return r;
     }
 
+    finishLoad(r, progress);
+    return r;
+}
+
+void finishLoad(LoadResult& r, Progress* progress) {
     dropInvalid(r);
     if (r.droppedNonFinite)
         r.warnings.push_back("Dropped " + std::to_string(r.droppedNonFinite) + " triangles with invalid (NaN/Inf) coordinates.");
@@ -313,11 +332,10 @@ LoadResult parseStl(const uint8_t* data, size_t size, Progress* progress) {
         r.warnings.push_back("Dropped " + std::to_string(r.droppedDegenerate) + " zero-area triangles.");
     if (r.soup.positions.empty()) {
         r.error = "The file contains no triangles.";
-        return r;
+        return;
     }
     if (progress) progress->value = 1.0f;
     r.ok = true;
-    return r;
 }
 
 // ---------------------------------------------------------------------------

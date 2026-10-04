@@ -37,6 +37,18 @@ struct Progress {
 LoadResult loadStlFile(const std::string& path, Progress* progress = nullptr);
 LoadResult parseStl(const uint8_t* data, size_t size, Progress* progress = nullptr);
 
+// 3MF (model3mf.cpp): every printable build item, with its transforms, in mm.
+LoadResult load3mfFile(const std::string& path, Progress* progress = nullptr);
+LoadResult parse3mf(const uint8_t* data, size_t size, Progress* progress = nullptr);
+
+// Picks STL or 3MF by content (a ZIP signature means 3MF), not by extension.
+LoadResult loadModelFile(const std::string& path, Progress* progress = nullptr);
+bool isSupportedModelExtension(const std::string& path);  // .stl / .3mf
+
+bool readWholeFile(const std::string& path, std::vector<uint8_t>& out, std::string& error);
+// Shared tail of every loader: drops NaN/zero-area triangles, adds warnings, sets ok.
+void finishLoad(LoadResult& r, Progress* progress);
+
 struct Vertex {
     float px, py, pz;
     float nx, ny, nz;

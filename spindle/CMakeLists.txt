@@ -11,6 +11,7 @@ endif()
 add_library(spindle_core STATIC
   src/common.cpp
   src/mesh.cpp
+  src/model3mf.cpp
   src/scene.cpp
   src/camera.cpp
   src/environment.cpp)

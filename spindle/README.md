@@ -1,7 +1,7 @@
 # Spindle
 
-A small Windows app that opens any STL file, shows it with good materials and
-lighting, and renders a 360° turntable video. It has one window, one model and
+A small Windows app that opens STL and 3MF files, shows them with good materials
+and lighting, and renders a 360° turntable video. It has one window, one model and
 one export button.
 
 It implements [`docs/turntable-viewer-spec.md`](../docs/turntable-viewer-spec.md).
@@ -29,7 +29,7 @@ All dependencies are vendored in `third_party/`, so the build needs no network.
 
 ## Using it
 
-Drop an `.stl` onto the window, or press **Ctrl+O**. Then pick a material and a
+Drop an `.stl` or `.3mf` onto the window, or press **Ctrl+O**. Then pick a material and a
 lighting setup, check **Turntable → Preview** (Space), and press **Render
 turntable…** (Ctrl+R).
 
@@ -42,7 +42,7 @@ turntable…** (Ctrl+R).
 | `Space` | Turntable preview at export speed, letterboxed to the export size |
 | `1` `3` `7` | Front, side and top views |
 | `Tab` | Hide or show the panel |
-| `Ctrl+O` / `Ctrl+R` / `Ctrl+S` | Open STL / render / save scene preset |
+| `Ctrl+O` / `Ctrl+R` / `Ctrl+S` | Open model / render / save scene preset |
 
 You can also drop other files onto the window:
 - an `.hdr` sets the lighting environment;
@@ -54,6 +54,10 @@ default), so the still view matches the final render.
 
 ### What's in the box
 
+- **Models:** binary and ASCII STL, and 3MF. For 3MF, Spindle reads every
+  printable build item with its transforms and units (converted to mm). That
+  includes files from Bambu Studio, OrcaSlicer and PrusaSlicer that keep each
+  object in its own part.
 - **Materials:** 16 presets, including Matte PLA, Glossy PETG, Silk PLA, grey
   resin, clay, glazed ceramic, brushed aluminium, chrome, gold, rubber, clear and
   frosted resin, walnut, marble, carbon fibre and granite. Every parameter is
@@ -86,6 +90,7 @@ output.
 
 ```bat
 Spindle render part.stl -o part.mp4 --preset presets\studio-product.json
+Spindle render plate.3mf -o plate.mp4 --material "Glossy PETG"
 Spindle render part.stl -o spin.gif --material "Silk PLA" --res 600x600 --seconds 4 --transparent
 Spindle render part.stl -o frames\part.png --quality high          (PNG sequence)
 Spindle still  part.stl -o hero.png --material Gold --env Sunset --background environment
@@ -112,6 +117,7 @@ Exit codes: 0 ok, 1 usage, 2 load error, 3 GPU error, 4 encode error.
 | | |
 |---|---|
 | `src/mesh.*` | STL parsing (binary/ASCII detection by size, parallel parse), welding, crease-aware normals |
+| `src/model3mf.cpp` | 3MF: ZIP reader (inflate from stb_image), OPC relationships, units, components, `p:path` parts |
 | `src/environment.*` | Procedural environments, `.hdr` loading, SH irradiance and dominant-light extraction |
 | `src/scene.*` | Scene settings, material presets, JSON presets |
 | `src/camera.*` | Orbit camera, turntable path, seamless-loop timing, jitter |
@@ -137,7 +143,10 @@ Media Foundation MP4 and a GUI screenshot.
 - Glass and clear resin are approximate: they refract the environment only, with
   no caustics and no view of the floor through the object.
 - OpenEXR environments are not supported; convert them to `.hdr`.
-- Triplanar textures drive colour only (no normal maps). STL vertex colours are ignored.
+- Triplanar textures drive colour only (no normal maps). STL vertex colours and
+  3MF colours/materials are ignored: one material is applied to the whole model.
+- A 3MF with several build items (or several plates) is shown as one scene, with
+  every item at its position on the plate. 3MF files over 4 GB (ZIP64) are not supported.
 - MP4 output is limited to 4096 px per side (an H.264 limit); use PNG for larger frames.
 - The app has not yet been run on the target K5100M laptop. The performance
   targets in the spec are estimates until it has.

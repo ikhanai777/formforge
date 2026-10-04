@@ -1,7 +1,7 @@
 // Unit tests for the platform-neutral core: STL parsing, mesh processing,
 // scene JSON, turntable timing and environment analysis.
 // Builds natively on any OS (no Direct3D), e.g.:
-//   g++ -std=c++17 -O2 -pthread -I src tests/test_core.cpp src/{common,mesh,scene,camera,environment}.cpp
+//   g++ -std=c++17 -O2 -pthread -I src tests/test_core.cpp src/{common,mesh,model3mf,scene,camera,environment}.cpp
 #include "../src/camera.h"
 #include "../src/environment.h"
 #include "../src/mesh.h"
@@ -269,12 +269,114 @@ static void testEnvironment() {
     CHECK(up.z > 0.999f);
 }
 
+
+// ---- 3MF ---------------------------------------------------------------------
+
+// Builds a ZIP with stored (uncompressed) entries.
+static std::vector<uint8_t> makeZip(const std::vector<std::pair<std::string, std::string>>& files) {
+    std::vector<uint8_t> z, cd;
+    auto put16 = [](std::vector<uint8_t>& v, uint32_t x) { v.push_back(x & 255); v.push_back((x >> 8) & 255); };
+    auto put32 = [&](std::vector<uint8_t>& v, uint32_t x) { put16(v, x & 0xFFFF); put16(v, x >> 16); };
+    for (auto& [name, data] : files) {
+        uint32_t off = (uint32_t)z.size();
+        put32(z, 0x04034b50); put16(z, 20); put16(z, 0); put16(z, 0); put16(z, 0); put16(z, 0);
+        put32(z, 0); put32(z, (uint32_t)data.size()); put32(z, (uint32_t)data.size());
+        put16(z, (uint32_t)name.size()); put16(z, 0);
+        z.insert(z.end(), name.begin(), name.end());
+        z.insert(z.end(), data.begin(), data.end());
+        put32(cd, 0x02014b50); put16(cd, 20); put16(cd, 20); put16(cd, 0); put16(cd, 0); put16(cd, 0); put16(cd, 0);
+        put32(cd, 0); put32(cd, (uint32_t)data.size()); put32(cd, (uint32_t)data.size());
+        put16(cd, (uint32_t)name.size()); put16(cd, 0); put16(cd, 0); put16(cd, 0); put16(cd, 0); put32(cd, 0); put32(cd, off);
+        cd.insert(cd.end(), name.begin(), name.end());
+    }
+    uint32_t cdOff = (uint32_t)z.size();
+    z.insert(z.end(), cd.begin(), cd.end());
+    put32(z, 0x06054b50); put16(z, 0); put16(z, 0); put16(z, (uint32_t)files.size()); put16(z, (uint32_t)files.size());
+    put32(z, (uint32_t)cd.size()); put32(z, cdOff); put16(z, 0);
+    return z;
+}
+
+static const char* kRels =
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+    "<Relationship Target=\"/3D/3dmodel.model\" Id=\"rel0\" "
+    "Type=\"http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel\"/></Relationships>";
+
+static std::string cubeObject(int id, const char* type = "model") {
+    std::string s = "<object id=\"" + std::to_string(id) + "\" type=\"" + type + "\"><mesh><vertices>";
+    for (int z = 0; z < 2; ++z)
+        for (int y = 0; y < 2; ++y)
+            for (int x = 0; x < 2; ++x)
+                s += "<vertex x=\"" + std::to_string(x) + "\" y=\"" + std::to_string(y) + "\" z=\"" + std::to_string(z) + "\" />";
+    s += "</vertices><triangles>";
+    const int f[12][3] = {{0, 2, 3}, {0, 3, 1}, {4, 5, 7}, {4, 7, 6}, {0, 1, 5}, {0, 5, 4},
+                          {2, 6, 7}, {2, 7, 3}, {0, 4, 6}, {0, 6, 2}, {1, 3, 7}, {1, 7, 5}};
+    for (auto& t : f)
+        s += "<triangle v1=\"" + std::to_string(t[0]) + "\" v2=\"" + std::to_string(t[1]) + "\" v3=\"" + std::to_string(t[2]) + "\"/>";
+    return s + "</triangles></mesh></object>";
+}
+
+static void test3mf() {
+    // Single mesh in centimetres, translated by a build item: 1 cm cube -> 10 mm at x = 50 mm.
+    std::string model = std::string("<?xml version=\"1.0\"?><model unit=\"centimeter\" xml:lang=\"en-US\" "
+                                    "xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\"><resources>") +
+                        cubeObject(1) +
+                        "</resources><build><item objectid=\"1\" transform=\"1 0 0 0 1 0 0 0 1 5 0 0\"/></build></model>";
+    auto zip = makeZip({{"[Content_Types].xml", "<Types/>"}, {"_rels/.rels", kRels}, {"3D/3dmodel.model", model}});
+    LoadResult r = parse3mf(zip.data(), zip.size());
+    CHECK(r.ok && r.soup.triangleCount() == 12);
+    vec3 lo = r.soup.positions[0], hi = lo;
+    for (auto& p : r.soup.positions) { lo = vmin(lo, p); hi = vmax(hi, p); }
+    CHECK(std::fabs(lo.x - 50) < 1e-4f && std::fabs(hi.x - 60) < 1e-4f && std::fabs(hi.z - 10) < 1e-4f);
+
+    // Bambu/Orca layout: the root object is components that live in another part (p:path),
+    // with a component transform (90 degrees about Z) chained before the build transform.
+    std::string part = std::string("<model unit=\"millimeter\" xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\">"
+                                   "<resources>") + cubeObject(7) + "</resources><build/></model>";
+    std::string root =
+        "<model unit=\"millimeter\" xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\" "
+        "xmlns:p=\"http://schemas.microsoft.com/3dmanufacturing/production/2015/06\"><resources>"
+        "<object id=\"2\" type=\"model\"><components>"
+        "<component p:path=\"/3D/Objects/object_1.model\" objectid=\"7\" transform=\"0 1 0 -1 0 0 0 0 1 0 0 0\"/>"
+        "</components></object>" +
+        cubeObject(3, "support") +
+        "</resources><build><item objectid=\"2\" transform=\"2 0 0 0 2 0 0 0 2 100 0 0\" printable=\"1\"/>"
+        "<item objectid=\"3\"/><item objectid=\"2\" printable=\"0\"/></build></model>";
+    zip = makeZip({{"_rels/.rels", kRels}, {"3D/3dmodel.model", root}, {"3D/Objects/object_1.model", part}});
+    r = parse3mf(zip.data(), zip.size());
+    CHECK(r.ok && r.soup.triangleCount() == 12);  // support object and non-printable item left out
+    lo = r.soup.positions[0];
+    hi = lo;
+    for (auto& p : r.soup.positions) { lo = vmin(lo, p); hi = vmax(hi, p); }
+    // Rotating the unit cube +90 degrees about Z maps x in [0,1] to y in [0,1] and y to x in [-1,0];
+    // scaling by 2 and moving +100 in x gives x in [98,100], y in [0,2].
+    CHECK(std::fabs(lo.x - 98) < 1e-4f && std::fabs(hi.x - 100) < 1e-4f);
+    CHECK(std::fabs(lo.y) < 1e-4f && std::fabs(hi.y - 2) < 1e-4f && std::fabs(hi.z - 2) < 1e-4f);
+    CHECK(r.warnings.size() >= 2);
+
+    // Out-of-range indices are dropped with a warning; a missing model part is an error.
+    std::string bad = "<model><resources><object id=\"1\"><mesh><vertices><vertex x=\"0\" y=\"0\" z=\"0\"/>"
+                      "<vertex x=\"1\" y=\"0\" z=\"0\"/><vertex x=\"0\" y=\"1\" z=\"0\"/></vertices><triangles>"
+                      "<triangle v1=\"0\" v2=\"1\" v3=\"2\"/><triangle v1=\"0\" v2=\"1\" v3=\"9\"/></triangles></mesh></object>"
+                      "</resources><build><item objectid=\"1\"/></build></model>";
+    zip = makeZip({{"3D/3dmodel.model", bad}});  // no _rels: falls back to the standard part name
+    r = parse3mf(zip.data(), zip.size());
+    CHECK(r.ok && r.soup.triangleCount() == 1 && !r.warnings.empty());
+    zip = makeZip({{"readme.txt", "hello"}});
+    r = parse3mf(zip.data(), zip.size());
+    CHECK(!r.ok && !r.error.empty());
+    const uint8_t junk[40] = {'P', 'K', 3, 4};
+    r = parse3mf(junk, sizeof(junk));
+    CHECK(!r.ok);
+}
+
 int main() {
     testParsing();
     testProcessing();
     testScene();
     testTurntable();
     testEnvironment();
+    test3mf();
     if (g_failures) {
         std::printf("%d check(s) failed\n", g_failures);
         return 1;

@@ -1,5 +1,7 @@
-"""Writes test STL files: a twisted vase (binary), a torus (ASCII) and a cube
-with inverted winding (binary, header starting with "solid").
+"""Writes test models: a twisted vase (binary STL), a torus (ASCII STL), a cube
+with inverted winding (binary STL whose header starts with "solid"), and two
+deflate-compressed 3MFs - a plain one, and one laid out like Bambu Studio /
+OrcaSlicer files (objects in a separate part referenced through p:path).
 
     python tools/make_test_models.py OUTDIR
 """
@@ -7,6 +9,7 @@ import math
 import os
 import struct
 import sys
+import zipfile
 
 
 def vase(seg=160, rings=120, h=120.0):
@@ -79,12 +82,74 @@ def write_ascii(path, tris):
         f.write("endsolid torus\n")
 
 
+CORE_NS = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02"
+PROD_NS = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06"
+RELS = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    '<Relationship Target="/3D/3dmodel.model" Id="rel0" '
+    'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'
+)
+CONTENT_TYPES = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>'
+)
+
+
+def mesh_object(obj_id, tris):
+    """Indexed <object> for a triangle soup (vertices deduplicated)."""
+    index, verts, out = {}, [], []
+    for t in tris:
+        ids = []
+        for p in t:
+            key = tuple(round(c, 5) for c in p)
+            if key not in index:
+                index[key] = len(verts)
+                verts.append(key)
+            ids.append(index[key])
+        out.append(ids)
+    v = "".join('<vertex x="%g" y="%g" z="%g"/>' % p for p in verts)
+    t = "".join('<triangle v1="%d" v2="%d" v3="%d"/>' % tuple(i) for i in out)
+    return '<object id="%d" type="model"><mesh><vertices>%s</vertices><triangles>%s</triangles></mesh></object>' % (
+        obj_id, v, t)
+
+
+def write_3mf(path, files):
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", CONTENT_TYPES)
+        z.writestr("_rels/.rels", RELS)
+        for name, data in files.items():
+            z.writestr(name, data)
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "."
     os.makedirs(out, exist_ok=True)
     write_binary(os.path.join(out, "vase.stl"), vase())
     write_ascii(os.path.join(out, "torus.stl"), torus())
     write_binary(os.path.join(out, "inverted_cube.stl"), inverted_cube(), b"solid but actually binary")
+    # Plain 3MF in centimetres: the vase at 1/10 scale numbers, i.e. the same size in mm.
+    vase_cm = [tuple(tuple(c / 10 for c in p) for p in t) for t in vase()]
+    write_3mf(os.path.join(out, "vase.3mf"), {
+        "3D/3dmodel.model": '<?xml version="1.0" encoding="UTF-8"?>\n<model unit="centimeter" xmlns="%s">'
+                            '<resources>%s</resources><build><item objectid="1"/></build></model>'
+                            % (CORE_NS, mesh_object(1, vase_cm)),
+    })
+    # Bambu-style: two torus instances placed by components that live in another part.
+    write_3mf(os.path.join(out, "plate.3mf"), {
+        "3D/Objects/object_1.model": '<model unit="millimeter" xmlns="%s"><resources>%s</resources><build/></model>'
+                                     % (CORE_NS, mesh_object(1, torus())),
+        "3D/3dmodel.model": '<model unit="millimeter" xmlns="%s" xmlns:p="%s"><resources>'
+                            '<object id="2" type="model"><components>'
+                            '<component p:path="/3D/Objects/object_1.model" objectid="1" transform="1 0 0 0 1 0 0 0 1 -45 0 0"/>'
+                            '<component p:path="/3D/Objects/object_1.model" objectid="1" '
+                            'transform="0 0 1 0 1 0 -1 0 0 45 0 40"/>'
+                            '</components></object></resources>'
+                            '<build><item objectid="2" transform="1 0 0 0 1 0 0 0 1 128 128 0" printable="1"/></build>'
+                            '</model>' % (CORE_NS, PROD_NS),
+    })
     print("wrote test models to", out)
 
 

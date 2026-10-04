@@ -474,7 +474,7 @@ void App::loadModel(const std::string& path) {
     appliedMeshOptions_ = opts;
     if (modelWorker_.joinable()) modelWorker_.join();
     modelWorker_ = std::thread([this, path, opts] {
-        pendingLoad_ = loadStlFile(path, &modelProgress_);
+        pendingLoad_ = loadModelFile(path, &modelProgress_);
         if (pendingLoad_.ok && !modelProgress_.cancel) pendingMesh_ = processMesh(pendingLoad_.soup, opts);
         modelReady_ = true;
         PostMessageW(hwnd_, WM_NULL, 0, 0);  // wake the message loop
@@ -611,7 +611,8 @@ void App::notify(const std::string& message) {
 }
 
 void App::openModelDialog() {
-    std::string p = openFileDialog(hwnd_, L"STL models (*.stl)\0*.stl\0All files\0*.*\0", L"Open STL");
+    std::string p = openFileDialog(hwnd_, L"3D models (*.stl;*.3mf)\0*.stl;*.3mf\0STL (*.stl)\0*.stl\0"
+                                          L"3MF (*.3mf)\0*.3mf\0All files\0*.*\0", L"Open model");
     if (!p.empty()) loadModel(p);
 }
 
@@ -639,7 +640,7 @@ void App::savePreset() {
 
 void App::handleDroppedFile(const std::string& path) {
     std::string ext = extensionOf(path);
-    if (ext == ".stl") loadModel(path);
+    if (isSupportedModelExtension(path)) loadModel(path);
     else if (ext == ".hdr" || ext == ".exr") scene_.environment.source = path;
     else if (ext == ".json") {
         Scene s = scene_;
@@ -668,7 +669,7 @@ void App::frameModel() {
 float App::startAzimuth() const { return scene_.turntable.startFromViewport ? cam_.azimuth : scene_.turntable.startAngle; }
 
 void App::startExport() {
-    if (!renderer_.hasMesh()) return showError("Open an STL file first.");
+    if (!renderer_.hasMesh()) return showError("Open an STL or 3MF file first.");
     if (exporter_.active()) return;
     Format f = scene_.output.format;
     if (formatNeedsFfmpeg(f) && settings_.ffmpegPath.empty()) {
@@ -931,7 +932,7 @@ void App::frame() {
     // Hints over an empty viewport.
     ImDrawList* fg = ImGui::GetForegroundDrawList();
     if (!renderer_.hasMesh() && !modelBusy_) {
-        const char* hint = "Drop an STL file here, or press Ctrl+O";
+        const char* hint = "Drop an STL or 3MF file here, or press Ctrl+O";
         ImVec2 ts = ImGui::CalcTextSize(hint);
         fg->AddText(ImVec2(vpSize.x * 0.5f - ts.x * 0.5f, vpSize.y * 0.5f - ts.y * 0.5f), IM_COL32(220, 220, 225, 220), hint);
     }
@@ -1020,7 +1021,7 @@ void App::drawPanel(float x, float y, float w, float h) {
     ImGui::PushItemWidth(-ImGui::GetFontSize() * 8.5f);
 
     float bw = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x * 2) / 3;
-    if (ImGui::Button("Open STL...", ImVec2(bw, 0))) openModelDialog();
+    if (ImGui::Button("Open model...", ImVec2(bw, 0))) openModelDialog();
     ImGui::SameLine();
     if (ImGui::Button("Load preset", ImVec2(bw, 0))) loadPreset();
     ImGui::SameLine();

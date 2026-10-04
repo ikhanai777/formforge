@@ -47,6 +47,8 @@ jobs:
           Run @('still', 'models/inverted_cube.stl', '-o', 'out/still_transparent.png', '--gpu', 'warp', '--res', '640x640', '--material', 'White marble', '--transparent')
           Run @('render', 'models/vase.stl', '-o', 'out/turntable.mp4', '--gpu', 'warp', '--res', '640x360', '--fps', '30', '--seconds', '2', '--quality', 'draft')
           Run @('render', 'models/torus.stl', '-o', 'out/turntable.gif', '--gpu', 'warp', '--res', '320x320', '--fps', '15', '--seconds', '2', '--quality', 'draft', '--material', 'Silk PLA')
+          Run @('still', 'models/vase.3mf', '-o', 'out/still_3mf.png', '--gpu', 'warp', '--res', '640x480', '--material', 'Silk PLA')
+          Run @('render', 'models/plate.3mf', '-o', 'out/plate_3mf.mp4', '--gpu', 'warp', '--res', '640x360', '--fps', '30', '--seconds', '1', '--quality', 'draft')
           Run @('render', 'models/vase.stl', '-o', 'out/frames/vase.png', '--gpu', 'warp', '--res', '320x240', '--fps', '10', '--seconds', '1', '--quality', 'standard', '--transparent')
           # Error paths must fail cleanly with the documented exit codes.
           & $exe render models/missing.stl -o out/x.mp4 --gpu warp

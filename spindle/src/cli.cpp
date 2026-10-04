@@ -59,9 +59,10 @@ static void usage() {
         "Spindle - STL viewer and turntable renderer\n"
         "\n"
         "Usage:\n"
-        "  Spindle [model.stl]                         open the viewer\n"
-        "  Spindle render model.stl -o out.mp4 [opts]  render a turntable without a window\n"
-        "  Spindle still  model.stl -o out.png [opts]  render one image\n"
+        "  Spindle [model.stl|model.3mf]               open the viewer\n"
+        "  Spindle render MODEL -o out.mp4 [opts]      render a turntable without a window\n"
+        "  Spindle still  MODEL -o out.png [opts]      render one image\n"
+        "  MODEL is an .stl or .3mf file.\n"
         "  Spindle --list-gpus\n"
         "\n"
         "Options:\n"
@@ -123,7 +124,7 @@ static int prepare(CliContext& c, const std::string& stlPath, const std::string&
         return 3;
     }
 
-    LoadResult lr = loadStlFile(stlPath);
+    LoadResult lr = loadModelFile(stlPath);
     if (!lr.ok) {
         std::fprintf(stderr, "error: %s: %s\n", stlPath.c_str(), lr.error.c_str());
         return 2;

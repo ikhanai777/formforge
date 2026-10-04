@@ -123,7 +123,7 @@ bool Exporter::start(Renderer& renderer, const ExportJob& job, std::string& erro
     const Scene& s = job_.scene;
     const OutputSettings& o = s.output;
     if (!renderer.hasMesh()) {
-        error = "Load an STL file first.";
+        error = "Load an STL or 3MF file first.";
         return false;
     }
     total_ = s.turntable.frameCount();
