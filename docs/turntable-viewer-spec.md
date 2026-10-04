@@ -1,6 +1,6 @@
 # Spindle: STL viewer and turntable renderer for Windows
 
-Spec v1.0. Status: draft. Working name: **Spindle**.
+Spec v1.0. Status: implemented as v0.1 in [`spindle/`](../spindle/); §16 lists where the build differs. Working name: **Spindle**.
 
 A small Windows desktop app that opens any STL file, shows it in 3D with good
 materials and lighting, and exports a 360° turntable video. One window, one
@@ -475,3 +475,39 @@ Unknown keys are ignored, missing keys get default values, and `version` control
   FormForge already exports, so this is cheap to add and is the most likely request.
 - Is a watermark or text overlay (part name and dimensions) wanted on exported
   videos? It is trivial to add in the tonemap pass.
+
+---
+
+## 16. Implementation notes (v0.1)
+
+The build in `spindle/` follows this spec except for the points below. Each one
+was a deliberate trade-off, not an omission found later.
+
+| Spec | v0.1 | Why |
+|---|---|---|
+| Shaders precompiled with `fxc` (§3) | Compiled at first start by `d3dcompiler_47.dll` (part of Windows 10), then cached in `%LOCALAPPDATA%\Spindle\shadercache` | No Windows SDK step in the build; first start costs about 1–2 s once |
+| Bundled Poly Haven HDRIs and texture sets (§5.3, §6.1) | 8 procedural environments and 5 procedural patterns generated at runtime; users can load any `.hdr` or image | The app stays one small exe with no asset folder |
+| OpenEXR input (§6.1) | `.hdr` only | Avoids another dependency |
+| GTAO (§6.3) | Hemisphere SSAO with a depth-aware blur, rotated per accumulation sample | Simpler; with accumulation the noise averages out |
+| Triplanar normal maps (§5.3) | Triplanar colour only | Procedural bumps (layer lines, noise) cover the main need |
+| STL vertex colours (§4.1) | Ignored | Rarely present; would need a second vertex stream |
+| "Flip normals" action (§4.2) | Not needed | The shader orients every normal towards the viewer using the geometric normal, so inverted or inconsistent winding always shades correctly |
+| Back-face thickness pass for clear resin (§5.4) | Single pass with a fixed tint | Same visual class of approximation, one pass cheaper |
+| NV12 conversion in a compute shader (§8) | On the encoder thread (CPU) | Keeps the GPU path simple; the CPU has headroom while the GPU renders |
+| `Spindle.exe render …` from a console (§9) | `Spindle.com` (console build) sits next to `Spindle.exe`, so `Spindle render …` in cmd/PowerShell resolves to it and the shell waits for it | A GUI-subsystem exe returns to the prompt immediately |
+| Opt-in file association (§3) | Not implemented | "Open with" and drag-and-drop cover it |
+| Environment cubemap mips via `GenerateMips` | Each cube mip is rendered straight from the matching equirect mip | Some drivers leave generated cube mips empty |
+| Light rig angles | Relative to the camera's start azimuth | The rig frames the subject the same way whatever the start angle; in orbit-camera mode it stays fixed to the model |
+
+**What has been verified, and how**
+
+- *Core* (loader, welding, normals, presets, turntable timing, environments):
+  unit tests, run natively and under Wine.
+- *Renderer, GUI, GIF and PNG export*: cross-compiled with MinGW and run under
+  Wine (wined3d on Mesa llvmpipe), with Microsoft's real `d3dcompiler_47.dll`.
+  Images were inspected by eye.
+- *MSVC build, Media Foundation MP4, WARP renders, GUI screenshot*: GitHub
+  Actions on `windows-2022` (`.github/workflows/spindle.yml`).
+- *Not yet verified*: performance on the target K5100M laptop (the targets in
+  §4.3 and §7.5 are still estimates), Intel Quick Sync encoding, and recovery
+  from a real driver reset.

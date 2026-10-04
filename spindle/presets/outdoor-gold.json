@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "material": { "preset": "Gold" },
+  "environment": {
+    "source": "Sunset",
+    "background": "environment",
+    "backgroundBlur": 0.5,
+    "ground": "floor",
+    "floorColor": [0.35, 0.3, 0.27],
+    "floorRoughness": 0.8
+  },
+  "camera": { "focalLength": 50, "elevation": 15, "fill": 0.75 },
+  "turntable": { "mode": "orbit_camera", "seconds": 8, "fps": 30 },
+  "output": { "format": "mp4", "width": 1920, "height": 1080, "quality": "standard" }
+}

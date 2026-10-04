@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "material": { "preset": "Polished chrome" },
+  "environment": {
+    "source": "Studio Dark",
+    "rotation": 35,
+    "background": "solid",
+    "backgroundColor": [0.05, 0.05, 0.06],
+    "ground": "reflective",
+    "floorColor": [0.06, 0.06, 0.07],
+    "floorRoughness": 0.1,
+    "reflection": 0.5,
+    "lights": { "enabled": true, "intensity": 2.5 }
+  },
+  "camera": { "focalLength": 85, "elevation": 12, "fill": 0.75 },
+  "turntable": { "mode": "rotate_object", "seconds": 10, "fps": 30 },
+  "output": { "format": "mp4", "width": 1920, "height": 1080, "quality": "high" }
+}

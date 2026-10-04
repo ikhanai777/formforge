@@ -1,0 +1,98 @@
+name: Spindle (Windows)
+
+on:
+  push:
+    paths: ["spindle/**", ".github/workflows/spindle.yml"]
+  pull_request:
+    paths: ["spindle/**", ".github/workflows/spindle.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    defaults:
+      run:
+        working-directory: spindle
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (MSVC, x64)
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Unit tests
+        run: ./build/Release/spindle_tests.exe
+
+      - name: Generate test models
+        run: python tools/make_test_models.py models
+
+      # Hosted runners have no GPU: WARP (the Direct3D CPU rasteriser) runs the
+      # same shaders through the real HLSL compiler and the real Media Foundation.
+      - name: Smoke renders (WARP)
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force out | Out-Null
+          $exe = "./build/Release/Spindle.com"
+          function Run([string[]]$a) {
+            & $exe @a
+            if ($LASTEXITCODE -ne 0) { throw "Spindle $($a -join ' ') exited with $LASTEXITCODE" }
+          }
+          Run @('--version')
+          Run @('--list-gpus')
+          Run @('still', 'models/vase.stl', '-o', 'out/still_gold.png', '--gpu', 'warp', '--res', '960x540', '--material', 'Gold', '--quality', 'standard')
+          Run @('still', 'models/torus.stl', '-o', 'out/still_reflective.png', '--gpu', 'warp', '--res', '960x540', '--preset', 'presets/reflective-dark.json', '--quality', 'standard')
+          Run @('still', 'models/inverted_cube.stl', '-o', 'out/still_transparent.png', '--gpu', 'warp', '--res', '640x640', '--material', 'White marble', '--transparent')
+          Run @('render', 'models/vase.stl', '-o', 'out/turntable.mp4', '--gpu', 'warp', '--res', '640x360', '--fps', '30', '--seconds', '2', '--quality', 'draft')
+          Run @('render', 'models/torus.stl', '-o', 'out/turntable.gif', '--gpu', 'warp', '--res', '320x320', '--fps', '15', '--seconds', '2', '--quality', 'draft', '--material', 'Silk PLA')
+          Run @('render', 'models/vase.stl', '-o', 'out/frames/vase.png', '--gpu', 'warp', '--res', '320x240', '--fps', '10', '--seconds', '1', '--quality', 'standard', '--transparent')
+          # Error paths must fail cleanly with the documented exit codes.
+          & $exe render models/missing.stl -o out/x.mp4 --gpu warp
+          if ($LASTEXITCODE -ne 2) { throw "missing file should exit 2, got $LASTEXITCODE" }
+          & $exe render models/vase.stl -o out/x.mp4 --res 641x360 --gpu warp
+          if ($LASTEXITCODE -ne 1) { throw "odd MP4 size should exit 1, got $LASTEXITCODE" }
+
+      - name: Check outputs
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mp4 = Get-Item out/turntable.mp4
+          if ($mp4.Length -lt 10000) { throw "MP4 too small: $($mp4.Length) bytes" }
+          $head = [System.IO.File]::ReadAllBytes($mp4.FullName)[4..7]
+          if ([System.Text.Encoding]::ASCII.GetString($head) -ne 'ftyp') { throw 'MP4 has no ftyp box' }
+          if (Test-Path out/turntable.partial.mp4) { throw 'temporary file left behind' }
+          $gif = [System.IO.File]::ReadAllBytes((Resolve-Path out/turntable.gif))[0..5]
+          if ([System.Text.Encoding]::ASCII.GetString($gif) -ne 'GIF89a') { throw 'bad GIF header' }
+          $frames = (Get-ChildItem out/frames -Filter 'vase_*.png').Count
+          if ($frames -ne 10) { throw "expected 10 PNG frames, got $frames" }
+          Get-ChildItem out -Recurse | Format-Table Name, Length
+
+      - name: GUI screenshot (WARP)
+        run: |
+          $p = Start-Process -FilePath ./build/Release/Spindle.exe -PassThru -ArgumentList @(
+            'models/vase.stl', '--gpu', 'warp', '--screenshot', 'out/gui.png', '--screenshot-after', '60')
+          if (-not $p.WaitForExit(240000)) { $p.Kill(); throw 'GUI did not exit' }
+          if (-not (Test-Path out/gui.png)) { throw 'no GUI screenshot' }
+          Get-Content "$env:APPDATA/Spindle/log.txt" -Tail 20
+
+      - name: Package
+        run: |
+          New-Item -ItemType Directory -Force dist/Spindle | Out-Null
+          Copy-Item build/Release/Spindle.exe, build/Release/Spindle.com, README.md dist/Spindle/
+          Copy-Item -Recurse presets dist/Spindle/presets
+          New-Item -ItemType Directory -Force dist/Spindle/licenses | Out-Null
+          Copy-Item third_party/imgui/LICENSE.txt dist/Spindle/licenses/imgui.txt
+          Copy-Item third_party/stb/LICENSE dist/Spindle/licenses/stb.txt
+          Copy-Item third_party/nlohmann/LICENSE.MIT dist/Spindle/licenses/nlohmann-json.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Spindle-windows-x64
+          path: spindle/dist/Spindle
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-test-output
+          path: spindle/out

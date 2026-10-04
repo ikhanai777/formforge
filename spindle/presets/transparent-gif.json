@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "material": { "preset": "Silk PLA" },
+  "environment": { "source": "Studio High-Key", "background": "transparent", "ground": "shadow_catcher" },
+  "camera": { "focalLength": 50, "elevation": 20, "fill": 0.85 },
+  "turntable": { "seconds": 4, "fps": 25 },
+  "output": { "format": "gif", "width": 600, "height": 600, "quality": "standard" }
+}

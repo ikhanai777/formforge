@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "material": { "preset": "Matte PLA", "layerLines": { "enabled": true, "height": 0.2, "depth": 0.35 } },
+  "environment": {
+    "source": "Studio Softbox",
+    "background": "solid",
+    "backgroundColor": [0.94, 0.94, 0.95],
+    "ground": "shadow_catcher"
+  },
+  "camera": { "focalLength": 60, "elevation": 20, "fill": 0.8 },
+  "turntable": { "mode": "rotate_object", "seconds": 6, "fps": 30, "easing": "linear" },
+  "output": { "format": "mp4", "width": 1280, "height": 720, "quality": "standard" }
+}
