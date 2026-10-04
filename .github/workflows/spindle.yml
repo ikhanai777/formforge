@@ -53,6 +53,7 @@ jobs:
           if ($LASTEXITCODE -ne 2) { throw "missing file should exit 2, got $LASTEXITCODE" }
           & $exe render models/vase.stl -o out/x.mp4 --res 641x360 --gpu warp
           if ($LASTEXITCODE -ne 1) { throw "odd MP4 size should exit 1, got $LASTEXITCODE" }
+          exit 0  # the deliberate failures above left $LASTEXITCODE non-zero
 
       - name: Check outputs
         run: |
