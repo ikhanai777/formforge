@@ -4,6 +4,9 @@ A small Windows app that opens STL and 3MF files, shows them with good materials
 and lighting, and renders a 360° turntable video. It has one window, one model and
 one export button.
 
+There is also an **Android version** with the same renderer, ported to OpenGL
+ES 3.0. To install the APK, see [`android/README.md`](android/README.md).
+
 It implements [`docs/turntable-viewer-spec.md`](../docs/turntable-viewer-spec.md).
 It is tuned for a 2014 mobile workstation (Quadro K5100M, Kepler, 8 GB; i7-4910MQ;
 Windows 10), and runs on any Direct3D 11 GPU, including integrated graphics.
@@ -149,6 +152,9 @@ Exit codes: 0 ok, 1 usage, 2 load error, 3 GPU error, 4 encode error.
 | `src/encoders.*` | Media Foundation H.264, PNG, GIF, ffmpeg pipe |
 | `src/app.cpp` | Win32 window, ImGui panel, viewport, async loading, device-loss recovery |
 | `src/cli.*` | `render` / `still` / `--list-gpus` |
+| `src/sampling.*`, `src/frame_plan.*` | Per-sample camera/jitter and per-frame constants, shared by both renderers |
+| `src/gles/*` | OpenGL ES 3.0 renderer and exporter (Android) |
+| `android/` | Android app: native viewer core, MP4 via MediaCodec, Java UI |
 
 The platform-neutral core (`mesh`, `scene`, `camera`, `environment`) has unit
 tests in `tests/test_core.cpp`. They build and run on Linux too:

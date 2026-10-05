@@ -5,6 +5,10 @@
 #include <ctime>
 #include <mutex>
 
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -79,6 +83,9 @@ void logf(const char* fmt, ...) {
 #ifdef _WIN32
     OutputDebugStringA(buf);
     OutputDebugStringA("\n");
+#endif
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_INFO, "Spindle", "%s", buf);
 #endif
 }
 

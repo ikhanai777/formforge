@@ -1,4 +1,5 @@
-"""Generates src/spindle.ico (a turntable platter with an object on it).
+"""Generates src/spindle.ico (a turntable platter with an object on it) and the
+Android launcher icons (android/app/src/main/res/mipmap-*/ic_launcher.png).
 
 Pure Python, no dependencies: rasterises with 4x4 supersampling and writes a
 multi-size ICO of 32-bit BMP images. Run: python tools/make_icon.py
@@ -77,7 +78,34 @@ def bmp_entry(s):
     return header + bytes(data)
 
 
+def png_bytes(s):
+    import zlib
+    px = render(s)
+    raw = bytearray()
+    for j in range(s):
+        raw.append(0)
+        for i in range(s):
+            (r, g, b), a = px[j][i]
+            raw += bytes([int(r * 255 + 0.5), int(g * 255 + 0.5), int(b * 255 + 0.5), int(a * 255 + 0.5)])
+
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", s, s, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
+
+
+ANDROID_SIZES = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
+
+
 def main():
+    res = os.path.join(os.path.dirname(__file__), "..", "android", "app", "src", "main", "res")
+    for density, size in ANDROID_SIZES.items():
+        d = os.path.join(res, "mipmap-" + density)
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "ic_launcher.png"), "wb") as f:
+            f.write(png_bytes(size))
+    print("wrote Android launcher icons")
     images = [bmp_entry(s) for s in SIZES]
     out = struct.pack("<HHH", 0, 1, len(images))
     offset = 6 + 16 * len(images)

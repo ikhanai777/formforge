@@ -1,0 +1,70 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.spindle.app'
+    compileSdk 35
+
+    // CI runners ship an NDK; use it rather than downloading another.
+    def ndkDir = System.getenv("ANDROID_NDK_LATEST_HOME") ?: System.getenv("ANDROID_NDK_HOME")
+    if (ndkDir) {
+        ndkPath ndkDir
+    }
+
+    defaultConfig {
+        applicationId 'com.spindle.app'
+        minSdk 26          // MediaCodec input surfaces from native code
+        targetSdk 35
+        versionCode((System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInteger())
+        versionName "0.1." + versionCode
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_static'
+            }
+        }
+    }
+
+    // A dedicated key for sideloaded builds, committed on purpose so every build
+    // has the same signature and installs over the previous one. It is not a
+    // secret and must not be used for a store listing (see android/README.md).
+    signingConfigs {
+        sideload {
+            storeFile file('../keystore/spindle-sideload.p12')
+            storePassword 'spindle-sideload'
+            keyAlias 'spindle'
+            keyPassword 'spindle-sideload'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.sideload
+        }
+        debug {
+            signingConfig signingConfigs.sideload
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'src/main/cpp/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging false
+        }
+    }
+}

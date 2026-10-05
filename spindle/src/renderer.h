@@ -4,8 +4,10 @@
 
 #include "camera.h"
 #include "environment.h"
+#include "frame_plan.h"
 #include "gpu.h"
 #include "mesh.h"
+#include "sampling.h"
 #include "scene.h"
 
 #include <memory>
@@ -22,17 +24,6 @@ struct RenderTargets {
     void release() { *this = RenderTargets(); }
 };
 
-struct SampleInput {
-    View view;
-    float objectAngle = 0;  // radians about Z
-    int sampleIndex = 0;    // 0 = first sample (clears the accumulation buffer, no jitter)
-    bool fullQuality = true;  // false: skip AO and soft-shadow jitter (camera moving)
-    // Light-rig azimuths are relative to this (degrees): the viewport passes its
-    // camera azimuth, an export passes the fixed start azimuth, so in orbit-camera
-    // mode the lights stay put relative to the model.
-    float lightReferenceAzimuth = 0;
-    float explode = 0;  // global explode amount 0..1 (see explodeAmountAt)
-};
 
 class Renderer {
 public:
@@ -68,16 +59,12 @@ public:
     ID3D11DeviceContext* context() const { return ctx_; }
 
 private:
-    struct FrameConstants;
-    struct MaterialConstants;
     std::unique_ptr<FrameConstants> frame_;  // last uploaded frame constants
+    RenderContext renderContext() const;
 
     bool createShaders(std::string& error);
     bool createStates(std::string& error);
     bool createBrdfLut(std::string& error);
-    void fillFrame(FrameConstants& f, const RenderTargets& rt, const Scene& s, const SampleInput& in, const mat4& world,
-                   const mat4& lightViewProj, const vec3& keyDir, float keyIntensity, float envShadow);
-    void fillMaterial(MaterialConstants& m, const Scene& s);
     void updateFrame(const FrameConstants& f);
     void drawMesh();
     void bindCommon();
@@ -119,7 +106,5 @@ private:
     DXGI_FORMAT accumFormat_ = DXGI_FORMAT_R32G32B32A32_FLOAT;
 };
 
-// sRGB (as shown in colour pickers) to linear.
-vec3 srgbToLinear(const vec3& c);
 
 }  // namespace spindle

@@ -1,0 +1,106 @@
+name: Spindle (Android)
+
+on:
+  push:
+    paths: ["spindle/**", ".github/workflows/spindle-android.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # to publish the APK as a release download
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The GL ES renderer and the viewer core are checked on Mesa (llvmpipe)
+      # before anything is built for a phone.
+      - name: Desktop GLES tests (Mesa)
+        working-directory: spindle
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libegl-dev libgles-dev libegl1-mesa-dev libgl1-mesa-dri > /dev/null
+          python3 tools/make_test_models.py models
+          CORE="src/common.cpp src/mesh.cpp src/model3mf.cpp src/scene.cpp src/camera.cpp src/environment.cpp"
+          GL="src/gles/gl_renderer.cpp src/gles/gl_shaders.cpp src/gles/gl_exporter.cpp src/frame_plan.cpp src/sampling.cpp"
+          g++ -std=c++17 -O2 -pthread -Isrc tests/test_core.cpp $CORE -o test_core && ./test_core
+          g++ -std=c++17 -O2 -pthread -Isrc tests/gles_harness.cpp $GL $CORE -lEGL -lGLESv2 -o gles_harness
+          g++ -std=c++17 -O2 -pthread -Isrc -Iandroid/app/src/main/cpp tests/viewer_core_test.cpp \
+              android/app/src/main/cpp/viewer_core.cpp $GL $CORE -lEGL -lGLESv2 -o viewer_core_test
+          mkdir -p out
+          ./gles_harness models/gearbox.3mf out/gles_gearbox.png --res 640x480
+          ./gles_harness models/robot_bambu.3mf out/gles_robot.png --res 480x480 --explode 1 --gif out/gles_robot.gif 12
+          ./viewer_core_test models/robot_bambu.3mf out
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Build APK
+        working-directory: spindle/android
+        run: ./gradlew --no-daemon --stacktrace assembleRelease
+
+      - name: Verify signature
+        working-directory: spindle/android
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --print-certs "$APK"
+          "$BT/aapt2" dump badging "$APK" | head -5
+          mkdir -p dist && cp "$APK" dist/Spindle.apk
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Spindle-android-apk
+          path: spindle/android/dist/Spindle.apk
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-desktop-gles-output
+          path: spindle/out
+
+      - name: Publish as a direct download
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=spindle-android-latest
+          gh release delete "$TAG" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY" || true
+          gh release create "$TAG" spindle/android/dist/Spindle.apk --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease --title "Spindle for Android (latest build)" \
+            --notes "Built from ${GITHUB_SHA::7} on ${GITHUB_REF_NAME}. Download Spindle.apk on your phone and open it to install (allow installs from your browser or file manager when Android asks). Requires Android 8.0+ and OpenGL ES 3.0."
+
+  emulator:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: Spindle-android-apk
+          path: apk
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Test models
+        run: python3 spindle/tools/make_test_models.py models
+      - name: Run the app on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: google_apis
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash spindle/android/ci/emulator-test.sh apk/Spindle.apk models/gearbox.3mf emulator-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-emulator-output
+          path: emulator-out

@@ -1,45 +1,16 @@
 #include "renderer.h"
 
+#include "frame_plan.h"
+
 #include <cstring>
 
 namespace spindle {
-
-// Mirrors cbuffer FrameCB in shaders.hlsl, member for member.
-struct Renderer::FrameConstants {
-    mat4 viewProj, view, proj, projInv, invViewProj, lightViewProj, world, mirror;
-    float eye[4], forward[4], screen[4];
-    float keyDir[4], keyColor[4], fillDir[4], fillColor[4], rimDir[4], rimColor[4];
-    float env[4];
-    float sh[9][4];
-    float background[4], bgColor[4], bgColor2[4];
-    float ground[4], floorColor[4];
-    float ao[4], shadow[4], tone[4], model[4], pass[4];
-};
-
-// Mirrors cbuffer MaterialCB.
-struct Renderer::MaterialConstants {
-    float base[4], pbr[4], trans[4], transTint[4], layer[4], noise[4], pattern[4], patternColor[4], gradient[4],
-        gradientRange[4], wire[4], fileFlags[4];
-};
 
 struct BakeConstants {
     float face[4];
 };
 
 static_assert(sizeof(mat4) == 64, "mat4 must be 16 packed floats");
-
-static void set4(float* d, float x, float y, float z, float w) {
-    d[0] = x;
-    d[1] = y;
-    d[2] = z;
-    d[3] = w;
-}
-static void set4(float* d, const vec3& v, float w) { set4(d, v.x, v.y, v.z, w); }
-
-static float srgbToLinear1(float c) {
-    return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
-}
-vec3 srgbToLinear(const vec3& c) { return {srgbToLinear1(c.x), srgbToLinear1(c.y), srgbToLinear1(c.z)}; }
 
 static uint16_t floatToHalf(float f) {
     uint32_t x;
@@ -69,10 +40,27 @@ static vec3 dirFromAzEl(float azDeg, float elDeg) {
 
 Renderer::Renderer() : frame_(new FrameConstants()) {}
 
-float Renderer::framingRadius(const Scene& s) const {
-    if (parts_.size() < 2 || !(s.explode.animate || s.explode.manual > 0)) return sphereRadius_;
-    return explodedRadius(parts_, sphereCenter_, sphereRadius_, s.explode.distance);
+float Renderer::framingRadius(const Scene& s) const { return framingRadiusFor(renderContext(), s); }
+
+RenderContext Renderer::renderContext() const {
+    RenderContext c;
+    c.hasMesh = indexCount_ > 0;
+    c.hasUserTexture = (bool)userSRV_;
+    c.sphereCenter = sphereCenter_;
+    c.sphereRadius = sphereRadius_;
+    c.minZ = meshMinZ_;
+    c.maxZ = meshMaxZ_;
+    c.parts = parts_;
+    for (int i = 0; i < 9; ++i) c.sh[i] = sh_[i];
+    c.envDominantDir = envDominantDir_;
+    c.envDominantColor = envDominantColor_;
+    c.envDirectionality = envDirectionality_;
+    c.specMips = specMips_;
+    c.envMips = envMips_;
+    c.shadowMapSize = shadowSize_;
+    return c;
 }
+
 Renderer::~Renderer() { shutdown(); }
 
 #define TRY(expr, what)                                  \
@@ -626,143 +614,26 @@ void Renderer::updateFrame(const FrameConstants& f) {
     *frame_ = f;
 }
 
-void Renderer::fillMaterial(MaterialConstants& c, const Scene& s) {
-    const MaterialSettings& m = s.material;
-    std::memset(&c, 0, sizeof(c));
-    set4(c.base, srgbToLinear(m.baseColor), clampf(m.roughness, 0, 1));
-    set4(c.pbr, clampf(m.metalness, 0, 1), clampf(m.clearcoat, 0, 1), clampf(m.clearcoatRoughness, 0, 1), clampf(m.sheen, 0, 1));
-    set4(c.trans, clampf(m.transmission, 0, 1), std::max(1.0f, m.ior), 0, 0);
-    set4(c.transTint, srgbToLinear(m.transmissionTint), 0);
-    set4(c.layer, m.layerLines ? 1.0f : 0.0f, std::max(0.01f, m.layerHeight), clampf(m.layerDepth, 0, 1), 0);
-    set4(c.noise, std::max(0.0f, m.noiseStrength), std::max(0.001f, m.noiseScale), std::max(0.001f, m.noiseStretch), 0);
-    int pattern = (int)m.pattern;
-    if (m.pattern == Pattern::Image && !userSRV_) pattern = 0;
-    set4(c.pattern, (float)pattern, std::max(0.01f, m.patternScale), clampf(m.patternStrength, 0, 1),
-         clampf(m.triplanarSharpness, 1, 32));
-    set4(c.patternColor, srgbToLinear(m.patternColor), 0);
-    set4(c.gradient, srgbToLinear(m.gradientColor), m.gradient ? 1.0f : 0.0f);
-    set4(c.gradientRange, meshMinZ_, meshMaxZ_, 0, 0);
-    set4(c.wire, srgbToLinear(m.wireColor), m.wireframe ? std::max(0.5f, m.wireWidth) : 0.0f);
-    set4(c.fileFlags, m.useFileColors ? 1.0f : 0.0f, m.useFileFinish ? 1.0f : 0.0f, 0, 0);
-}
-
-void Renderer::fillFrame(FrameConstants& f, const RenderTargets& rt, const Scene& s, const SampleInput& in,
-                         const mat4& world, const mat4& lightViewProj, const vec3& keyDir, float keyIntensity,
-                         float envShadow) {
-    const EnvironmentSettings& e = s.environment;
-    f = FrameConstants();
-    f.view = in.view.view;
-    f.proj = in.view.proj;
-    f.viewProj = in.view.proj * in.view.view;
-    f.projInv = in.view.proj.inverse();
-    f.invViewProj = f.viewProj.inverse();
-    f.lightViewProj = lightViewProj;
-    f.world = world;
-    f.mirror = mat4::identity();
-    set4(f.eye, in.view.eye, in.view.ortho ? 1.0f : 0.0f);
-    set4(f.forward, in.view.forward, 0);
-    set4(f.screen, (float)rt.width, (float)rt.height, 1.0f / rt.width, 1.0f / rt.height);
-
-    vec3 keyColor = e.lights.enabled ? srgbToLinear(e.lights.keyColor) : envDominantColor_;
-    set4(f.keyDir, keyDir, keyIntensity);
-    set4(f.keyColor, keyColor, clampf(envShadow, 0, 1));
-    if (e.lights.enabled) {
-        // Fill and rim follow the key: fill low on the opposite side, rim behind.
-        float az = in.lightReferenceAzimuth;
-        set4(f.fillDir, dirFromAzEl(az - 60.0f, 15.0f), e.lights.intensity * e.lights.fill);
-        set4(f.fillColor, vec3(0.92f, 0.95f, 1.0f), 0);
-        set4(f.rimDir, dirFromAzEl(az + 160.0f, 25.0f), e.lights.intensity * e.lights.rim);
-        set4(f.rimColor, vec3(1, 1, 1), 0);
-    }
-    set4(f.env, std::max(0.0f, e.intensity), radians(e.rotation), clampf(e.saturation, 0, 2), (float)(specMips_ - 1));
-    for (int i = 0; i < 9; ++i) set4(f.sh[i], sh_[i], 0);
-
-    set4(f.background, (float)(int)e.background, clampf(e.backgroundBlur, 0, 1),
-         e.background == Background::Transparent ? 1.0f : 0.0f, (float)(envMips_ - 1));
-    set4(f.bgColor, srgbToLinear(e.backgroundColor), 0);
-    set4(f.bgColor2, srgbToLinear(e.backgroundColor2), 0);
-    set4(f.ground, (float)(int)e.ground, clampf(e.floorRoughness, 0, 1), clampf(e.reflection, 0, 1),
-         clampf(e.shadowStrength, 0, 1));
-    set4(f.floorColor, srgbToLinear(e.floorColor), curRadius_ * 10.0f);
-    bool ao = in.fullQuality && e.aoStrength > 0;
-    set4(f.ao, clampf(e.aoStrength, 0, 1), std::max(1e-4f, e.aoRadius) * sphereRadius_, ao ? 1.0f : 0.0f,
-         (float)in.sampleIndex);
-    float texelWorld = 2.04f * curRadius_ / (float)shadowSize_;
-    float pcf = in.sampleIndex > 0 && in.fullQuality ? 1.0f : 1.5f + e.shadowSoftness * 0.35f;
-    set4(f.shadow, 1.0f / (float)shadowSize_, texelWorld * 1.5f, pcf, indexCount_ ? 1.0f : 0.0f);
-    set4(f.tone, std::pow(2.0f, e.exposure), (float)(int)e.tonemap, 1.0f, 0.0f);
-    set4(f.model, sphereCenter_, sphereRadius_);
-    set4(f.pass, 0, 0, (float)in.sampleIndex, 0);
-}
-
 void Renderer::renderSample(RenderTargets& rt, const Scene& s, const SampleInput& in) {
     const EnvironmentSettings& e = s.environment;
     const bool mesh = indexCount_ > 0;
-    const bool ground = e.ground != Ground::None;
-    const mat4 world = mat4::rotationZ(in.objectAngle);
-
-    // ---- explode: per-part offsets in the model's own frame ----
-    curRadius_ = sphereRadius_;
+    const FramePlan plan = planFrame(renderContext(), s, in, rt.width, rt.height);
+    const bool ground = plan.groundEnabled;
+    curRadius_ = plan.sceneRadius;
     {
-        std::vector<vec3> offsets;
-        if (mesh && parts_.size() > 1 && in.explode > 0) {
-            std::vector<float> amounts(parts_.size());
-            for (size_t i = 0; i < parts_.size(); ++i)
-                amounts[i] = partExplodeAmount(in.explode, parts_[i].order, s.explode.stagger);
-            explodeOffsets(parts_, sphereCenter_, sphereRadius_, s.explode.distance, amounts, offsets);
-            curRadius_ = framingRadius(s);
-        }
         D3D11_MAPPED_SUBRESOURCE m;
         if (SUCCEEDED(ctx_->Map(cbParts_.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
             float* dst = (float*)m.pData;
             std::memset(dst, 0, 16 * kMaxParts);
-            for (size_t i = 0; i < offsets.size() && i < kMaxParts; ++i) set4(dst + i * 4, offsets[i], 0);
+            for (size_t i = 0; i < plan.partOffsets.size() && i < kMaxParts; ++i) set4(dst + i * 4, plan.partOffsets[i], 0);
             ctx_->Unmap(cbParts_.get(), 0);
         }
-    }
-
-    // ---- key light (casts the shadow map) ----
-    vec3 keyDir;
-    float keyIntensity = 0, envShadow;
-    if (e.lights.enabled) {
-        keyDir = dirFromAzEl(in.lightReferenceAzimuth + e.lights.keyAzimuth, clampf(e.lights.keyElevation, 5.0f, 89.0f));
-        keyIntensity = std::max(0.0f, e.lights.intensity);
-        envShadow = e.shadowStrength * 0.35f;
-    } else {
-        // Shadow from the environment's dominant light, darkening IBL in proportion
-        // to how directional the environment is.
-        vec3 d = envDominantDir_;
-        float r = radians(e.rotation);
-        keyDir = {std::cos(r) * d.x - std::sin(r) * d.y, std::sin(r) * d.x + std::cos(r) * d.y, d.z};
-        envShadow = e.shadowStrength * clampf(0.3f + envDirectionality_ * 1.6f, 0.0f, 1.0f);
-    }
-    // Soft shadows: jitter the light across a cone, one direction per sample.
-    if (in.fullQuality && in.sampleIndex > 0 && e.shadowSoftness > 0) {
-        vec3 helper = std::fabs(keyDir.z) < 0.99f ? vec3(0, 0, 1) : vec3(1, 0, 0);
-        vec3 b1 = normalize(cross(helper, keyDir)), b2 = cross(keyDir, b1);
-        float u = halton(in.sampleIndex + 11, 5), v = halton(in.sampleIndex + 11, 7);
-        float rr = std::sqrt(u) * std::tan(radians(e.shadowSoftness * 0.5f));
-        float phi = 2 * kPi * v;
-        keyDir = normalize(keyDir + b1 * (rr * std::cos(phi)) + b2 * (rr * std::sin(phi)));
-    }
-    const vec3 c = sphereCenter_;
-    const float R = curRadius_;
-    mat4 lightView = mat4::lookAt(c + keyDir * (4.0f * R), c, vec3(0, 0, 1));
-    mat4 lightProj = mat4::orthographic(R * 1.02f, R * 1.02f, R * 0.5f, R * 40.0f);
-    mat4 lightViewProj = lightProj * lightView;
-
-    FrameConstants f;
-    fillFrame(f, rt, s, in, world, lightViewProj, keyDir, keyIntensity, envShadow);
-    if (!mesh) f.shadow[3] = 0;
-    MaterialConstants mc;
-    fillMaterial(mc, s);
-    {
-        D3D11_MAPPED_SUBRESOURCE m;
         if (SUCCEEDED(ctx_->Map(cbMaterial_.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
-            std::memcpy(m.pData, &mc, sizeof(mc));
+            std::memcpy(m.pData, &plan.material, sizeof(plan.material));
             ctx_->Unmap(cbMaterial_.get(), 0);
         }
     }
+    FrameConstants f = plan.frame;
     updateFrame(f);
     unbindAll();
     bindCommon();

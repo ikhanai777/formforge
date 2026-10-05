@@ -14,6 +14,8 @@ add_library(spindle_core STATIC
   src/model3mf.cpp
   src/scene.cpp
   src/camera.cpp
+  src/sampling.cpp
+  src/frame_plan.cpp
   src/environment.cpp)
 target_include_directories(spindle_core PUBLIC src)
 find_package(Threads REQUIRED)

@@ -11,15 +11,6 @@
 
 namespace spindle {
 
-// Builds sample `sampleIndex` of `totalSamples` for turntable time `frame`
-// (shared by the export and the viewport's live preview).
-SampleInput makeTurntableSample(const Scene& scene, const vec3& center, float radius, int width, int height,
-                                double frame, int sampleIndex, int totalSamples, float startAzimuthDeg);
-
-// Builds sample `sampleIndex` for the interactive orbit camera.
-SampleInput makeOrbitSample(const Scene& scene, const OrbitCamera& cam, float radius, int width, int height,
-                            int sampleIndex);
-
 struct ExportJob {
     Scene scene;
     std::string outputPath;
