@@ -72,7 +72,7 @@ cd spindle/android
   average.
 - **CI build:** `.github/workflows/spindle-android.yml` builds the APK and
   publishes it to the release above.
-- **Emulator test:** CI then installs the APK on an Android 11 emulator, loads
+- **Emulator test:** CI then installs the APK on an Android 10 emulator, loads
   a 3MF assembly, and exports a still, an exploding MP4 and a GIF
   (`ci/emulator-test.sh`). The emulator's output is uploaded as the
   *android-emulator-output* artifact.
