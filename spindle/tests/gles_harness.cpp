@@ -1,7 +1,7 @@
 // Headless check of the OpenGL ES renderer on a desktop (EGL + Mesa), so the
 // Android renderer can be verified without a device:
 //   gles_harness MODEL OUT.png [--preset P.json] [--res WxH] [--samples N]
-//                [--explode A] [--gif OUT.gif FRAMES]
+//                [--explode A] [--azimuth DEG] [--gif OUT.gif FRAMES]
 #include "../src/environment.h"
 #include "../src/gles/gl_exporter.h"
 #include "../src/gles/gl_renderer.h"
@@ -39,13 +39,14 @@ static bool createContext() {
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: gles_harness MODEL OUT.png [--preset P] [--res WxH] [--samples N] [--explode A] [--gif OUT FRAMES]\n");
+        std::fprintf(stderr, "usage: gles_harness MODEL OUT.png [--preset P] [--res WxH] [--samples N] [--explode A] [--azimuth DEG] [--gif OUT FRAMES]\n");
         return 1;
     }
     Scene scene;
     int samples = 16;
     std::string gifPath;
     int gifFrames = 0;
+    float azimuth = -60.0f;
     for (int i = 3; i < argc; ++i) {
         std::string a = argv[i];
         std::string err;
@@ -57,6 +58,8 @@ int main(int argc, char** argv) {
             samples = std::atoi(argv[++i]);
         } else if (a == "--explode" && i + 1 < argc) {
             scene.explode.manual = (float)std::atof(argv[++i]);
+        } else if (a == "--azimuth" && i + 1 < argc) {
+            azimuth = (float)std::atof(argv[++i]);
         } else if (a == "--gif" && i + 2 < argc) {
             gifPath = argv[++i];
             gifFrames = std::atoi(argv[++i]);
@@ -96,7 +99,7 @@ int main(int argc, char** argv) {
     }
     for (int i = 0; i < samples; ++i) {
         SampleInput in = makeTurntableSample(scene, r.sphereCenter(), r.framingRadius(scene), rt.width, rt.height, 0, i,
-                                             samples, -60.0f);
+                                             samples, azimuth);
         r.renderSample(rt, scene, in);
     }
     bool transparent = scene.environment.background == Background::Transparent;
